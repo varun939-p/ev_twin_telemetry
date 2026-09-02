@@ -1,0 +1,16 @@
+# EV Battery Swap Station Digital Twin -- telemetry extraction engine
+# Python 3.11+ (this build was verified on CPython 3.13)
+#
+#   python -m venv .venv && source .venv/bin/activate
+#   pip install -r requirements.txt
+
+# --- runtime ----------------------------------------------------------------
+SQLAlchemy==2.0.52          # ORM + PostgreSQL ON CONFLICT dialect support
+psycopg[binary]==3.3.4      # PostgreSQL driver (psycopg 3, what SQLAlchemy 2 expects)
+pydantic==2.13.4            # payload validation
+pydantic-settings==2.15.0   # env-driven configuration
+requests==2.34.2            # HTTP transport
+python-dotenv==1.2.3        # .env loading (used by pydantic-settings)
+
+# --- development / CI -------------------------------------------------------
+pytest==9.1.1               # test runner; tests/ needs nothing else

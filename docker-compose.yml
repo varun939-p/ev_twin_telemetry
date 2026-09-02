@@ -1,0 +1,59 @@
+# Local bring-up: PostgreSQL + the extraction engine (+ the mock upstream, so the
+# stack runs end-to-end before you have production credentials).
+#
+#   docker compose up -d db
+#   docker compose run --rm extractor init-db
+#   docker compose up extractor
+#
+# To run against the real upstream instead, set API_BASE_URL/API_SECRET_KEY/
+# API_PASSCODE in .env and drop the `mock` dependency.
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: twin
+      POSTGRES_PASSWORD: twin
+      POSTGRES_DB: twin
+    ports:
+      - "5432:5432"
+    volumes:
+      - twin_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U twin -d twin"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Stand-in for the upstream Dashboard Parameters API. Delete this block (and the
+  # `depends_on: mock` entry below) when pointing at the real server.
+  mock:
+    build: .
+    command: ["mock-server", "--port", "8899", "--vehicles", "8", "--all-fields"]
+    ports:
+      - "8899:8899"
+    # the mock binds 127.0.0.1 by default; inside compose it needs to be reachable
+    environment:
+      MOCK_BIND: 0.0.0.0
+
+  extractor:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+      mock:
+        condition: service_started
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://twin:twin@db:5432/twin
+      API_BASE_URL: http://mock:8899
+      POLL_INTERVAL_SECONDS: "60"
+      METRICS_ENABLED: "true"
+    ports:
+      - "9464:9464"
+    restart: unless-stopped
+    # A restart policy plus the loop's own backoff means a transient upstream or
+    # database outage never needs a human.
+
+volumes:
+  twin_pgdata:
