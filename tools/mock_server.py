@@ -26,7 +26,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 SECRET_KEY = "sk_mock_9f8e7d6c5b4a"
 PASSCODE = "MockPasscode123"
@@ -47,13 +47,10 @@ DOCUMENTED_KEYS = (
     "batt_temp", "min_cell_v", "max_cell_v", "speed", "regen_kwh",
 )
 
-# The 13 remaining parameters, under the inferred keys from telemetry/fields.py.
-UNDOCUMENTED_KEYS = (
-    "max_temp_c", "min_temp_c", "total_power_kwh", "charging_status",
-    "battery_avg_temp_c", "battery_total_v", "battery_current_a",
-    "max_cell_v_cell_no", "min_cell_v_pack_no", "min_cell_v_cell_no",
-    "max_temp_pack_no", "work_status", "latitude", "longitude",
-)
+# Tier-1 summary frames: high-level operational keys only, and the battery
+# block as an explicit null -- the live battery telemetry lives on the
+# tier-2 per-vehicle detail endpoint.
+SUMMARY_KEYS = ("last_updated", "soc", "odo", "speed", "latitude", "longitude", "battery")
 
 
 class Fleet:
@@ -67,9 +64,10 @@ class Fleet:
         self.fail_remaining = 0
         self.latency_ms = 0
         self.bad_creds = False
-        self.counts = {"auth": 0, "auth_failed": 0, "data": 0, "data_401": 0, "data_500": 0}
+        self.counts = {"auth": 0, "auth_failed": 0, "data": 0, "detail": 0, "data_401": 0, "data_500": 0}
         self.ticks = 0
         self.frozen = False  # when True, state does not advance -> identical frames
+        self._ist_now = _IST_EPOCH  # tier-2 details reuse the tick time of the last summary
         ids = VEHICLE_IDS[:count] or VEHICLE_IDS
         self.state: dict[str, dict[str, float]] = {vid: self._seed(i) for i, vid in enumerate(ids)}
 
@@ -134,6 +132,8 @@ class Fleet:
         state["battery_total_v"] = state["max_cell_v"] * 156
 
     def payload(self, *, date: str | None, vehicle: str | None) -> dict[str, Any]:
+        """Tier 1: the fleet summary.  Frames are high-level only and carry
+        `"battery": null` -- the live diagnostics live on `vehicle_detail`."""
         with self.lock:
             if not self.frozen:
                 self.ticks += 1
@@ -153,15 +153,26 @@ class Fleet:
             # frozen case to `ticks` instead would move the clock forward by a
             # minute the moment freezing starts, and nothing would ever collide.
             ist_now = _IST_EPOCH + timedelta(minutes=self.ticks - 1)
+            self._ist_now = ist_now  # tier-2 details pin to the same reading
             vehicles: dict[str, Any] = {}
             for vid, state in self.state.items():
                 if vehicle and vehicle.upper() not in vid:
                     continue
-                vehicles[vid] = self._frame(vid, state, ist_now)
+                vehicles[vid] = {
+                    "last_updated": ist_now.strftime("%Y-%m-%d %H:%M:%S"),
+                    "soc": round(state["soc"], 1),
+                    "odo": round(state["odo"], 1),
+                    "speed": round(state["speed"], 1),
+                    "latitude": round(state["latitude"], 5),
+                    "longitude": round(state["longitude"], 5),
+                    # The v1 contract: the summary points at the battery block,
+                    # it does not carry it.  Tier 2 fills it in.
+                    "battery": None,
+                }
 
             # Build the summary from the internal state, NOT from the emitted
-            # frames: with `all_fields=False` the frames only carry the 11
-            # documented keys, so reading `charging_status` off them raises.
+            # frames: with `all_fields=False` the detail frames only carry the
+            # 11 documented keys, so reading `charging_status` off them raises.
             fleet = list(self.state.values())
             return {
                 "ok": True,
@@ -178,41 +189,54 @@ class Fleet:
                 "vehicles": vehicles,
             }
 
-    def _frame(self, vid: str, state: dict[str, float], ist_now: datetime) -> dict[str, Any]:
-        rng = random.Random(hash(vid) & 0xFFFF)
-        frame: dict[str, Any] = {
-            "last_updated": ist_now.strftime("%Y-%m-%d %H:%M:%S"),
-            "soc": round(state["soc"], 1),
-            "soh": round(state["soh"], 2),
-            "odo": round(state["odo"], 1),
-            "residual_mileage": round(state["residual_mileage"]),
-            "cycles": int(state["cycles"]),
-            "batt_temp": round(state["batt_temp"], 1),
-            "min_cell_v": round(state["min_cell_v"], 3),
-            "max_cell_v": round(state["max_cell_v"], 3),
-            "speed": round(state["speed"], 1),
-            "regen_kwh": round(state["regen_kwh"], 2),
-        }
-        if self.all_fields:
-            frame.update(
-                {
-                    "max_temp_c": round(state["max_temp_c"], 1),
-                    "min_temp_c": round(state["min_temp_c"], 1),
-                    "total_power_kwh": round(state["total_power_kwh"], 2),
-                    "charging_status": int(state["charging_status"]),
-                    "battery_avg_temp_c": round(state["battery_avg_temp_c"], 1),
-                    "battery_total_v": round(state["battery_total_v"], 1),
-                    "battery_current_a": round(state["battery_current_a"], 1),
-                    "max_cell_v_cell_no": rng.randint(1, 156),
-                    "min_cell_v_pack_no": rng.randint(1, 4),
-                    "min_cell_v_cell_no": rng.randint(1, 156),
-                    "max_temp_pack_no": rng.randint(1, 4),
-                    "work_status": "CHARGING" if state["charging_status"] else ("RUNNING" if state["speed"] else "PARKED"),
-                    "latitude": round(state["latitude"], 5),
-                    "longitude": round(state["longitude"], 5),
-                }
-            )
-        return frame
+    def vehicle_detail(self, vehicle_id: str) -> dict[str, Any] | None:
+        """Tier 2: the complete live diagnostic frame for one vehicle.
+
+        Emits the abbreviated v1 keys (`batt_v`, `chg_status`, `batt_temp`,
+        ...) with the battery block nested under `battery`, exactly as the
+        live API does.  Returns None for an unknown vehicle id.
+        """
+        with self.lock:
+            state = self.state.get(vehicle_id)
+            if state is None:
+                return None
+            rng = random.Random(hash(vehicle_id) & 0xFFFF)
+            frame: dict[str, Any] = {
+                "last_updated": self._ist_now.strftime("%Y-%m-%d %H:%M:%S"),
+                "soc": round(state["soc"], 1),
+                "soh": round(state["soh"], 2),
+                "odo": round(state["odo"], 1),
+                "residual_mileage": round(state["residual_mileage"]),
+                "cycles": int(state["cycles"]),
+                "batt_temp": round(state["batt_temp"], 1),
+                "min_cell_v": round(state["min_cell_v"], 3),
+                "max_cell_v": round(state["max_cell_v"], 3),
+                "speed": round(state["speed"], 1),
+                "regen_kwh": round(state["regen_kwh"], 2),
+            }
+            if self.all_fields:
+                frame.update(
+                    {
+                        "max_temp": round(state["max_temp_c"], 1),
+                        "min_temp": round(state["min_temp_c"], 1),
+                        "batt_avg_temp": round(state["battery_avg_temp_c"], 1),
+                        "latitude": round(state["latitude"], 5),
+                        "longitude": round(state["longitude"], 5),
+                        "battery": {
+                            # Abbreviated v1 keys, as captured via Postman.
+                            "batt_v": round(state["battery_total_v"], 1),
+                            "batt_a": round(state["battery_current_a"], 1),
+                            "chg_status": int(state["charging_status"]),
+                            "tot_power_kwh": round(state["total_power_kwh"], 2),
+                            "max_cell_no": rng.randint(1, 156),
+                            "min_pack_no": rng.randint(1, 4),
+                            "min_cell_no": rng.randint(1, 156),
+                            "max_t_pack": rng.randint(1, 4),
+                            "work_sts": "CHARGING" if state["charging_status"] else ("RUNNING" if state["speed"] else "PARKED"),
+                        },
+                    }
+                )
+            return frame
 
     # ------------------------------------------------------------------ auth
     def issue_token(self) -> dict[str, Any]:
@@ -345,6 +369,33 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        if path.startswith("/api/v1/vehicles/"):
+            # Tier 2: the live diagnostic frame for one vehicle.
+            auth = self.headers.get("Authorization", "")
+            token = auth[7:].strip() if auth.lower().startswith("bearer ") else None
+            if not self.fleet.token_valid(token):
+                with self.fleet.lock:
+                    self.fleet.counts["data_401"] += 1
+                self._send(401, {"ok": False, "auth": "required", "error": "token expired or missing"})
+                return
+
+            if self.fleet.take_failure():
+                self._send(500, {"ok": False, "error": "internal server error"})
+                return
+
+            if self.fleet.latency_ms:
+                time.sleep(self.fleet.latency_ms / 1000.0)
+
+            vehicle_id = unquote(path[len("/api/v1/vehicles/"):]).strip().upper()
+            with self.fleet.lock:
+                self.fleet.counts["detail"] += 1
+            frame = self.fleet.vehicle_detail(vehicle_id)
+            if frame is None:
+                self._send(404, {"ok": False, "error": f"unknown vehicle {vehicle_id}"})
+                return
+            self._send(200, frame)
+            return
+
         if path == "/api/v1/vehicles":
             auth = self.headers.get("Authorization", "")
             token = auth[7:].strip() if auth.lower().startswith("bearer ") else None
@@ -394,6 +445,7 @@ def serve(port: int = 8899, vehicles: int = 8, all_fields: bool = True) -> int:
     print(f"mock dashboard API on http://{host}:{bound_port}")
     print(f"  POST /api/auth/api-token         secret_key={SECRET_KEY} passcode={PASSCODE}")
     print(f"  GET  /api/v1/vehicles            {vehicles} vehicles, all_fields={all_fields}")
+    print("  GET  /api/v1/vehicles/{id}       tier-2 live diagnostic frame (battery block)")
     print("  GET  /api/dashboard-parameters   410 -- retired, use /api/v1/vehicles")
     print("  control: POST /__control/fail?count=N | /__control/revoke | /__control/latency?ms=N | /__control/bad-creds?on=1")
     try:

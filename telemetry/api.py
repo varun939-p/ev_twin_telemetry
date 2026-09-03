@@ -88,13 +88,33 @@ class UpstreamClient:
 
     # -------------------------------------------------------------- vehicles
     def fetch_vehicles(self, token: str) -> dict[str, Any]:
-        """GET /api/v1/vehicles with a Bearer token."""
+        """GET /api/v1/vehicles (tier 1) with a Bearer token.
+
+        Returns the fleet summary: per-vehicle frames are high-level only and
+        carry `"battery": null`.  Deep telemetry comes from `fetch_vehicle`.
+        """
         return self._request(
             "GET",
             self.settings.vehicles_url(),
             params=self._query_params(),
             headers={"Authorization": f"Bearer {token}"},
             label="vehicles",
+            endpoint="vehicles",
+        )
+
+    def fetch_vehicle(self, token: str, vehicle_id: str) -> dict[str, Any]:
+        """GET /api/v1/vehicles/{vehicle_id} (tier 2) with a Bearer token.
+
+        Returns the complete live diagnostic frame for one truck -- including
+        the battery block under the abbreviated v1 keys.  The detail snapshot
+        takes no query parameters: it is the current reading, not a history
+        slice.
+        """
+        return self._request(
+            "GET",
+            self.settings.vehicle_url(vehicle_id),
+            headers={"Authorization": f"Bearer {token}"},
+            label=f"vehicle {vehicle_id}",
             endpoint="vehicles",
         )
 
@@ -114,6 +134,10 @@ class UpstreamClient:
         call; `_request` logs the same assembly immediately before sending.
         """
         return self._full_url(self.settings.vehicles_url(), self._query_params())
+
+    def vehicle_request_url(self, vehicle_id: str) -> str:
+        """The exact tier-2 GET URL for one vehicle (descriptive, see above)."""
+        return self._full_url(self.settings.vehicle_url(vehicle_id), None)
 
     @staticmethod
     def _full_url(url: str, params: dict[str, str] | None) -> str:

@@ -1,17 +1,30 @@
 # Dashboard Parameters API — Usage Guide
 
-> **Migration notice (2026-09-03).** `GET /api/dashboard-parameters`, described
-> throughout this document, is **retired and blocked**. The engine now reads
-> `GET https://track.blueenergymotors.com/api/v1/vehicles`, which returns the
-> same `{ ok, summary, vehicles }` envelope, so nothing downstream of the
-> transport changed. The route lives in one place:
-> `Settings.vehicles_path` (`telemetry/config.py`), overridable via
-> `VEHICLES_PATH`. The text below is the vendor's original guide and is kept
-> verbatim as the reference for authentication, the response envelope and the
-> error table — substitute the v1 path in any `curl` you copy from it.
+> **Migration notice (2026-09-03, rev 2 — live two-tier contract).**
+> `GET /api/dashboard-parameters`, described throughout this document, is
+> **retired and blocked**. The live contract, verified against production via
+> Postman, is **two-tier**:
 >
-> Nine of the 24 parameters are not measured upstream and are pinned to `NULL`
-> by `telemetry.schemas.parse_payload` — see `telemetry.fields.UNMEASURED_NAMES`.
+> * **Tier 1 — `GET https://track.blueenergymotors.com/api/v1/vehicles`**
+>   returns a high-level fleet summary. Each vehicle frame carries the
+>   operational keys (SOC, odometer, speed, GPS, `last_updated`) and an
+>   explicit `"battery": null`.
+> * **Tier 2 — `GET /api/v1/vehicles/{vehicle_id}`** (e.g. `M456D745`) returns
+>   the complete live diagnostic frame, including the battery block, under the
+>   **abbreviated v1 keys**: `batt_v`, `chg_status`, `batt_temp`, `batt_a`,
+>   `tot_power_kwh`, `max_cell_no`, `min_pack_no`, `min_cell_no`,
+>   `max_t_pack`, `work_sts`.
+>
+> The engine fetches tier 1 once per poll, then tier 2 concurrently per
+> vehicle (`Settings.detail_fetch_enabled`, `detail_fetch_workers`) and merges
+> the frames before validation. The alias table lives in
+> `telemetry.fields.PARAM_SPECS`; unknown keys are reported by the drift
+> reporter, so a future rename is a one-line alias addition. A parameter is
+> stored `NULL` only when no alias appears anywhere in the merged frame —
+> nothing is pinned, nothing is defaulted to zero. The text below is the
+> vendor's original guide, kept verbatim for authentication, the response
+> envelope and the error table — substitute the v1 paths in any `curl` you
+> copy from it.
 
 Machine/API access to fleet dashboard data, authenticated with a secret key + passcode (separate from the browser username/password login).
 
@@ -153,7 +166,8 @@ A `401` response with `"auth": "required"` means your token expired or is missin
 | Method | Path                                                | Purpose                              |
 |--------|------------------------------------------------------|---------------------------------------|
 | POST   | `/api/auth/api-token`                                | Exchange secret key + passcode for a token |
-| GET    | `/api/dashboard-parameters`                          | Fleet summary + live per-vehicle parameters |
+| GET    | `/api/v1/vehicles`                                   | Fleet summary (tier 1; `battery: null`) |
+| GET    | `/api/v1/vehicles/{vehicle_id}`                      | Live per-vehicle diagnostics (tier 2; battery block, v1 keys) |
 | GET    | `/api/admin/api-clients`                             | List API clients                     |
 | POST   | `/api/admin/api-clients`                             | Create an API client                 |
 | POST   | `/api/admin/api-clients/<client_id>/regenerate-passcode` | Issue a new passcode              |

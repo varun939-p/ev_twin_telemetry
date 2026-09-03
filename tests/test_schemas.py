@@ -7,11 +7,13 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from telemetry.fields import MEASURED_NAMES, PARAM_SPECS, UNMEASURED_NAMES
+from telemetry.fields import COLUMN_NAMES, PARAM_SPECS
 from telemetry.schemas import (
     AuthResponse,
     VehiclesPayload,
     VehicleParams,
+    flatten_vehicle_frame,
+    merge_vehicle_frames,
     parse_payload,
     parse_source_timestamp,
 )
@@ -75,37 +77,137 @@ def test_guide_frame_maps_documented_fields():
     assert values["regen_kwh"] == 12.4
 
 
-def test_full_frame_emits_all_24_keys_and_holds_the_9_unmeasured_as_null():
-    """A frame that carries all 24 keys still stores NULL for the declared-
-    unmeasured 9.  The NULL is a contract, not an accident of the payload."""
+def test_full_frame_populates_all_24_parameters():
+    """A frame that carries all 24 keys stores all 24 values.
+
+    Nothing is pinned NULL any more: what the live tier-2 feed sends is what
+    the database gets."""
     result = _parse(FULL_FRAME)
     assert result.accepted == 1, result.rejected
     vehicle = result.ok[0]
 
     assert len(vehicle.values) == 24
     assert all(name in vehicle.values for name in (p.name for p in PARAM_SPECS))
+    for name in COLUMN_NAMES:
+        assert vehicle.values[name] is not None, f"{name} must be populated, got NULL"
 
-    # the 15 measured parameters are populated ...
-    for name in MEASURED_NAMES:
-        assert vehicle.values[name] is not None, name
-    # ... the 9 unmeasured ones are NULL, never 0
-    for name in UNMEASURED_NAMES:
-        assert vehicle.values[name] is None, f"{name} must be NULL, got {vehicle.values[name]!r}"
-
-    # and both facts are reported, not silently applied
-    assert set(vehicle.missing) == set(UNMEASURED_NAMES)
-    assert {e.field for e in vehicle.field_errors} == set(UNMEASURED_NAMES)
-    assert all("unmeasured" in e.error for e in vehicle.field_errors)
+    # a complete frame reports neither missing keys nor field errors
+    assert vehicle.missing == []
+    assert vehicle.field_errors == []
 
 
-def test_every_measured_parameter_accepts_its_canonical_name():
+def test_every_parameter_accepts_its_canonical_name():
     """The DB column name must also be a valid input key (round-tripping)."""
-    frame = {name: 1 for name in MEASURED_NAMES}
+    frame = {name: 1 for name in COLUMN_NAMES}
     result = _parse(frame)
     assert result.accepted == 1, result.rejected
-    assert result.ok[0].missing == list(UNMEASURED_NAMES)
-    for name in MEASURED_NAMES:
+    assert result.ok[0].missing == []
+    for name in COLUMN_NAMES:
         assert result.ok[0].values[name] is not None, name
+
+
+# ------------------------------------------------- live v1 mapping (two-tier)
+def test_v1_abbreviated_keys_map_to_canonical_columns():
+    """`batt_v`, `chg_status`, `batt_a` etc. from the live detail feed land on
+    the canonical columns the frontend and the ORM expect."""
+    frame = {
+        **GUIDE_FRAME,
+        "batt_v": 512.4,
+        "chg_status": 1,
+        "batt_a": -86.5,
+        "tot_power_kwh": 1580.75,
+        "work_sts": "CHARGING",
+    }
+    result = _parse(frame)
+    assert result.accepted == 1, result.rejected
+    values = result.ok[0].values
+    assert values["battery_total_v"] == 512.4
+    assert values["charging_status"] == 1
+    assert isinstance(values["charging_status"], int)
+    assert values["battery_current_a"] == -86.5
+    assert values["total_power_kwh"] == 1580.75
+    assert values["work_status"] == "CHARGING"
+
+
+def test_nested_battery_block_is_flattened_and_parsed():
+    """The tier-2 detail nests diagnostics under `battery`; the validator
+    consumes them transparently."""
+    frame = {
+        **GUIDE_FRAME,
+        "battery": {
+            "batt_v": 548.2,
+            "chg_status": 0,
+            "batt_a": 12.5,
+            "max_cell_no": 42,
+            "min_pack_no": 2,
+            "min_cell_no": 117,
+            "max_t_pack": 3,
+            "work_sts": "RUNNING",
+        },
+    }
+    result = _parse(frame)
+    assert result.accepted == 1, result.rejected
+    values = result.ok[0].values
+    assert values["battery_total_v"] == 548.2
+    assert values["charging_status"] == 0
+    assert values["battery_current_a"] == 12.5
+    assert values["max_cell_v_cell_no"] == 42
+    assert values["min_cell_v_pack_no"] == 2
+    assert values["min_cell_v_cell_no"] == 117
+    assert values["max_temp_pack_no"] == 3
+    assert values["work_status"] == "RUNNING"
+    # the whole battery block was consumed: nothing missing from it
+    assert not {"battery_total_v", "charging_status", "work_status"} & set(result.ok[0].missing)
+
+
+def test_summary_battery_null_placeholder_is_ignored():
+    """Tier-1 frames carry `"battery": null`; that placeholder must not become
+    a field error or a parameter -- it is metadata."""
+    frame = {**GUIDE_FRAME, "battery": None}
+    result = _parse(frame)
+    assert result.accepted == 1, result.rejected
+    assert "battery" not in result.ok[0].values
+    assert not any(e.field == "battery" for e in result.ok[0].field_errors)
+
+
+def test_detail_nulls_never_erase_summary_values_in_merge():
+    """`merge_vehicle_frames`: an explicit null in the detail response means
+    'no reading' -- it must not wipe the tier-1 summary value."""
+    summary = {"soc": 71.5, "odo": 40200.0, "battery": None}
+    detail = {"soc": None, "batt_v": 509.9, "battery": {"chg_status": 1, "batt_a": None}}
+    merged = merge_vehicle_frames(summary, detail)
+    assert merged["soc"] == 71.5
+    assert merged["batt_v"] == 509.9
+    assert merged["chg_status"] == 1
+    assert "battery" not in merged
+    assert "batt_a" not in merged  # null in both tiers -> key absent -> NULL fallback
+
+
+def test_merge_tolerates_envelope_and_non_dict_details():
+    summary = {"soc": 71.5}
+    assert merge_vehicle_frames(summary, {"ok": True, "vehicle": {"batt_v": 500.0}}) == {"soc": 71.5, "batt_v": 500.0}
+    assert merge_vehicle_frames(summary, None) == summary
+    assert merge_vehicle_frames(summary, "garbage") == summary
+    assert flatten_vehicle_frame({"a": 1, "battery": {"b": 2, "nested": {"c": 3}, "nul": None}}) == {"a": 1, "b": 2}
+
+
+def test_absent_keys_fall_back_to_null_and_are_reported():
+    """The only NULL path left: the merged frame genuinely lacks the key."""
+    result = _parse(GUIDE_FRAME)  # 10 params present, 14 absent
+    vehicle = result.ok[0]
+    assert vehicle.values["battery_total_v"] is None
+    assert vehicle.values["work_status"] is None
+    assert "battery_total_v" in vehicle.missing and "work_status" in vehicle.missing
+    # absence is not junk: no field errors for the absent keys
+    assert not any(e.field in {"battery_total_v", "work_status"} for e in vehicle.field_errors)
+
+
+def test_case_and_separator_variants_resolve_dynamically():
+    result = _parse({**GUIDE_FRAME, "BATT_V": 501.0, "Chg-Status": 1})
+    assert result.accepted == 1, result.rejected
+    values = result.ok[0].values
+    assert values["battery_total_v"] == 501.0
+    assert values["charging_status"] == 1
 
 
 def test_unknown_keys_are_ignored_not_fatal():
@@ -157,11 +259,13 @@ def test_negative_values_are_allowed_on_measured_fields():
     assert values["latitude"] == -12.25
 
 
-def test_battery_current_is_held_null_while_it_is_unmeasured():
-    """`battery_current_a` is one of the 9: a plausible reading is still NULL."""
-    result = _parse({**GUIDE_FRAME, "battery_current_a": -120.5})
-    assert result.accepted == 1, result.rejected
-    assert result.ok[0].values["battery_current_a"] is None
+def test_battery_current_accepts_v1_and_canonical_keys():
+    """`battery_current_a` is live telemetry now: both the v1 key and the
+    canonical column parse into real values."""
+    via_v1 = _parse({**GUIDE_FRAME, "batt_a": -120.5})
+    via_canonical = _parse({**GUIDE_FRAME, "battery_current_a": -120.5})
+    assert via_v1.ok[0].values["battery_current_a"] == -120.5
+    assert via_canonical.ok[0].values["battery_current_a"] == -120.5
 
 
 # ------------------------------------------- P1 regression coverage (handoff)
@@ -176,15 +280,15 @@ def test_p1_in_bounds_integer_is_accepted():
 def test_p1_out_of_bounds_integer_fails_the_bounds_check():
     """Integer fields used to return before min/max ran.
 
-    Re-pointed from `charging_status` (now declared unmeasured and pinned NULL)
-    to `charge_cycles`, a MEASURED monotonic integer, so the regression the test
-    was written for is still actually guarded.
+    `charge_cycles` is a monotonic integer; the alias layer re-keys the frame
+    onto canonical names first, so validation errors report the canonical
+    column -- one consistent name end to end.
     """
     result = _parse({**GUIDE_FRAME, "cycles": -5})
     assert result.accepted == 0, "charge_cycles=-5 slipped past minimum=0"
     rejected = result.rejected[0]
     assert any(
-        e.field == "cycles" and "below minimum" in e.error for e in rejected.errors
+        e.field == "charge_cycles" and "below minimum" in e.error for e in rejected.errors
     ), rejected.errors
 
 
@@ -196,20 +300,15 @@ def test_p1_out_of_range_float_fails_the_bounds_check():
     assert any("below minimum" in e.error for e in rejected.errors), rejected.errors
 
 
-def test_p1_junk_in_an_unmeasured_field_does_not_sink_the_frame():
-    """The other half of the P1 guard: an out-of-range value on one of the 9
-    must NOT quarantine the vehicle.  The 15 measured readings are worth more
-    than a channel we are not reading anyway."""
+def test_p1_junk_on_battery_channels_is_quarantined_like_any_channel():
+    """The former 'unmeasured' channels are ordinary validated fields now:
+    an out-of-range value (chg_status=2, negative cell number) quarantines the
+    frame exactly like soc=480 does -- it must not reach the database."""
     result = _parse({**GUIDE_FRAME, "charging_status": 2, "max_cell_v_cell_no": -5})
-    assert result.accepted == 1, f"frame was quarantined over unmeasured fields: {result.rejected}"
-    assert not result.rejected
-    vehicle = result.ok[0]
-    assert vehicle.values["charging_status"] is None
-    assert vehicle.values["max_cell_v_cell_no"] is None
-    # ...and the junk is still visible
-    assert {"charging_status", "max_cell_v_cell_no"} <= {e.field for e in vehicle.field_errors}
-    # the measured readings survived
-    assert vehicle.values["soc"] == 78 and vehicle.values["charge_cycles"] == 312
+    assert result.accepted == 0, "out-of-range battery channels slipped past the bounds"
+    rejected = result.rejected[0]
+    flagged = {e.field for e in rejected.errors}
+    assert "charging_status" in flagged and "max_cell_v_cell_no" in flagged, rejected.errors
 
 
 def test_p1_boolean_in_numeric_field_is_rejected_not_coerced():
@@ -243,21 +342,13 @@ def test_one_bad_vehicle_does_not_sink_the_fleet():
 
 
 def test_require_all_fields_mode_rejects_partial_frames():
-    """The gate counts only the 15 measured parameters -- the 9 unmeasured ones
-    can never arrive, so including them would quarantine the entire fleet."""
+    """The strict gate counts all 24 parameters: the guide frame carries 10
+    (11 keys minus the timestamp), so 14 are missing."""
     result = _parse(GUIDE_FRAME, require_all_fields=True)
     assert result.accepted == 0
     reason = result.rejected[0].reason
-    assert "missing 5 required parameter(s)" in reason
-    assert not any(name in reason for name in UNMEASURED_NAMES), reason
-
-
-def test_require_all_fields_never_rejects_over_the_unmeasured_nine():
-    """A frame carrying all 15 measured parameters passes even though 9 keys are
-    absent -- that absence is the declared contract, not a defect."""
-    result = _parse(FULL_FRAME, require_all_fields=True)
-    assert result.accepted == 1, result.rejected
-    assert set(result.ok[0].missing) == set(UNMEASURED_NAMES)
+    assert "missing 14 required parameter(s)" in reason
+    assert "soc" not in reason.split(":")[1], "present parameters must not be counted as missing"
 
 
 def test_require_all_fields_accepts_complete_frames():

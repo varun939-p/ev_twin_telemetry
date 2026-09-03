@@ -24,7 +24,7 @@ from .auth import TokenManager
 from .config import Settings, get_settings
 from .db import build_engine, build_session_factory, init_schema, ping
 from .extractor import TelemetryExtractor
-from .fields import MEASURED_NAMES, PARAM_SPECS, UNMEASURED_NAMES
+from .fields import PARAM_SPECS
 from .logging_setup import configure_logging
 from .orchestrator import TelemetryOrchestrator
 from .schemas import VehiclesPayload, parse_payload
@@ -170,8 +170,6 @@ def cmd_once(args: argparse.Namespace) -> int:
 # ------------------------------------------------------------------ fields
 def _source_label(spec) -> str:  # noqa: ANN001 - ParamSpec, kept untyped to avoid a cycle
     """The `source` column of the mapping table."""
-    if spec.unmeasured:
-        return "UNMEASURED -- pinned NULL"
     return "documented" if spec.documented else "INFERRED -- verify"
 
 
@@ -186,10 +184,9 @@ def cmd_fields(_args: argparse.Namespace) -> int:
             f"{_source_label(spec)}"
         )
     documented = sum(1 for p in PARAM_SPECS if p.documented)
-    print(f"\n{len(PARAM_SPECS)} parameters: {documented} with keys confirmed by the API guide, "
-          f"{len(MEASURED_NAMES) - documented} present under inferred keys, "
-          f"{len(UNMEASURED_NAMES)} unmeasured upstream and pinned NULL.")
-    print(f"unmeasured (held NULL, never zero): {', '.join(UNMEASURED_NAMES)}")
+    print(f"\n{len(PARAM_SPECS)} parameters: {documented} with keys confirmed upstream "
+          f"(guide + live v1), {len(PARAM_SPECS) - documented} present under inferred keys. "
+          "A parameter is NULL only when no alias appears in the merged frame.")
     return 0
 
 

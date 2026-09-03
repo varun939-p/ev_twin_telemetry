@@ -32,13 +32,13 @@ Two input shapes are accepted, because both occur in practice:
      is what `blue_energy_response.json` currently is: a UTF-16 console
      capture of a real 2026-08-28 pull, 100 vehicles).  Rebuilt into shape 1.
 
-The 9 fields the upstream does not measure (`total_power_kwh`, `charging_status`,
-`battery_total_v`, `battery_current_a`, `max_cell_v_cell_no`,
-`min_cell_v_pack_no`, `min_cell_v_cell_no`, `max_temp_pack_no`, `work_status`)
-are declared `unmeasured=True` in `telemetry.fields` and pinned to explicit
-JSON `null` by the validator -- never `0`.  They are listed per vehicle in
-`missing_fields`, plus fleet-wide in `pipeline_health.unavailable_parameters`.
-That is what the frontend's Pipeline Health Toggle reads to gray a tile out.
+A parameter reaches the document as JSON `null` only when the capture it was
+built from genuinely lacked every alias for it (never `0`).  Those gaps are
+listed per vehicle in `missing_fields`, plus fleet-wide in
+`pipeline_health.unavailable_parameters`.  That is what the frontend's
+Pipeline Health Toggle reads to gray a tile out.  The live two-tier v1 API
+populates the battery parameters that the historical 2026-08-28 capture
+predates, so a fresh document shows them measured.
 """
 
 from __future__ import annotations
@@ -406,9 +406,9 @@ def run(
 
     # The one and only gate: VehiclesPayload -> parse_payload.
     #
-    # `require_all_fields` is safe either way now: the completeness gate applies
-    # to the 15 measured parameters only, so the 9 declared-unmeasured fields can
-    # never quarantine a frame.  It stays False by default because a truck that
+    # `require_all_fields` gates on all 24 parameters; absence becomes NULL +
+    # a `missing` entry rather than a fabricated zero.  It stays False by
+    # default because a truck that
     # genuinely drops one of the 15 is still worth rendering -- the missing
     # parameter becomes NULL + a `FieldError` rather than taking the frame down.
     payload = VehiclesPayload.model_validate(envelope)

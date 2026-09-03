@@ -83,7 +83,26 @@ def test_full_cycle_writes_the_whole_fleet(mock_api, pg_engine):
         assert conn.scalar(select(func.count()).select_from(Telemetry)) == 4
 
     assert orch.cycles == 1 and orch.failures == 0
-    assert orch.tokens.auth_count == 1
+    assert orch.tokens.auth_count == 1  # tier-2 detail fetches reuse the summary token
+
+
+def test_full_cycle_writes_live_battery_telemetry(mock_api, pg_engine):
+    """The point of the two-tier fetch: `batt_v` / `chg_status` / `work_sts`
+    from the tier-2 detail feed land in the state table as populated columns,
+    not NULLs."""
+    mock_api.reset()
+    orch = make_orchestrator(mock_api, pg_engine)
+    assert orch.run_once() is True
+
+    with pg_engine.connect() as conn:
+        states = conn.execute(
+            select(VehicleState.vehicle_id, VehicleState.battery_total_v, VehicleState.charging_status, VehicleState.work_status)
+        ).all()
+    assert len(states) == 4
+    for vehicle_id, batt_v, chg, work in states:
+        assert batt_v is not None, f"{vehicle_id}: battery_total_v NULL after a two-tier cycle"
+        assert chg is not None, f"{vehicle_id}: charging_status NULL after a two-tier cycle"
+        assert work is not None, f"{vehicle_id}: work_status NULL after a two-tier cycle"
 
 
 def test_repeated_cycles_accumulate_history(mock_api, pg_engine):
