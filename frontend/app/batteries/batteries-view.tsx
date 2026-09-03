@@ -13,7 +13,6 @@
 
 import { useMemo, useState } from "react";
 
-import DataIngestionPanel from "@/components/telemetry/DataIngestionPanel";
 import GeoCascadeFilter from "@/components/telemetry/GeoCascadeFilter";
 import InteractiveGeoMap from "@/components/telemetry/InteractiveGeoMap";
 import LiveClock from "@/components/telemetry/LiveClock";
@@ -53,7 +52,7 @@ export default function BatteriesView({ data }: { data: TrustedTelemetryDocument
 
   return (
     <div className="min-h-screen bg-[#05070d] pb-12">
-      <ViewNav active="batteries" />
+      <ViewNav />
 
       <header className="mx-auto flex max-w-[1680px] flex-wrap items-center justify-between gap-4 px-5 pt-6 lg:px-8">
         <div>
@@ -109,10 +108,6 @@ export default function BatteriesView({ data }: { data: TrustedTelemetryDocument
       {/* pack positions on the live map */}
       <div className="mx-auto mt-5 max-w-[1680px] px-5 lg:px-8">
         <InteractiveGeoMap vehicles={evVehicles} />
-      </div>
-
-      <div className="mx-auto mt-5 max-w-[1680px] px-5 lg:px-8">
-        <DataIngestionPanel />
       </div>
     </div>
   );

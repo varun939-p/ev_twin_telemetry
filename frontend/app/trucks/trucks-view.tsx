@@ -15,7 +15,6 @@
 
 import { useMemo, useState } from "react";
 
-import DataIngestionPanel from "@/components/telemetry/DataIngestionPanel";
 import GeoCascadeFilter from "@/components/telemetry/GeoCascadeFilter";
 import InteractiveGeoMap from "@/components/telemetry/InteractiveGeoMap";
 import LiveClock from "@/components/telemetry/LiveClock";
@@ -209,10 +208,6 @@ export default function TrucksView({ data }: { data: TrustedTelemetryDocument })
       {/* drill-down heatmap + live location */}
       <div className="mx-auto mt-5 max-w-[1680px] px-5 lg:px-8">
         <InteractiveGeoMap vehicles={mapScope} />
-      </div>
-
-      <div className="mx-auto mt-5 max-w-[1680px] px-5 lg:px-8">
-        <DataIngestionPanel />
       </div>
     </div>
   );

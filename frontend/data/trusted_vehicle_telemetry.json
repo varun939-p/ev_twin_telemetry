@@ -8,7 +8,7 @@
     "input_shape": "dry_run_capture",
     "upstream_request": {
       "method": "GET",
-      "url": "https://track.blueenergymotors.com/api/dashboard-parameters?date=2026-08-28",
+      "url": "https://track.blueenergymotors.com/api/v1/vehicles?date=2026-08-28",
       "date": "2026-08-28"
     },
     "extra": {
