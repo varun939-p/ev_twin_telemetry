@@ -58,6 +58,7 @@ def mock_api():
                 self.fleet.latency_ms = 0
                 self.fleet.bad_creds = False
                 self.fleet.frozen = False
+                self.fleet.scenario = None
                 self.fleet.counts.update(
                     {"auth": 0, "auth_failed": 0, "data": 0, "detail": 0, "data_401": 0, "data_500": 0}
                 )

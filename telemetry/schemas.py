@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 from datetime import datetime, timezone
 from typing import Annotated, Any, Final
@@ -31,7 +32,9 @@ from pydantic import (
     model_validator,
 )
 
-from .fields import COLUMN_NAMES, PARAM_SPECS, SPEC_BY_NAME, resolve_parameter_key
+from .fields import COLUMN_NAMES, META_FIELDS, PARAM_SPECS, SPEC_BY_NAME, normalize_key, resolve_parameter_key
+
+log = logging.getLogger(__name__)
 
 __all__ = [
     "AuthResponse",
@@ -44,11 +47,16 @@ __all__ = [
     "SiteProvisionResponse",
     "ValidatedPayload",
     "VehicleParams",
+    "count_active_vehicles",
+    "extract_vehicle_id",
     "flatten_vehicle_frame",
+    "is_frame_active",
     "merge_vehicle_frames",
     "naive_to_aware",
     "parse_payload",
     "parse_source_timestamp",
+    "report_dates",
+    "vehicles_list_to_dict",
 ]
 
 # Strings the upstream (or an idle ECU) may emit in place of a number.
@@ -168,6 +176,172 @@ def merge_vehicle_frames(summary_frame: dict[str, Any], detail_response: Any) ->
                 continue
             merged[key] = value
     return merged
+
+
+# ---------------------------------------------------------------------------
+# list-wire tolerance (Pydantic v2 normalizers)
+# ---------------------------------------------------------------------------
+# The documented tier-1 shape is `{"vehicles": {"<ID>": {frame}}}`.  Some upstream
+# builds (and every `once --dry-run` capture) ship `vehicles` as a *list* of
+# frames instead, each carrying its own identity key.  `vehicles_list_to_dict`
+# is registered as a `BeforeValidator` on `VehiclesPayload.vehicles`, so both
+# wire shapes validate through the one and only gate -- and a frame we cannot
+# name is dropped and logged rather than given an invented key.
+_VEHICLE_ID_WIRE_KEYS: Final[tuple[str, ...]] = (
+    "vehicle_id",
+    "vehicleid",
+    "vehicle",
+    "id",
+    "vid",
+    "plate",
+    "chassis",
+    "chassis_no",
+    "reg_no",
+    "registration",
+    "vehicle_number",
+    "truck_id",
+    "asset_id",
+)
+_NORMALIZED_VEHICLE_ID_KEYS: Final[frozenset[str]] = frozenset(
+    normalize_key(key) for key in _VEHICLE_ID_WIRE_KEYS
+)
+
+
+def extract_vehicle_id(frame: Any) -> str | None:
+    """The identity of one list-wire frame, or None when it carries none.
+
+    Exact key match first (fast path), then the same case/separator-insensitive
+    normalization `resolve_parameter_key` uses, so `vehicleId`, `VEHICLE-ID` and
+    `vehicle_id` all identify the frame.  The value is returned verbatim
+    (trimmed); upper-casing stays with `parse_payload`, exactly as for the
+    dict wire shape.
+    """
+    if not isinstance(frame, dict):
+        return None
+    for key in _VEHICLE_ID_WIRE_KEYS:
+        value = frame.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    raw_to_normalized = {key: normalize_key(str(key)) for key in frame}
+    for key, normalized in raw_to_normalized.items():
+        if normalized not in _NORMALIZED_VEHICLE_ID_KEYS:
+            continue
+        value = frame[key]
+        if isinstance(value, (str, int)) and str(value).strip():
+            return str(value).strip()
+    return None
+
+
+def vehicles_list_to_dict(value: Any) -> Any:
+    """Normalizer for `VehiclesPayload.vehicles`: list wire -> dict wire.
+
+    Dicts and None pass through untouched (the documented shape and the empty
+    case).  A list is re-keyed onto `extract_vehicle_id(frame)`; duplicate ids
+    keep the first frame, and frames with no usable identity key are dropped
+    with a WARNING -- silence there would hide an upstream contract change.
+    """
+    if not isinstance(value, list):
+        return value
+    keyed: dict[str, Any] = {}
+    duplicates = dropped = 0
+    for frame in value:
+        vehicle_id = extract_vehicle_id(frame)
+        if vehicle_id is None:
+            dropped += 1
+            continue
+        if vehicle_id in keyed:
+            duplicates += 1
+            continue
+        keyed[vehicle_id] = frame
+    if dropped or duplicates:
+        log.warning(
+            "vehicles arrived as a list: %d frame(s) kept, %d dropped (no usable id), "
+            "%d duplicate id(s) ignored",
+            len(keyed),
+            dropped,
+            duplicates,
+        )
+    return keyed
+
+
+# ---------------------------------------------------------------------------
+# live-batch quality (drives the date-resolution fallback in the extractor)
+# ---------------------------------------------------------------------------
+# A frame is "active" when it carries at least one real reading.  A roster
+# entry that is only a timestamp plus the tier-1 `"battery": null` placeholder
+# is a *dead* frame: the truck is listed but sent no telemetry, and a batch of
+# those must not be mistaken for a live fleet.  Value `0` counts as a reading
+# (a parked truck's speed is data); `null` and nested blocks do not.
+_META_FRAME_KEYS: Final[frozenset[str]] = frozenset(
+    normalize_key(key) for key in (*META_FIELDS, "updated_at", "timestamp", "ok")
+) | _NORMALIZED_VEHICLE_ID_KEYS
+
+_DATE_PREFIX_RE: Final = re.compile(r"^(\d{4}-\d{2}-\d{2})")
+
+
+def is_frame_active(frame: Any) -> bool:
+    """True when one raw wire frame carries at least one non-null reading."""
+    if not isinstance(frame, dict):
+        return False
+    for key, value in frame.items():
+        if value is None or isinstance(value, dict):
+            continue
+        if normalize_key(str(key)) in _META_FRAME_KEYS:
+            continue
+        return True
+    return False
+
+
+def count_active_vehicles(raw: Any) -> int:
+    """Active frames in a raw tier-1 payload (dict or list wire shape)."""
+    vehicles = raw.get("vehicles") if isinstance(raw, dict) else None
+    vehicles = vehicles_list_to_dict(vehicles)
+    if not isinstance(vehicles, dict):
+        return 0
+    return sum(1 for frame in vehicles.values() if is_frame_active(frame))
+
+
+def report_dates(raw: Any, tz: ZoneInfo, limit: int = 4) -> list[str]:
+    """Distinct reporting dates (YYYY-MM-DD, source-local) in a payload, newest first.
+
+    The fleet's own `last_updated` values are the upstream telling us which
+    date it actually has data for -- the first thing the live-date resolver
+    probes when a batch comes back empty or dead.  Naive strings keep their
+    calendar date as written; epoch values are read in `tz` (IST) because the
+    upstream's `date` filter is server-local.  Unusable timestamps are skipped.
+    """
+    vehicles = raw.get("vehicles") if isinstance(raw, dict) else None
+    vehicles = vehicles_list_to_dict(vehicles)
+    if not isinstance(vehicles, dict):
+        return []
+
+    found: set[str] = set()
+    for frame in vehicles.values():
+        if not isinstance(frame, dict):
+            continue
+        raw_ts = None
+        for key in ("last_updated", "updated_at", "timestamp"):
+            candidate = frame.get(key)
+            if candidate is not None and not isinstance(candidate, bool):
+                raw_ts = candidate
+                break
+        if raw_ts is None:
+            continue
+        if isinstance(raw_ts, (int, float)):
+            found.add(datetime.fromtimestamp(float(raw_ts), tz=tz).date().isoformat())
+            continue
+        text = str(raw_ts).strip()
+        if text.lower() in _NULLISH:
+            continue
+        match = _DATE_PREFIX_RE.match(text)
+        if match is None:
+            continue
+        try:
+            datetime.strptime(match.group(1), "%Y-%m-%d")
+        except ValueError:
+            continue
+        found.add(match.group(1))
+    return sorted(found, reverse=True)[:limit]
 
 
 def _canonicalise_keys(flat_frame: dict[str, Any]) -> dict[str, Any]:
@@ -315,13 +489,17 @@ class VehiclesPayload(BaseModel):
     Tier 1 frames are fleet-summary level (`battery` arrives as an explicit
     null); the tier-2 detail frames fetched per vehicle are merged in by
     `telemetry.extractor` via `merge_vehicle_frames` before validation.
+
+    `vehicles` accepts both wire shapes: the documented `{id: frame}` map and
+    a list of self-identifying frames (`vehicles_list_to_dict`), so an
+    upstream that ships the list shape degrades into a warning, not a crash.
     """
 
     model_config = ConfigDict(extra="ignore")
 
     ok: bool = True
     summary: dict[str, Any] | None = None
-    vehicles: dict[str, Any] | None = None
+    vehicles: Annotated[dict[str, Any] | None, BeforeValidator(vehicles_list_to_dict)] = None
 
     @model_validator(mode="after")
     def _normalise(self) -> "VehiclesPayload":

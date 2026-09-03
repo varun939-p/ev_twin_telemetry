@@ -12,16 +12,26 @@
  * Neither component depends on the other, and neither knows the backend exists.
  */
 
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
 
 import DigitalTwinDashboard, { type ProvisionOutcome } from "@/components/telemetry/DigitalTwinDashboard";
 import ViewNav from "@/components/telemetry/ViewNav";
+import { useFilters } from "@/lib/FilterContext";
 import type { SiteConfig, TrustedTelemetryDocument } from "@/lib/trusted-telemetry";
 
 const PROVISION_ENDPOINT = "/api/provision-site";
 
 export default function TwinView({ data }: { data: TrustedTelemetryDocument }) {
-  const [selectedVehicleId, setSelectedVehicleId] = useState<string | undefined>(undefined);
+  const { selection, selectVehicle } = useFilters();
+
+  /** The asset selection is global: an asset picked on the geo map (Trucks /
+   *  Batteries) stays picked when navigating here, and the 24-parameter view
+   *  opens on it.  List clicks publish back into the same context so the map
+   *  on the other pages flies to the truck. */
+  const handleVehicleChange = useCallback(
+    (vehicleId: string) => selectVehicle(vehicleId, "list"),
+    [selectVehicle],
+  );
 
   /** Transmit a site config to the Python backend.  Never throws: a down backend
    *  becomes a readable `ProvisionOutcome`, not an unhandled rejection. */
@@ -73,8 +83,8 @@ export default function TwinView({ data }: { data: TrustedTelemetryDocument }) {
       <ViewNav active="fleet" />
       <DigitalTwinDashboard
         data={data}
-        selectedVehicleId={selectedVehicleId}
-        onVehicleChange={setSelectedVehicleId}
+        selectedVehicleId={selection?.vehicleId}
+        onVehicleChange={handleVehicleChange}
         onProvisionSite={handleProvisionSite}
       />
     </main>

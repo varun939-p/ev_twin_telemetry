@@ -32,6 +32,11 @@ def make_orchestrator(mock_api, pg_engine, **overrides) -> TelemetryOrchestrator
         "http_max_retries": 3,
         "error_backoff_seconds": 0.01,
         "auth_backoff_seconds": 0.01,
+        # The harness fleet is 4 trucks; the production live-date threshold is
+        # 5.  Keep the resolver out of these loops (it is exercised in
+        # tests/test_live_date.py) so every cycle sends exactly one tier-1
+        # GET, as it did before date resolution existed.
+        "live_date_min_vehicles": 1,
     }
     options.update(overrides)  # caller wins
     settings = Settings(_env_file=None, **options)

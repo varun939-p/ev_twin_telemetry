@@ -11,6 +11,13 @@ Control endpoints (tests drive these):
     POST /__control/revoke           every issued token becomes invalid (401 "auth":"required")
     POST /__control/latency?ms=N     sleep N ms per data request
     POST /__control/bad-creds?on=1   the auth endpoint starts rejecting credentials
+    POST /__control/freeze?on=1      hold state + clock still (identical frames)
+    POST /__control/scenario?live_date=YYYY-MM-DD&dead=N
+                                     date-dependent fleet: only `?date=<live_date>`
+                                     carries the active fleet; every other date (and
+                                     the no-date server default) answers with N dead
+                                     roster entries -- the failure mode the engine's
+                                     live-date resolution exists for.  `on=0` clears.
     GET  /__stats                    issued tokens, request counts, last vehicles served
 """
 
@@ -86,6 +93,8 @@ class Fleet:
         self.counts = {"auth": 0, "auth_failed": 0, "data": 0, "detail": 0, "data_401": 0, "data_500": 0}
         self.ticks = 0
         self.frozen = False  # when True, state does not advance -> identical frames
+        # Date-dependent fleet emulation (POST /__control/scenario); None = off.
+        self.scenario: dict[str, Any] | None = None
         self._ist_now = _IST_EPOCH  # tier-2 details reuse the tick time of the last summary
         ids = VEHICLE_IDS[:count] or VEHICLE_IDS
         self.state: dict[str, dict[str, float]] = {vid: self._seed(i) for i, vid in enumerate(ids)}
@@ -155,6 +164,8 @@ class Fleet:
         """Tier 1: the fleet summary.  Frames are high-level only and carry
         `"battery": null` -- the live diagnostics live on `vehicle_detail`."""
         with self.lock:
+            if self.scenario is not None:
+                return self._scenario_payload(self.scenario, date=date, vehicle=vehicle)
             if not self.frozen:
                 self.ticks += 1
                 for state in self.state.values():
@@ -174,7 +185,54 @@ class Fleet:
             # minute the moment freezing starts, and nothing would ever collide.
             ist_now = _IST_EPOCH + timedelta(minutes=self.ticks - 1)
             self._ist_now = ist_now  # tier-2 details pin to the same reading
+            return self._summary_response(ist_now, vehicle)
+
+    # ------------------------------------------------------------ scenario
+    # Date-dependent fleet, OFF by default (every existing test and the
+    # `--vehicles N` demo behave exactly as before).  When enabled through
+    # POST /__control/scenario?live_date=YYYY-MM-DD&dead=N the mock plays the
+    # failure mode the engine's live-date resolution exists for: the upstream's
+    # server-default batch (no `date`, i.e. today IST) and every date except
+    # `live_date` answer with N *dead* roster entries (timestamp + tier-1
+    # `battery: null` placeholder only -- no readings at all), while
+    # `?date=<live_date>` answers with the full active fleet.
+    def _scenario_payload(self, scenario: dict[str, Any], *, date: str | None, vehicle: str | None) -> dict[str, Any]:
+        live_date: str = scenario["live_date"]
+        dead: int = scenario["dead"]
+        effective = date or datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
+        if effective != live_date:
+            dead_day = datetime.strptime(live_date, "%Y-%m-%d") - timedelta(days=12)
+            dead_ts = dead_day.strftime("%Y-%m-%d") + " 10:00:00"
             vehicles: dict[str, Any] = {}
+            for vid in list(self.state)[: max(0, dead)]:
+                if vehicle and vehicle.upper() not in vid:
+                    continue
+                vehicles[vid] = {"last_updated": dead_ts, "battery": None}
+            return self._summary_response(None, vehicle, override_vehicles=vehicles)
+        if not self.frozen:
+            self.ticks += 1
+            for state in self.state.values():
+                self._advance(state, dt_minutes=1.0)
+        anchor = datetime.strptime(live_date, "%Y-%m-%d").replace(
+            hour=10, minute=0, second=0, microsecond=0, tzinfo=ZoneInfo("Asia/Kolkata")
+        )
+        ist_now = anchor + timedelta(minutes=self.ticks - 1)
+        self._ist_now = ist_now
+        return self._summary_response(ist_now, vehicle)
+
+    def _summary_response(
+        self,
+        ist_now: datetime | None,
+        vehicle: str | None,
+        *,
+        override_vehicles: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """The tier-1 envelope: per-vehicle summary frames + fleet summary."""
+        if override_vehicles is not None:
+            vehicles = override_vehicles
+        else:
+            assert ist_now is not None
+            vehicles = {}
             for vid, state in self.state.items():
                 if vehicle and vehicle.upper() not in vid:
                     continue
@@ -190,24 +248,24 @@ class Fleet:
                     "battery": None,
                 }
 
-            # Build the summary from the internal state, NOT from the emitted
-            # frames: with `all_fields=False` the detail frames only carry the
-            # 11 documented keys, so reading `charging_status` off them raises.
-            fleet = list(self.state.values())
-            return {
-                "ok": True,
-                "summary": {
-                    "segments": [],
-                    "overall": {
-                        "vehicle_count": len(fleet),
-                        "avg_soc": round(sum(s["soc"] for s in fleet) / max(1, len(fleet)), 2),
-                        "charging": sum(1 for s in fleet if s["charging_status"] > 0.5),
-                    },
-                    "low_soc_alerts": [vid for vid, s in self.state.items() if s["soc"] < 20],
-                    "soh_drop_alerts": [],
+        # Build the summary from the internal state, NOT from the emitted
+        # frames: with `all_fields=False` the detail frames only carry the
+        # 11 documented keys, so reading `charging_status` off them raises.
+        fleet = list(self.state.values())
+        return {
+            "ok": True,
+            "summary": {
+                "segments": [],
+                "overall": {
+                    "vehicle_count": len(fleet),
+                    "avg_soc": round(sum(s["soc"] for s in fleet) / max(1, len(fleet)), 2),
+                    "charging": sum(1 for s in fleet if s["charging_status"] > 0.5),
                 },
-                "vehicles": vehicles,
-            }
+                "low_soc_alerts": [vid for vid, s in self.state.items() if s["soc"] < 20],
+                "soh_drop_alerts": [],
+            },
+            "vehicles": vehicles,
+        }
 
     def vehicle_detail(self, vehicle_id: str) -> dict[str, Any] | None:
         """Tier 2: the complete live diagnostic frame for one vehicle.
@@ -295,6 +353,7 @@ class Fleet:
                 "counts": dict(self.counts),
                 "tokens_issued": len(self.tokens),
                 "frozen": self.frozen,
+                "scenario": dict(self.scenario) if self.scenario else None,
                 "fail_remaining": self.fail_remaining,
                 "latency_ms": self.latency_ms,
                 "bad_creds": self.bad_creds,
@@ -348,6 +407,31 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/__control/freeze":
             self.fleet.frozen = query.get("on", ["1"])[0] not in {"0", "false", "no"}
             self._send(200, {"ok": True, "frozen": self.fleet.frozen})
+            return
+        if path == "/__control/scenario":
+            # Date-dependent fleet: every date except `live_date` (and the
+            # server-default "today") answers with `dead` dead roster entries;
+            # `?date=<live_date>` answers with the full active fleet.  This is
+            # the upstream failure mode the engine's LIVE_DATE_* resolution
+            # exists for -- off by default, so existing behaviour never shifts.
+            if query.get("on", ["1"])[0] in {"0", "false", "no"}:
+                with self.fleet.lock:
+                    self.fleet.scenario = None
+                self._send(200, {"ok": True, "scenario": None})
+                return
+            live_date = query.get("live_date", [None])[0]
+            if live_date is None:
+                live_date = (datetime.now(ZoneInfo("Asia/Kolkata")).date() - timedelta(days=1)).isoformat()
+            else:
+                try:
+                    datetime.strptime(live_date, "%Y-%m-%d")
+                except ValueError:
+                    self._send(400, {"ok": False, "error": "bad live_date, expected YYYY-MM-DD"})
+                    return
+            scenario = {"live_date": live_date, "dead": max(0, int(query.get("dead", ["2"])[0]))}
+            with self.fleet.lock:
+                self.fleet.scenario = scenario
+            self._send(200, {"ok": True, "scenario": scenario})
             return
         if path == "/__control/revoke":
             self.fleet.revoke_all()

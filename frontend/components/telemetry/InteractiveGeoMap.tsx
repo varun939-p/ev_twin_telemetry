@@ -1,18 +1,37 @@
 "use client";
 
 /**
- * InteractiveGeoMap -- drill-down density map + live location tracker.
+ * InteractiveGeoMap -- authentic India geo map + live location tracker.
+ *
+ * The surface is a real geographic map: 36 state/UT boundary polygons
+ * (vendored, simplified MIT-licensed survey geometry -- see `lib/india-geo`)
+ * rendered through the same camera as the fleet markers, with reference-city
+ * anchors over the top.  Vehicles plot at their measured GPS fixes and are
+ * styled by live state:
+ *
+ *   moving (speed > 0)        bright cyan marker + pulse ring
+ *   parked, charging          amber marker
+ *   parked                    slate marker
+ *   speed not measured        hollow slate marker ("awaiting upstream")
  *
  * Two modes, driven by the global FilterContext:
  *
- *  1. Overview: density bubbles per ~25 km cell.  Clicking a bubble (or a
- *     deployment candidate in the ranked list) sets `focus` -- a *global*
- *     filter -- which narrows the asset sidebar on the host page and switches
- *     this map into…
+ *  1. Overview: every vehicle marker plus density bubbles for clusters of
+ *     `CLUSTER_BUBBLE_MIN`+ assets.  Clicking a bubble (or a deployment
+ *     candidate in the ranked list) sets `focus` -- a *global* filter -- which
+ *     narrows the asset sidebar on the host page and switches this map into…
  *
  *  2. Live tracking: the camera flies to the focused assets and each truck
  *     renders as an animated marker (smooth, sensor-style motion emulated
- *     around its last validated fix) with id, SOC and a pulse ring.
+ *     around its last validated fix) with id, SOC and status styling.
+ *
+ * BI-DIRECTIONAL SELECTION
+ * -----------------------
+ * Clicking (or keyboard-activating) any marker calls `selectVehicle(id,
+ * "map")`: the host page selects that asset, opens its parameter view and
+ * scrolls its card into view.  Conversely, selecting an asset in a list
+ * (`origin: "list"`) flies this map's camera to the truck and rings its
+ * marker.  Selection is a pointer, not a filter -- nothing is narrowed.
  *
  * CAMERA CONTRACT
  * ---------------
@@ -22,9 +41,13 @@
  *   * Targets are computed from *validated* fixes only and quantised to
  *     ~10^-3 deg (~110 m).  Live GPS jitter can therefore never retrigger a
  *     camera move, let alone oscillate one.
- *   * Mode changes (overview <-> focus) tween the camera centre and span over
- *     a fixed 800 ms `easeInOutCubic` flight.  The camera is never swapped
- *     discontinuously, so selection can't "spazz" the viewport.
+ *   * Mode changes (overview <-> focus <-> single-asset flight) tween the
+ *     camera centre and span over a fixed 800 ms `easeInOutCubic` flight.
+ *     The camera is never swapped discontinuously, so selection can't
+ *     "spazz" the viewport.
+ *   * The boundary layer rides the camera through ONE group transform
+ *     (degree-space path data, linear equirectangular camera), so flights
+ *     never re-project geometry and can neither shake nor NaN it.
  *   * The emulated sensor drift is applied *after* projection and is invisible
  *     to the camera: during tracking the frame is locked, padded and stable
  *     while markers animate inside it.
@@ -38,6 +61,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { batteryRegistry, type BatteryIdentity } from "@/lib/fleet";
 import { useFilters } from "@/lib/FilterContext";
+import { indiaStatePaths } from "@/lib/india-geo";
 import {
   INDIA_BBOX,
   REFERENCE_CITIES,
@@ -200,6 +224,35 @@ function projector(view: Viewport) {
   });
 }
 
+/* ------------------------------------------------------- motion styling */
+
+type MotionState = "moving" | "charging" | "parked" | "unknown";
+
+/** Live state of one plotted fix.  `null` speed is honest unknown, not 0. */
+function motionOf(p: GeoPoint): MotionState {
+  if (p.speedKmh === null) return "unknown";
+  if (p.speedKmh > 0) return "moving";
+  return p.chargingStatus === 1 ? "charging" : "parked";
+}
+
+const MOTION_COLOR: Record<MotionState, string> = {
+  moving: "#22d3ee",
+  charging: "#fbbf24",
+  parked: "#64748b",
+  unknown: "#475569",
+};
+
+const MOTION_LABEL: Record<MotionState, string> = {
+  moving: "Moving",
+  charging: "Parked · charging",
+  parked: "Parked",
+  unknown: "Speed not measured",
+};
+
+/** Clusters of this size or larger render as a density bubble in overview
+ *  (click drills into live tracking); smaller ones show individual markers. */
+const CLUSTER_BUBBLE_MIN = 6;
+
 function hashSeed(id: string): number {
   let h = 0;
   for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 997;
@@ -212,6 +265,69 @@ const TIER_COLOR: Record<Tier, string> = { low: "#22d3ee", mid: "#fbbf24", high:
 
 type Hover = { kind: "cluster"; cluster: Cluster; x: number; y: number } | { kind: "point"; point: GeoPoint; x: number; y: number } | null;
 
+/* -------------------------------------------------------------- marker */
+
+function VehicleMarker({
+  point,
+  x,
+  y,
+  label,
+  selected,
+  onHover,
+  onLeave,
+  onSelect,
+}: {
+  point: GeoPoint;
+  x: number;
+  y: number;
+  label: string;
+  selected: boolean;
+  onHover: () => void;
+  onLeave: () => void;
+  onSelect: () => void;
+}) {
+  const motion = motionOf(point);
+  const color = MOTION_COLOR[motion];
+  return (
+    <g
+      className="cursor-pointer outline-none"
+      role="button"
+      tabIndex={0}
+      aria-label={`${label} — ${MOTION_LABEL[motion]}, SOC ${point.soc === null ? "unknown" : `${point.soc}%`}. Activate to open in the asset list.`}
+      onMouseEnter={onHover}
+      onMouseLeave={onLeave}
+      onFocus={onHover}
+      onBlur={onLeave}
+      onClick={onSelect}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onSelect();
+        }
+      }}
+    >
+      {motion === "moving" && (
+        <circle cx={x} cy={y} r={6} fill="none" stroke={color} strokeWidth={1.5} opacity={0.8}>
+          <animate attributeName="r" values="6;20" dur="1.6s" repeatCount="indefinite" />
+          <animate attributeName="opacity" values="0.8;0" dur="1.6s" repeatCount="indefinite" />
+        </circle>
+      )}
+      {selected && <circle cx={x} cy={y} r={9.5} fill="none" stroke="#f8fafc" strokeWidth={1.4} opacity={0.85} />}
+      <circle
+        cx={x}
+        cy={y}
+        r={selected ? 5.5 : 4.5}
+        fill={color}
+        fillOpacity={motion === "unknown" ? 0.3 : 0.95}
+        stroke={motion === "unknown" ? color : "#031018"}
+        strokeWidth={1.4}
+      />
+    </g>
+  );
+}
+
+/* ----------------------------------------------------------------- map */
+
 export default function InteractiveGeoMap({
   vehicles,
   batteryLabels,
@@ -222,7 +338,7 @@ export default function InteractiveGeoMap({
    *  registry over the passed vehicles alone. */
   batteryLabels?: ReadonlyMap<string, BatteryIdentity>;
 }) {
-  const { focus, setFocus } = useFilters();
+  const { focus, setFocus, selection, selectVehicle } = useFilters();
   const [hover, setHover] = useState<Hover>(null);
   /** Frame timestamp published by the rAF loop; 0 until live-tracking starts. */
   const [frameTime, setFrameTime] = useState(0);
@@ -242,6 +358,12 @@ export default function InteractiveGeoMap({
   const clusters = useMemo(() => buildClusters(inRegion), [inRegion]);
   const candidates = useMemo(() => clusters.filter((c) => c.count >= 2), [clusters]);
 
+  /** Dense cells become clickable density bubbles; the rest plot as
+   *  individual status markers so every truck stays addressable. */
+  const bubbles = useMemo(() => (focus ? [] : clusters.filter((c) => c.count >= CLUSTER_BUBBLE_MIN)), [clusters, focus]);
+  const bubbleIds = useMemo(() => new Set(bubbles.flatMap((b) => b.members.map((m) => m.vehicleId))), [bubbles]);
+  const overviewMarkers = useMemo(() => inRegion.filter((p) => !bubbleIds.has(p.vehicleId)), [inRegion, bubbleIds]);
+
   const focusMembers = useMemo(
     () => (focus ? inRegion.filter((p) => focus.vehicleIds.includes(p.vehicleId)) : []),
     [focus, inRegion],
@@ -249,24 +371,41 @@ export default function InteractiveGeoMap({
 
   const emphasis = focus ? focusMembers : inRegion;
 
+  /** The asset the lists and the map are jointly pointing at. */
+  const selectionPoint = useMemo(
+    () => (selection ? (inRegion.find((p) => p.vehicleId === selection.vehicleId) ?? null) : null),
+    [selection, inRegion],
+  );
+
   /**
    * Camera target.  Overview pads by 12%/14%; focus pads wider (20%/26%) so
-   * vehicle-id and SOC labels stay inside the frame.  Both are quantised by
-   * `fitCamera`, and `useSmoothCamera` deep-compares, so neither live marker
-   * drift nor parent re-renders can move the camera once framed.  A focus
-   * whose members left the region falls back to the overview frame (the
-   * empty-state card renders instead of the map).
+   * vehicle-id and SOC labels stay inside the frame.  A list-side selection
+   * (no focus) flies to that single truck.  All are quantised by `fitCamera`,
+   * and `useSmoothCamera` deep-compares, so neither live marker drift nor
+   * parent re-renders can move the camera once framed.  A focus whose members
+   * left the region falls back to the overview frame (the empty-state card
+   * renders instead of the map).
    */
   const target = useMemo<Camera>(
     () =>
       focus && focusMembers.length > 0
         ? fitCamera(focusMembers, MIN_SPAN_FOCUS, 0.2, 0.26)
-        : fitCamera(inRegion, MIN_SPAN_OVERVIEW, 0.12, 0.14),
-    [focus, focusMembers, inRegion],
+        : selection && selection.origin === "list" && selectionPoint
+          ? fitCamera([selectionPoint], MIN_SPAN_FOCUS, 0.2, 0.26)
+          : fitCamera(inRegion, MIN_SPAN_OVERVIEW, 0.12, 0.14),
+    [focus, focusMembers, selection, selectionPoint, inRegion],
   );
   const camera = useSmoothCamera(target);
   const view = useMemo(() => viewportOf(camera), [camera]);
   const project = useMemo(() => projector(view), [view]);
+
+  /** Degree-space boundary paths, compiled once; the camera rides one group
+   *  transform (the projection is linear in lon/lat), so flights never
+   *  re-project 19k coordinate pairs. */
+  const statePaths = useMemo(() => indiaStatePaths(), []);
+  const geoScaleX = view.width / (view.lonMax - view.lonMin);
+  const geoScaleY = view.height / (view.latMax - view.latMin);
+  const geoTransform = `translate(${-view.lonMin * geoScaleX} ${view.latMax * geoScaleY}) scale(${geoScaleX} ${-geoScaleY})`;
 
   // Sensor-style refresh while live-tracking: ~15 fps re-render.
   useEffect(() => {
@@ -320,13 +459,44 @@ export default function InteractiveGeoMap({
     (c) => c.lat >= view.latMin && c.lat <= view.latMax && c.lon >= view.lonMin && c.lon <= view.lonMax,
   );
 
+  const markerLayer = (members: GeoPoint[]) =>
+    members.map((p) => {
+      const pos = livePosition(p);
+      const { x, y } = project(pos.lat, pos.lon);
+      const label = labels.get(p.vehicleId)?.label ?? p.vehicleId;
+      return (
+        <g key={p.vehicleId}>
+          <VehicleMarker
+            point={p}
+            x={x}
+            y={y}
+            label={label}
+            selected={selection?.vehicleId === p.vehicleId}
+            onHover={() => setHover({ kind: "point", point: p, x, y })}
+            onLeave={() => setHover(null)}
+            onSelect={() => selectVehicle(p.vehicleId, "map")}
+          />
+          {focus && (
+            <>
+              <text x={x + 9} y={y - 7} fill="#e2f4ff" fontSize="11" fontWeight="600" fontFamily="ui-sans-serif, system-ui" pointerEvents="none">
+                {label}
+              </text>
+              <text x={x + 9} y={y + 6} fill="#7dd3fc" fontSize="10" fontFamily="ui-monospace, monospace" pointerEvents="none">
+                {p.soc === null ? "SOC —" : `SOC ${p.soc}%`}
+              </text>
+            </>
+          )}
+        </g>
+      );
+    });
+
   return (
     <section className={CARD}>
       <header className="flex flex-wrap items-center justify-between gap-3 px-6 pb-4 pt-6">
         <div>
-          <p className={EYEBROW}>{focus ? "Live Location — Tracking Scope" : "Deployment Intelligence"}</p>
+          <p className={EYEBROW}>{focus ? "Live Location — Tracking Scope" : "Live Geography — India"}</p>
           <h2 className="mt-2 text-lg font-semibold tracking-tight text-white">
-            {focus ? `Tracking ${focusMembers.length} asset${focusMembers.length === 1 ? "" : "s"} — ${focus.label}` : "Live battery positions & deployment density"}
+            {focus ? `Tracking ${focusMembers.length} asset${focusMembers.length === 1 ? "" : "s"} — ${focus.label}` : "Live battery positions on the India map"}
           </h2>
         </div>
         {focus && (
@@ -346,20 +516,36 @@ export default function InteractiveGeoMap({
         {/* ------------------------------------------------------ map surface */}
         <div className="xl:col-span-2">
           <div className="relative overflow-hidden rounded-2xl bg-[#03060d] ring-1 ring-white/[0.05]">
-            <svg viewBox={`0 0 ${view.width} ${view.height}`} className="block h-auto w-full" role="img" aria-label="Interactive fleet map">
+            <svg viewBox={`0 0 ${view.width} ${view.height}`} className="block h-auto w-full" role="group" aria-label="Interactive fleet map of India">
+              {/* authentic state/UT boundaries, degree-space paths under one transform */}
+              <g transform={geoTransform} aria-hidden>
+                {statePaths.map((state) => (
+                  <path
+                    key={state.name}
+                    d={state.d}
+                    fill="#0b1626"
+                    fillRule="evenodd"
+                    stroke="#274361"
+                    strokeWidth={1}
+                    strokeLinejoin="round"
+                    vectorEffect="non-scaling-stroke"
+                  />
+                ))}
+              </g>
+
               {visibleCities.map((city) => {
                 const { x, y } = project(city.lat, city.lon);
                 return (
-                  <g key={city.name} opacity={0.55}>
+                  <g key={city.name} opacity={0.55} pointerEvents="none">
                     <path d={`M ${x - 4} ${y} H ${x + 4} M ${x} ${y - 4} V ${y + 4}`} stroke="#46586f" strokeWidth="1" />
                     <text x={x + 6} y={y + 3} fill="#8ea3bd" fontSize="11">{city.name}</text>
                   </g>
                 );
               })}
 
-              {/* overview: clickable density bubbles */}
+              {/* overview: clickable density bubbles for the densest cells */}
               {!focus &&
-                clusters.map((cluster) => {
+                bubbles.map((cluster) => {
                   const { x, y } = project(cluster.lat, cluster.lon);
                   const color = TIER_COLOR[tier(cluster.count)];
                   const active = hover?.kind === "cluster" && hover.cluster.id === cluster.id;
@@ -382,33 +568,8 @@ export default function InteractiveGeoMap({
                   );
                 })}
 
-              {/* live mode: animated per-truck markers */}
-              {focus &&
-                focusMembers.map((p) => {
-                  const pos = livePosition(p);
-                  const { x, y } = project(pos.lat, pos.lon);
-                  const label = labels.get(p.vehicleId)?.label ?? p.vehicleId;
-                  return (
-                    <g
-                      key={p.vehicleId}
-                      className="cursor-pointer"
-                      onMouseEnter={() => setHover({ kind: "point", point: p, x, y })}
-                      onMouseLeave={() => setHover(null)}
-                    >
-                      <circle cx={x} cy={y} r={6} fill="none" stroke="#22d3ee" strokeWidth="1.5" opacity={0.8}>
-                        <animate attributeName="r" values="6;22" dur="1.6s" repeatCount="indefinite" />
-                        <animate attributeName="opacity" values="0.8;0" dur="1.6s" repeatCount="indefinite" />
-                      </circle>
-                      <circle cx={x} cy={y} r={5} fill="#22d3ee" fillOpacity={0.9} stroke="#031018" strokeWidth="1.5" />
-                      <text x={x + 9} y={y - 7} fill="#e2f4ff" fontSize="11" fontWeight="600" fontFamily="ui-sans-serif, system-ui">
-                        {label}
-                      </text>
-                      <text x={x + 9} y={y + 6} fill="#7dd3fc" fontSize="10" fontFamily="ui-monospace, monospace">
-                        {p.soc === null ? "SOC —" : `SOC ${p.soc}%`}
-                      </text>
-                    </g>
-                  );
-                })}
+              {/* live markers: every addressable truck, styled by motion state */}
+              {markerLayer(focus ? focusMembers : overviewMarkers)}
             </svg>
 
             {focus && (
@@ -421,9 +582,22 @@ export default function InteractiveGeoMap({
               </div>
             )}
 
+            {/* motion legend */}
+            <div className="pointer-events-none absolute bottom-3 left-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-white/[0.06] bg-slate-950/70 px-3 py-1.5 backdrop-blur-md">
+              {(Object.keys(MOTION_LABEL) as MotionState[]).map((motion) => (
+                <span key={motion} className="flex items-center gap-1.5 text-[10px] text-slate-400">
+                  <span
+                    className="h-2 w-2 rounded-full"
+                    style={{ background: MOTION_COLOR[motion], opacity: motion === "unknown" ? 0.45 : 1 }}
+                  />
+                  {MOTION_LABEL[motion]}
+                </span>
+              ))}
+            </div>
+
             {hover && (
               <div
-                className="pointer-events-none absolute z-10 w-56 -translate-x-1/2 -translate-y-full rounded-xl border border-white/10 bg-slate-950/90 p-3 text-[11px] shadow-2xl backdrop-blur-xl"
+                className="pointer-events-none absolute z-10 w-60 -translate-x-1/2 -translate-y-full rounded-xl border border-white/10 bg-slate-950/90 p-3 text-[11px] shadow-2xl backdrop-blur-xl"
                 style={{ left: `${(hover.x / view.width) * 100}%`, top: `${(hover.y / view.height) * 100 - 2}%` }}
               >
                 {hover.kind === "cluster" ? (
@@ -434,14 +608,28 @@ export default function InteractiveGeoMap({
                   </>
                 ) : (
                   <>
-                    <p className="truncate text-xs font-semibold text-white">{labels.get(hover.point.vehicleId)?.label ?? hover.point.vehicleId}</p>
+                    <p className="truncate text-sm font-semibold text-white">
+                      {labels.get(hover.point.vehicleId)?.label ?? hover.point.vehicleId}
+                    </p>
                     <p className="truncate font-mono text-[10px] text-slate-500">
                       carrier {labels.get(hover.point.vehicleId)?.chassis ?? hover.point.vehicleId}
                     </p>
-                    <p className="font-mono text-slate-500">{hover.point.lat.toFixed(4)}, {hover.point.lon.toFixed(4)}</p>
-                    <p className="mt-1 text-slate-500">
-                      SOC {hover.point.soc === null ? "—" : `${hover.point.soc}%`} · {hover.point.speedKmh === null ? "—" : `${hover.point.speedKmh} km/h`}
+                    <p className="mt-1.5 flex items-center justify-between gap-2">
+                      <span
+                        className="rounded-full px-2 py-0.5 text-[9px] font-medium uppercase tracking-[0.14em]"
+                        style={{
+                          color: MOTION_COLOR[motionOf(hover.point)],
+                          background: `${MOTION_COLOR[motionOf(hover.point)]}1a`,
+                        }}
+                      >
+                        {MOTION_LABEL[motionOf(hover.point)]}
+                      </span>
+                      <span className="font-mono text-base font-semibold text-cyan-300">
+                        {hover.point.soc === null ? "SOC —" : `SOC ${hover.point.soc}%`}
+                      </span>
                     </p>
+                    <p className="mt-1 font-mono text-slate-500">{hover.point.lat.toFixed(4)}, {hover.point.lon.toFixed(4)}</p>
+                    <p className="mt-1 text-cyan-300/80">Click to open this asset in the list</p>
                   </>
                 )}
               </div>
@@ -450,7 +638,7 @@ export default function InteractiveGeoMap({
           <p className="mt-3 text-[11px] leading-relaxed text-slate-600">
             {focus
               ? "The camera flies to the selected scope and holds a locked, padded frame; markers interpolate smoothly around each truck's last validated GPS fix. Underlying coordinates are never fabricated beyond this visual drift."
-              : "Click a bubble — or a ranked candidate — to fly to the live location view. The selection is a global filter: the asset sidebar narrows to exactly these trucks."}
+              : "State boundaries are real surveyed geometry; every marker is a measured GPS fix, coloured by live motion state. Click a marker to open that asset in the list, or a density bubble to fly to the live location view."}
           </p>
         </div>
 

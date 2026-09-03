@@ -13,7 +13,7 @@
  * overview ignores only the focus so a cluster can be (re)selected.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 
 import GeoCascadeFilter from "@/components/telemetry/GeoCascadeFilter";
 import InteractiveGeoMap from "@/components/telemetry/InteractiveGeoMap";
@@ -38,7 +38,19 @@ function Tile({ label, value, unit, muted = false }: { label: string; value: str
 
 export default function TrucksView({ data }: { data: TrustedTelemetryDocument }) {
   const filters = useFilters();
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const { selection, selectVehicle } = filters;
+
+  /** Bi-directional map link: every selection (card click or map marker
+   *  click) lives in the global context, so the open carrier is *derived*,
+   *  not mirrored into state; a map-originated selection additionally
+   *  scrolls its card into view. */
+  useEffect(() => {
+    if (selection?.origin === "map") {
+      document
+        .getElementById(`carrier-card-${selection.vehicleId}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }, [selection]);
 
   const vehicles = data.vehicles;
 
@@ -61,11 +73,11 @@ export default function TrucksView({ data }: { data: TrustedTelemetryDocument })
     [scoped],
   );
 
-  /** Derived, not synced by an effect: when the filter drops the current pick
-   *  (or nothing has been clicked yet) the first asset in scope is the
-   *  selection.  Writing this back into state from an effect would cost an
-   *  extra render on every filter change. */
-  const selected = scoped.find((v) => v.vehicle_id === selectedId) ?? scoped[0] ?? null;
+  /** Derived, not synced by an effect: the global selection (set by a card
+   *  click here or a marker click on the geo map) is the open carrier; when
+   *  the filter drops it -- or nothing has been clicked yet -- the first
+   *  asset in scope is the selection. */
+  const selected = scoped.find((v) => v.vehicle_id === selection?.vehicleId) ?? scoped[0] ?? null;
 
   const medianSoc = useMemo(() => {
     const socs = scoped.map((v) => numericValue(v, "soc")).filter((s): s is number => s !== null).sort((a, b) => a - b);
@@ -130,10 +142,10 @@ export default function TrucksView({ data }: { data: TrustedTelemetryDocument })
               const identity = registry.get(v.vehicle_id);
               const active = v.vehicle_id === selected?.vehicle_id;
               return (
-                <li key={v.vehicle_id}>
+                <li key={v.vehicle_id} id={`carrier-card-${v.vehicle_id}`}>
                   <button
                     type="button"
-                    onClick={() => setSelectedId(v.vehicle_id)}
+                    onClick={() => selectVehicle(v.vehicle_id, "list")}
                     className={`w-full rounded-lg border px-3 py-2 text-left transition ${
                       active ? "border-cyan-400/30 bg-cyan-400/[0.07]" : "border-transparent hover:bg-white/[0.03]"
                     }`}

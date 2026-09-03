@@ -149,28 +149,27 @@ export const PARAM_ORDER: readonly string[] = [
 ] as const;
 
 /**
- * The 9 parameters the upstream does not measure: the auxiliary thermal and
- * secondary sub-pack diagnostics.  Mirrors `telemetry.fields.UNMEASURED_NAMES`,
- * which pins them to NULL in the validator.
+ * Parameters the upstream does not measure, pinned disabled regardless of
+ * document content.
  *
- * Declaring them here too is deliberate: a tile's disabled state must not be
- * inferable only from whatever a document happens to contain.  These render
- * grayed out unconditionally, and are never substituted with a zero -- an
- * absent measurement and a zero reading are opposite claims about the truck.
+ * EMPTY BY DESIGN SINCE THE TWO-TIER v1 CONTRACT (2026-09): the live
+ * `GET /api/v1/vehicles/{id}` detail feed measures all 24 parameters
+ * (`batt_v`, `chg_status`, `batt_temp`, ... -- see `telemetry/fields.py`), and
+ * the Python data layer writes per-field verdicts into every vehicle's
+ * `field_status`.  The document is now the single source of truth for what is
+ * measured: pinning channels disabled here would gray out honest live
+ * readings (and zero out roll-ups like "Charging Now"), which is exactly the
+ * fabrication this module exists to prevent -- in the other direction.
+ *
+ * The set is kept (empty) as the extension point it always was: if a future
+ * hardware revision genuinely drops a channel, pinning it here makes every
+ * tile, roll-up and map legend say "awaiting upstream" instead of inventing
+ * a zero.  Honest NULL handling lives in the data layer's `missing` /
+ * `null_fields` / `field_errors`, surfaced through `field_status`.
  */
-export const UNMEASURED_FIELDS: ReadonlySet<string> = new Set([
-  "total_power_kwh",
-  "charging_status",
-  "battery_total_v",
-  "battery_current_a",
-  "max_cell_v_cell_no",
-  "min_cell_v_pack_no",
-  "min_cell_v_cell_no",
-  "max_temp_pack_no",
-  "work_status",
-]);
+export const UNMEASURED_FIELDS: ReadonlySet<string> = new Set([]);
 
-/** True for the permanently-absent parameters, regardless of document content. */
+/** True for permanently-absent parameters. Currently: none (see above). */
 export function isUnmeasured(field: string): boolean {
   return UNMEASURED_FIELDS.has(field);
 }
@@ -217,8 +216,8 @@ export function orderedParams(doc: TrustedTelemetryDocument): ParameterHealth[] 
       status: "unavailable_upstream" as const,
       status_breakdown: {},
     };
-    // The contract outranks the document: a field the upstream does not measure
-    // is unavailable even if this particular file failed to say so.
+    // The pin outranks the document (currently a no-op: nothing is pinned):
+    // a field declared unmeasured is unavailable even if a file claimed otherwise.
     return isUnmeasured(field) ? { ...declared, status: "unavailable_upstream" as const } : declared;
   });
 }
@@ -396,6 +395,8 @@ export interface GeoPoint {
   lon: number;
   soc: number | null;
   speedKmh: number | null;
+  /** 1 = on the charger; drives the parked-charging marker tone. */
+  chargingStatus: number | null;
   observedAt: string | null;
   completenessPct: number;
 }
@@ -430,6 +431,7 @@ export function geoPoints(vehicles: TrustedVehicle[]): { points: GeoPoint[]; unl
       lon,
       soc: numericValue(v, "soc"),
       speedKmh: numericValue(v, "speed_kmh"),
+      chargingStatus: numericValue(v, "charging_status"),
       observedAt: v.observed_at,
       completenessPct: v.completeness_pct,
     });
