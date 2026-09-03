@@ -13,12 +13,11 @@
 
 import { useMemo, useState } from "react";
 
-import DataIngestionPanel from "@/components/telemetry/DataIngestionPanel";
 import GeoCascadeFilter from "@/components/telemetry/GeoCascadeFilter";
 import InteractiveGeoMap from "@/components/telemetry/InteractiveGeoMap";
 import LiveClock from "@/components/telemetry/LiveClock";
 import ViewNav from "@/components/telemetry/ViewNav";
-import { applyVehicleFilters, deriveBatteries, formatEta, predictArrival, stateCounts, type BatteryAsset } from "@/lib/fleet";
+import { applyVehicleFilters, batteryRegistry, deriveBatteries, formatEta, predictArrival, stateCounts, type BatteryAsset } from "@/lib/fleet";
 import { useFilters } from "@/lib/FilterContext";
 import { formatValue, numericValue, type TrustedTelemetryDocument } from "@/lib/trusted-telemetry";
 
@@ -39,8 +38,9 @@ function Cell({ label, value, unit, tone = "text-white" }: { label: string; valu
 export default function BatteriesView({ data }: { data: TrustedTelemetryDocument }) {
   const filters = useFilters();
 
-  const batteries = useMemo(() => deriveBatteries(data.vehicles, 3), [data.vehicles]);
+  const batteries = useMemo(() => deriveBatteries(data.vehicles), [data.vehicles]);
   const counts = useMemo(() => stateCounts(data.vehicles), [data.vehicles]);
+  const registry = useMemo(() => batteryRegistry(data.vehicles), [data.vehicles]);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = batteries.find((b) => b.batteryId === selectedId) ?? batteries[0] ?? null;
@@ -53,7 +53,7 @@ export default function BatteriesView({ data }: { data: TrustedTelemetryDocument
 
   return (
     <div className="min-h-screen bg-[#05070d] pb-12">
-      <ViewNav active="batteries" />
+      <ViewNav />
 
       <header className="mx-auto flex max-w-[1680px] flex-wrap items-center justify-between gap-4 px-5 pt-6 lg:px-8">
         <div>
@@ -108,11 +108,7 @@ export default function BatteriesView({ data }: { data: TrustedTelemetryDocument
 
       {/* pack positions on the live map */}
       <div className="mx-auto mt-5 max-w-[1680px] px-5 lg:px-8">
-        <InteractiveGeoMap vehicles={evVehicles} />
-      </div>
-
-      <div className="mx-auto mt-5 max-w-[1680px] px-5 lg:px-8">
-        <DataIngestionPanel />
+        <InteractiveGeoMap vehicles={evVehicles} batteryLabels={registry} />
       </div>
     </div>
   );

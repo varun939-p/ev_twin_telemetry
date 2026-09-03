@@ -12,34 +12,16 @@
  * Neither component depends on the other, and neither knows the backend exists.
  */
 
-import { useRouter } from "next/navigation";
 import { useCallback, useState } from "react";
 
 import DigitalTwinDashboard, { type ProvisionOutcome } from "@/components/telemetry/DigitalTwinDashboard";
-import TruckHeatmap from "@/components/telemetry/TruckHeatmap";
 import ViewNav from "@/components/telemetry/ViewNav";
-import { useFilters } from "@/lib/FilterContext";
-import type { Cluster, SiteConfig, TrustedTelemetryDocument } from "@/lib/trusted-telemetry";
+import type { SiteConfig, TrustedTelemetryDocument } from "@/lib/trusted-telemetry";
 
 const PROVISION_ENDPOINT = "/api/provision-site";
 
 export default function TwinView({ data }: { data: TrustedTelemetryDocument }) {
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | undefined>(undefined);
-  const router = useRouter();
-  const { setFocus } = useFilters();
-
-  /** Heatmap drill-down: set the global focus and route to the live view. */
-  const handleClusterClick = useCallback(
-    (cluster: Cluster) => {
-      setFocus({
-        id: cluster.id,
-        label: `${cluster.city.name}, ${cluster.city.state}`,
-        vehicleIds: cluster.members.map((m) => m.vehicleId),
-      });
-      router.push("/trucks");
-    },
-    [router, setFocus],
-  );
 
   /** Transmit a site config to the Python backend.  Never throws: a down backend
    *  becomes a readable `ProvisionOutcome`, not an unhandled rejection. */
@@ -87,7 +69,7 @@ export default function TwinView({ data }: { data: TrustedTelemetryDocument }) {
   }, []);
 
   return (
-    <main className="min-h-screen bg-[#05070d]">
+    <main className="min-h-screen bg-[#05070d] pb-10">
       <ViewNav active="fleet" />
       <DigitalTwinDashboard
         data={data}
@@ -95,9 +77,6 @@ export default function TwinView({ data }: { data: TrustedTelemetryDocument }) {
         onVehicleChange={setSelectedVehicleId}
         onProvisionSite={handleProvisionSite}
       />
-      <div className="mx-auto max-w-[1680px] px-5 pb-10 lg:px-8">
-        <TruckHeatmap vehicles={data.vehicles} onSelectVehicle={setSelectedVehicleId} onClusterClick={handleClusterClick} />
-      </div>
     </main>
   );
 }

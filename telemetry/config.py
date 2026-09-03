@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 from pydantic import Field, field_validator
@@ -36,11 +37,28 @@ class Settings(BaseSettings):
     api_secret_key: str = Field(default="", description="secret_key issued with the API client")
     api_passcode: str = Field(default="", description="passcode issued with the API client (shown once)")
     auth_path: str = "/api/auth/api-token"
-    # Data endpoint.  `/api/dashboard-parameters` is retired and blocked; the
-    # engine reads the verified v1 vehicles feed.  Override with VEHICLES_PATH
-    # only for a staging upstream that mounts the same contract elsewhere.
+    # Data endpoints -- two-tier live contract (verified 2026-09 via Postman).
+    # Tier 1: `/api/v1/vehicles` returns a high-level fleet summary in which
+    #         every vehicle frame carries `"battery": null`.
+    # Tier 2: `/api/v1/vehicles/{vehicle_id}` returns the complete live
+    #         diagnostic frame, including the battery block, under the
+    #         abbreviated v1 keys (batt_v, chg_status, batt_temp, ...).
+    # `/api/dashboard-parameters` is retired and blocked upstream.  Override
+    # VEHICLES_PATH only for a staging upstream that mounts the contract
+    # elsewhere; the detail path is always derived from it.
     vehicles_path: str = "/api/v1/vehicles"
     request_timeout: float = Field(default=20.0, gt=0)
+
+    # -------------------------------------------------- two-tier fetching
+    detail_fetch_enabled: bool = Field(
+        default=True,
+        description="Tier 2: after the fleet summary, GET /api/v1/vehicles/{id} per vehicle "
+        "for the live battery telemetry.  A failed detail fetch keeps the summary frame "
+        "and logs -- it never kills the cycle.",
+    )
+    detail_fetch_workers: int = Field(
+        default=8, ge=1, le=64, description="Concurrent tier-2 detail fetches per poll cycle."
+    )
 
     # Optional server-side filters (see guide sections 3 & 4)
     api_date: str | None = Field(default=None, description="YYYY-MM-DD; empty => server default (today, IST)")
@@ -80,9 +98,8 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------ behaviour
     require_all_fields: bool = Field(
         default=False,
-        description="True => reject a vehicle payload that is missing any of the 15 MEASURED "
-        "parameters.  The 9 unmeasured parameters (see telemetry.fields.UNMEASURED_NAMES) are "
-        "never part of this gate -- they are absent by contract and held as NULL.",
+        description="True => reject a vehicle frame that is missing any of the 24 parameters "
+        "(NULL fallback applies only to keys the live API truly leaves absent).",
     )
     write_unchanged: bool = Field(
         default=False,
@@ -122,6 +139,10 @@ class Settings(BaseSettings):
 
     def vehicles_url(self) -> str:
         return f"{self.api_base_url}{self.vehicles_path}"
+
+    def vehicle_url(self, vehicle_id: str) -> str:
+        """Tier-2 detail endpoint for one vehicle (`/api/v1/vehicles/{id}`)."""
+        return f"{self.vehicles_url()}/{quote(vehicle_id.strip().upper(), safe='')}"
 
     def validate_required(self) -> None:
         """Fail fast at start-up instead of 30 minutes into a run."""

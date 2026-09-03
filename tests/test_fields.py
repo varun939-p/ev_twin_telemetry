@@ -5,12 +5,12 @@ from __future__ import annotations
 from telemetry.fields import (
     ALIAS_TO_NAME,
     COLUMN_NAMES,
-    MEASURED_NAMES,
     MONOTONIC_NAMES,
+    NORMALIZED_ALIAS_TO_NAME,
     PARAM_SPECS,
     SPEC_BY_NAME,
-    UNMEASURED,
-    UNMEASURED_NAMES,
+    normalize_key,
+    resolve_parameter_key,
 )
 
 # Exactly what the product spec lists, in order.
@@ -77,33 +77,55 @@ def test_work_status_is_text():
     assert SPEC_BY_NAME["work_status"].kind == "str"
 
 
-# ------------------------------------------------- unmeasured declaration
-# The 9 parameters confirmed absent on 100/100 frames of the verified
-# production capture (blue_energy_response.json, 2026-08-28).
-EXPECTED_UNMEASURED = {
-    "total_power_kwh",
-    "charging_status",
-    "battery_total_v",
-    "battery_current_a",
-    "max_cell_v_cell_no",
-    "min_cell_v_pack_no",
-    "min_cell_v_cell_no",
-    "max_temp_pack_no",
-    "work_status",
-}
+# --------------------------------------------- live v1 key mapping (Postman)
+def test_confirmed_v1_keys_map_to_canonical_columns():
+    """The abbreviated keys captured live from GET /api/v1/vehicles/{id}."""
+    assert ALIAS_TO_NAME["batt_v"] == "battery_total_v"
+    assert ALIAS_TO_NAME["chg_status"] == "charging_status"
+    assert ALIAS_TO_NAME["batt_temp"] == "battery_temp_c"
+    assert ALIAS_TO_NAME["batt_a"] == "battery_current_a"
+    assert ALIAS_TO_NAME["tot_power_kwh"] == "total_power_kwh"
+    assert ALIAS_TO_NAME["work_sts"] == "work_status"
 
 
-def test_exactly_9_parameters_are_declared_unmeasured():
-    assert set(UNMEASURED_NAMES) == EXPECTED_UNMEASURED
-    assert len(UNMEASURED_NAMES) == 9
-    assert UNMEASURED == frozenset(EXPECTED_UNMEASURED)
+def test_every_auxiliary_parameter_has_a_v1_style_alias():
+    """The former 'unmeasured nine' must all be mappable from the detail feed."""
+    nine = {
+        "total_power_kwh", "charging_status", "battery_total_v",
+        "battery_current_a", "max_cell_v_cell_no", "min_cell_v_pack_no",
+        "min_cell_v_cell_no", "max_temp_pack_no", "work_status",
+    }
+    for name in nine:
+        spec = SPEC_BY_NAME[name]
+        assert len(spec.aliases) > 1, f"{name} has no upstream alias"
+        assert spec.name in ALIAS_TO_NAME
 
 
-def test_measured_and_unmeasured_partition_the_registry():
-    assert set(MEASURED_NAMES) | set(UNMEASURED_NAMES) == set(COLUMN_NAMES)
-    assert not (set(MEASURED_NAMES) & set(UNMEASURED_NAMES))
-    assert len(MEASURED_NAMES) == 15
+def test_normalized_resolution_handles_case_and_separators():
+    """Dynamic layer: BATT_V / batt-v / battV all resolve without per-spelling entries."""
+    assert resolve_parameter_key("BATT_V") == "battery_total_v"
+    assert resolve_parameter_key("Chg-Status") == "charging_status"
+    assert resolve_parameter_key("  batt temp ") == "battery_temp_c"
+    assert resolve_parameter_key("totally_unknown_key") is None
+    assert resolve_parameter_key("123") is None
 
 
-def test_unmeasured_flag_matches_the_spec_objects():
-    assert {p.name for p in PARAM_SPECS if p.unmeasured} == EXPECTED_UNMEASURED
+def test_normalized_alias_map_is_collision_free():
+    """Two parameters normalising to the same key would silently swap data."""
+    owners: dict[str, str] = {}
+    for spec in PARAM_SPECS:
+        for variant in (*spec.aliases, spec.name):
+            normalized = normalize_key(variant)
+            assert owners.get(normalized, spec.name) == spec.name, (
+                f"normalized collision on {normalized!r}: {owners.get(normalized)} vs {spec.name}"
+            )
+            owners[normalized] = spec.name
+    assert set(owners) == set(NORMALIZED_ALIAS_TO_NAME)
+
+
+def test_battery_and_last_updated_are_meta_not_parameters():
+    from telemetry.fields import META_FIELDS
+
+    assert "battery" in META_FIELDS
+    assert "last_updated" in META_FIELDS
+    assert "battery" not in ALIAS_TO_NAME

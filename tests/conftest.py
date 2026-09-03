@@ -59,7 +59,7 @@ def mock_api():
                 self.fleet.bad_creds = False
                 self.fleet.frozen = False
                 self.fleet.counts.update(
-                    {"auth": 0, "auth_failed": 0, "data": 0, "data_401": 0, "data_500": 0}
+                    {"auth": 0, "auth_failed": 0, "data": 0, "detail": 0, "data_401": 0, "data_500": 0}
                 )
 
     handle = Handle()

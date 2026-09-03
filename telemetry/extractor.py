@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Sequence
@@ -22,7 +23,13 @@ from .config import Settings
 from .mapping import DriftReporter
 from .metrics import Metrics
 from .repository import TelemetryRepository, WriteResult
-from .schemas import ParsedVehicle, ValidatedPayload, VehiclesPayload, parse_payload
+from .schemas import (
+    ParsedVehicle,
+    ValidatedPayload,
+    VehiclesPayload,
+    merge_vehicle_frames,
+    parse_payload,
+)
 
 log = logging.getLogger(__name__)
 
@@ -40,6 +47,8 @@ class CycleReport:
     rejected_ids: list[str] = field(default_factory=list)
     field_errors: int = 0
     missing_params: int = 0
+    detail_ok: int = 0
+    detail_failed: int = 0
     write: WriteResult = field(default_factory=WriteResult)
     stale: list[str] = field(default_factory=list)
 
@@ -48,10 +57,13 @@ class CycleReport:
         return self.accepted > 0 or self.seen == 0
 
     def summary(self) -> str:
-        return (
+        base = (
             f"cycle in {self.duration_ms:.0f}ms: seen={self.seen} accepted={self.accepted} "
             f"rejected={self.rejected} field_errors={self.field_errors} | {self.write.as_log()}"
         )
+        if self.detail_ok or self.detail_failed:
+            base += f" | detail ok={self.detail_ok} failed={self.detail_failed}"
+        return base
 
 
 class TelemetryExtractor:
@@ -79,6 +91,7 @@ class TelemetryExtractor:
 
         raw = self._fetch()
         payload = self._validate_envelope(raw)
+        payload, report.detail_ok, report.detail_failed = self._enrich_with_details(payload)
         validated = self._validate_vehicles(payload, ingested_at)
 
         report.seen = validated.seen
@@ -103,12 +116,69 @@ class TelemetryExtractor:
 
     # -------------------------------------------------------------- private
     def _fetch(self) -> dict[str, Any]:
-        """GET the vehicles feed, re-authenticating once if the token died early."""
+        """GET the tier-1 fleet summary, re-authenticating once if the token died."""
         return run_with_reauth(  # type: ignore[return-value]
             self.tokens,
             self.client.fetch_vehicles,
             label="vehicles",
         )
+
+    def _fetch_detail(self, vehicle_id: str) -> dict[str, Any]:
+        """GET one vehicle's tier-2 live diagnostic frame (runs in a worker thread)."""
+        return run_with_reauth(  # type: ignore[return-value]
+            self.tokens,
+            lambda token: self.client.fetch_vehicle(token, vehicle_id),
+            label=f"vehicle {vehicle_id}",
+        )
+
+    def _enrich_with_details(self, payload: VehiclesPayload) -> tuple[VehiclesPayload, int, int]:
+        """Tier 2: fetch `/api/v1/vehicles/{id}` for every vehicle, concurrently.
+
+        The tier-1 summary intentionally carries `"battery": null`; the live
+        battery telemetry lives on the per-vehicle detail endpoint.  Detail
+        frames are merged into their summary frames (`merge_vehicle_frames`)
+        before validation.
+
+        Failure isolation: one truck's detail fetch failing (404, timeout,
+        revoked-token edge) keeps that truck's summary frame and logs loudly --
+        it can never sink the cycle or the fleet.  Returns
+        `(payload, ok_count, failed_count)`.
+        """
+        if not self.settings.detail_fetch_enabled or not payload.vehicles:
+            return payload, 0, 0
+
+        vehicle_ids = list(payload.vehicles)
+        workers = min(self.settings.detail_fetch_workers, len(vehicle_ids))
+        log.info(
+            "tier 2: fetching live detail for %d vehicle(s) with %d worker(s)",
+            len(vehicle_ids),
+            workers,
+        )
+
+        ok = failed = 0
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="vehicle-detail") as pool:
+            futures = {pool.submit(self._fetch_detail, vehicle_id): vehicle_id for vehicle_id in vehicle_ids}
+            for future in as_completed(futures):
+                vehicle_id = futures[future]
+                try:
+                    detail = future.result()
+                except Exception as exc:  # noqa: BLE001 -- one truck must not sink the fleet
+                    failed += 1
+                    log.warning(
+                        "%s: tier-2 detail fetch failed (%s: %s) -- keeping fleet-summary frame",
+                        vehicle_id,
+                        exc.__class__.__name__,
+                        exc,
+                    )
+                    continue
+                payload.vehicles[vehicle_id] = merge_vehicle_frames(payload.vehicles[vehicle_id], detail)
+                ok += 1
+
+        self.metrics.inc("twin_detail_requests_total", value=float(ok))
+        self.metrics.inc("twin_detail_failures_total", value=float(failed))
+        if failed:
+            log.warning("tier 2: %d/%d detail fetch(es) failed this cycle", failed, ok + failed)
+        return payload, ok, failed
 
     @staticmethod
     def _validate_envelope(raw: dict[str, Any]) -> VehiclesPayload:
@@ -197,5 +267,7 @@ class TelemetryExtractor:
 
     # ------------------------------------------------------------- one-shot
     def fetch_only(self) -> VehiclesPayload:
-        """Fetch + validate without touching the database (used by `once --dry-run`)."""
-        return self._validate_envelope(self._fetch())
+        """Fetch (both tiers) without touching the database (used by `once --dry-run`)."""
+        payload = self._validate_envelope(self._fetch())
+        enriched, _, _ = self._enrich_with_details(payload)
+        return enriched

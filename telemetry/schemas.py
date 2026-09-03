@@ -31,7 +31,7 @@ from pydantic import (
     model_validator,
 )
 
-from .fields import COLUMN_NAMES, PARAM_SPECS, SPEC_BY_NAME, UNMEASURED
+from .fields import COLUMN_NAMES, PARAM_SPECS, SPEC_BY_NAME, resolve_parameter_key
 
 __all__ = [
     "AuthResponse",
@@ -44,6 +44,8 @@ __all__ = [
     "SiteProvisionResponse",
     "ValidatedPayload",
     "VehicleParams",
+    "flatten_vehicle_frame",
+    "merge_vehicle_frames",
     "naive_to_aware",
     "parse_payload",
     "parse_source_timestamp",
@@ -114,19 +116,82 @@ def parse_source_timestamp(raw: Any, tz: ZoneInfo) -> datetime | None:
 
 
 # ---------------------------------------------------------------------------
+# tier-1 / tier-2 frame assembly
+# ---------------------------------------------------------------------------
+def flatten_vehicle_frame(frame: dict[str, Any]) -> dict[str, Any]:
+    """Flatten one level of nested blocks (`battery`) into a flat key map.
+
+    The live v1 detail frame nests the battery diagnostics under a `battery`
+    object; the validator consumes flat frames.  Top-level scalars win over
+    nested ones, and an explicit nested `null` never erases a real value --
+    a `null` reading means "no measurement", which is what absence already
+    means downstream.
+    """
+    flat = {key: value for key, value in frame.items() if not isinstance(value, dict)}
+    for key, value in frame.items():
+        if not isinstance(value, dict):
+            continue
+        for inner_key, inner in value.items():
+            if isinstance(inner, dict) or inner is None:
+                continue
+            flat.setdefault(str(inner_key), inner)
+    return flat
+
+
+def merge_vehicle_frames(summary_frame: dict[str, Any], detail_response: Any) -> dict[str, Any]:
+    """Combine the tier-1 summary frame with the tier-2 detail response.
+
+    The detail may arrive flat, nested under `battery`, or wrapped in a small
+    envelope (`{"ok": ..., "vehicle": {...}}`) -- all three shapes merge into
+    one frame.  Detail values override summary values; explicit nulls in the
+    detail never erase a summary value; the summary's `"battery": null`
+    placeholder is dropped.  Non-dict detail responses are ignored, leaving
+    the summary frame untouched.
+    """
+    if not isinstance(detail_response, dict):
+        return summary_frame
+
+    detail = detail_response
+    inner = detail.get("vehicle")
+    if isinstance(inner, dict) and len(detail) <= 3:
+        detail = inner  # envelope tolerance: {"ok": true, "vehicle": {...}}
+
+    merged = {
+        key: value
+        for key, value in summary_frame.items()
+        if key != "battery" and not isinstance(value, dict)
+    }
+    sources = (detail, detail.get("battery") if isinstance(detail.get("battery"), dict) else {})
+    for source in sources:
+        for key, value in source.items():
+            if key == "battery" or isinstance(value, dict) or value is None:
+                continue
+            merged[key] = value
+    return merged
+
+
+def _canonicalise_keys(flat_frame: dict[str, Any]) -> dict[str, Any]:
+    """Re-key a flat frame onto canonical parameter names.
+
+    Exact alias match first, then `telemetry.fields.resolve_parameter_key`'s
+    normalized table -- so `batt_v`, `BATT_V` and `batt-v` all land on
+    `battery_total_v` without per-spelling registry entries.  Unresolvable
+    keys are kept verbatim and later ignored by the model (`extra="ignore"`),
+    which is exactly what the drift reporter wants to see.
+    """
+    canonical: dict[str, Any] = {}
+    for key, value in flat_frame.items():
+        name = resolve_parameter_key(str(key))
+        canonical[name if name is not None else key] = value
+    return canonical
+
+
+# ---------------------------------------------------------------------------
 # per-field validators
 # ---------------------------------------------------------------------------
 def _coerce_by_spec(value: Any, info: ValidationInfo) -> Any:
     """One before-validator for all 24 parameters; the spec is looked up by field name."""
     spec = SPEC_BY_NAME[info.field_name]
-
-    # The 9 unmeasured parameters are never read, so they must also never be
-    # *validated*: an out-of-range value on one of them would raise here, and a
-    # ValidationError quarantines the ENTIRE vehicle -- taking the 15 good
-    # readings down with it.  Short-circuit to None and let `parse_payload`
-    # record that the key was sent, so the frame survives.
-    if spec.unmeasured:
-        return None
 
     value = _clean_scalar(value)
     if value is None:
@@ -245,7 +310,12 @@ class AuthResponse(BaseModel):
 
 
 class VehiclesPayload(BaseModel):
-    """GET /api/v1/vehicles -- we only consume `.vehicles`."""
+    """GET /api/v1/vehicles (tier 1) -- we only consume `.vehicles`.
+
+    Tier 1 frames are fleet-summary level (`battery` arrives as an explicit
+    null); the tier-2 detail frames fetched per vehicle are merged in by
+    `telemetry.extractor` via `merge_vehicle_frames` before validation.
+    """
 
     model_config = ConfigDict(extra="ignore")
 
@@ -325,10 +395,11 @@ def parse_payload(
 
     Returns accepted frames plus a quarantine list; it never raises for bad data.
 
-    NULL contract: the 9 parameters flagged `unmeasured` in `telemetry.fields`
-    are stored as NULL on every accepted frame, regardless of what the upstream
-    sends.  `require_all_fields` is applied to the 15 measured parameters only,
-    so the permanently-absent 9 can never quarantine a fleet.
+    NULL policy (revised for the two-tier v1 contract): a parameter is NULL
+    only when the merged tier-1 + tier-2 frame genuinely lacks every alias for
+    it, or carries an unusable sentinel.  Values the upstream sends are parsed
+    and stored -- nothing is pinned, nothing is coerced into a fake zero.
+    `require_all_fields` gates on all 24 parameters.
     """
     result = ValidatedPayload()
     vehicles = payload.vehicles or {}
@@ -350,8 +421,18 @@ def parse_payload(
             )
             continue
 
+        # Soft per-field handling: a poisoned sensor must not null the other 23.
+        #
+        # The frame is flattened (tier-2 detail nests diagnostics under
+        # `battery`) and re-keyed onto canonical names through the alias layer
+        # (legacy guide keys AND the abbreviated v1 keys), then parsed.  A key
+        # that is genuinely absent leaves the parameter NULL -- absence is
+        # honest, a fabricated zero is not.
+        flat = flatten_vehicle_frame(raw_frame)
+        canonical_frame = _canonicalise_keys(flat)
+
         try:
-            parsed = VehicleParams.model_validate(raw_frame)
+            parsed = VehicleParams.model_validate(canonical_frame)
         except ValidationError as exc:
             result.rejected.append(
                 RejectedVehicle(
@@ -369,33 +450,10 @@ def parse_payload(
             )
             continue
 
-        # Soft per-field handling: a poisoned sensor must not null the other 23.
-        #
-        # The 9 `unmeasured` parameters are handled FIRST and unconditionally:
-        # their value is pinned to NULL whatever the frame says.  That is the
-        # whole point of declaring them in `telemetry.fields` -- an absent
-        # measurement must reach the UI as a disabled tile, and must never be
-        # allowed to become `0` (a zero reading and no reading are opposite
-        # claims about the truck).  If the upstream does start sending one, we
-        # still hold NULL, but we record a FieldError so the change is visible
-        # in the logs and in the document instead of being silently discarded.
         values: dict[str, Any] = {}
         field_errors: list[FieldError] = []
         for spec in PARAM_SPECS:
-            raw_value = next((raw_frame[alias] for alias in spec.aliases if alias in raw_frame), None)
-
-            if spec.unmeasured:
-                values[spec.name] = None  # pinned; never coerced, never defaulted
-                if raw_value is not None:
-                    field_errors.append(
-                        FieldError(
-                            field=spec.name,
-                            raw=raw_value,
-                            error="parameter is declared unmeasured upstream -- value ignored, stored NULL",
-                        )
-                    )
-                continue
-
+            raw_value = canonical_frame.get(spec.name)
             coerced = getattr(parsed, spec.name)
             if coerced is not None and spec.kind == "int":
                 # The field is annotated `float | None` (see _build_vehicle_params_model),
@@ -414,27 +472,21 @@ def parse_payload(
                     )
                 )
 
-        # `missing` drives the UI's "awaiting upstream" state, so a declared-
-        # unmeasured parameter is always reported missing -- even if a frame
-        # carried the key -- because we are contractually not reading it.
-        missing = [
-            spec.name
-            for spec in PARAM_SPECS
-            if spec.unmeasured or not any(alias in raw_frame for alias in spec.aliases)
-        ]
-        # The 9 unmeasured parameters are excluded from the completeness gate:
-        # they can never arrive, so requiring them would quarantine the whole
-        # fleet.  `require_all_fields` therefore means "all 15 measured ones".
-        if require_all_fields:
-            unmet = [name for name in missing if name not in UNMEASURED]
-            if unmet:
-                result.rejected.append(
-                    RejectedVehicle(
-                        vehicle_id=vehicle_id,
-                        reason=f"missing {len(unmet)} required parameter(s): {', '.join(unmet)}",
-                    )
+        # `missing` drives the UI's "awaiting upstream" state: a parameter is
+        # missing only when NO alias for it appeared anywhere in the merged
+        # tier-1 + tier-2 frame.
+        missing = [spec.name for spec in PARAM_SPECS if spec.name not in canonical_frame]
+        # Completeness gate covers all 24 parameters.  Default is False: a
+        # truck that genuinely drops a channel is still worth rendering, with
+        # the gap reported instead of papered over.
+        if require_all_fields and missing:
+            result.rejected.append(
+                RejectedVehicle(
+                    vehicle_id=vehicle_id,
+                    reason=f"missing {len(missing)} required parameter(s): {', '.join(missing)}",
                 )
-                continue
+            )
+            continue
 
         observed_at = localise_last_updated(parsed, tz)
         if observed_at is None:

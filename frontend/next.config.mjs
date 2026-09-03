@@ -16,7 +16,6 @@ const nextConfig = {
     return [
       { source: "/api/provision-site", destination: `${BACKEND_URL}/api/provision-site` },
       { source: "/api/provisioned-sites", destination: `${BACKEND_URL}/api/provisioned-sites` },
-      { source: "/api/ingest/upload", destination: `${BACKEND_URL}/api/ingest/upload` },
     ];
   },
 };

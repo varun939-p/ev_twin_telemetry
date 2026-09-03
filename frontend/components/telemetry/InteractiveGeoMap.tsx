@@ -10,17 +10,33 @@
  *     filter -- which narrows the asset sidebar on the host page and switches
  *     this map into…
  *
- *  2. Live tracking: the viewport zooms to the focused assets and each truck
+ *  2. Live tracking: the camera flies to the focused assets and each truck
  *     renders as an animated marker (smooth, sensor-style motion emulated
- *     around its last validated fix) with id, SOC and a pulse ring, so every
- *     truck in the scope can be tracked explicitly.
+ *     around its last validated fix) with id, SOC and a pulse ring.
+ *
+ * CAMERA CONTRACT
+ * ---------------
+ * The viewport is a first-class camera, not a derived value.  All transitions
+ * run through `useSmoothCamera`, an eased `flyTo` controller:
+ *
+ *   * Targets are computed from *validated* fixes only and quantised to
+ *     ~10^-3 deg (~110 m).  Live GPS jitter can therefore never retrigger a
+ *     camera move, let alone oscillate one.
+ *   * Mode changes (overview <-> focus) tween the camera centre and span over
+ *     a fixed 800 ms `easeInOutCubic` flight.  The camera is never swapped
+ *     discontinuously, so selection can't "spazz" the viewport.
+ *   * The emulated sensor drift is applied *after* projection and is invisible
+ *     to the camera: during tracking the frame is locked, padded and stable
+ *     while markers animate inside it.
+ *   * `prefers-reduced-motion` snaps instead of flying.
  *
  * Geometry honesty is inherited from `trusted-telemetry`: only measured
  * latitude/longitude is plotted; out-of-bbox fixes are excluded, never faked.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
+import { batteryRegistry, type BatteryIdentity } from "@/lib/fleet";
 import { useFilters } from "@/lib/FilterContext";
 import {
   INDIA_BBOX,
@@ -36,23 +52,145 @@ const CARD = "rounded-2xl border border-white/[0.06] bg-slate-900/40 backdrop-bl
 const EYEBROW = "text-[10px] font-medium uppercase tracking-[0.24em] text-slate-500";
 const HAIRLINE = "h-px bg-white/[0.06]";
 
-/* ------------------------------------------------------------- projection */
+/* --------------------------------------------------------------- camera */
 
-interface Viewport { lonMin: number; lonMax: number; latMin: number; latMax: number; width: number; height: number; }
+interface Camera {
+  lonMin: number;
+  lonMax: number;
+  latMin: number;
+  latMax: number;
+}
+
+interface Viewport extends Camera {
+  width: number;
+  height: number;
+}
+
 const CANVAS_WIDTH = 1000;
+const FLY_DURATION_MS = 800;
 
-function buildViewport(points: GeoPoint[]): Viewport {
-  const lons = points.map((p) => p.lon);
-  const lats = points.map((p) => p.lat);
-  const lonSpan = Math.max(Math.max(...lons) - Math.min(...lons), 0.12);
-  const latSpan = Math.max(Math.max(...lats) - Math.min(...lats), 0.12);
-  const lonMin = Math.min(...lons) - lonSpan * 0.12;
-  const lonMax = Math.max(...lons) + lonSpan * 0.12;
-  const latMin = Math.min(...lats) - latSpan * 0.14;
-  const latMax = Math.max(...lats) + latSpan * 0.14;
-  const midLat = (latMin + latMax) / 2;
-  const height = (CANVAS_WIDTH * (latMax - latMin)) / ((lonMax - lonMin) * Math.cos((midLat * Math.PI) / 180));
-  return { lonMin, lonMax, latMin, latMax, width: CANVAS_WIDTH, height: Math.round(Math.min(height, CANVAS_WIDTH)) };
+/** Minimum lon/lat span (deg) so a single fix or a tight cluster can never
+ *  pin the camera at an absurd zoom.  Focus frames sit slightly wider than
+ *  overview cells to leave label room around the markers. */
+const MIN_SPAN_OVERVIEW = 0.12;
+const MIN_SPAN_FOCUS = 0.18;
+
+/** Camera targets are quantised to 1e-3 deg (~110 m): telemetry updates that
+ *  move the fleet bounds less than this never retrigger a flight. */
+const TARGET_QUANTUM_DEG = 0.001;
+
+const quantise = (v: number): number => Math.round(v / TARGET_QUANTUM_DEG) * TARGET_QUANTUM_DEG;
+
+/**
+ * Fit a camera to `points` with breathing room, clamped to minimum spans and
+ * quantised so the target is a stable primitive, not a jittering float set.
+ * Total over the empty set: a neutral frame, never NaN.
+ */
+const NEUTRAL_CAMERA: Camera = { lonMin: 73, lonMax: 93, latMin: 8, latMax: 28 };
+
+function fitCamera(points: GeoPoint[], minSpan: number, padLonFrac: number, padLatFrac: number): Camera {
+  if (points.length === 0) return NEUTRAL_CAMERA;
+  let lonMin = Infinity;
+  let lonMax = -Infinity;
+  let latMin = Infinity;
+  let latMax = -Infinity;
+  for (const p of points) {
+    if (p.lon < lonMin) lonMin = p.lon;
+    if (p.lon > lonMax) lonMax = p.lon;
+    if (p.lat < latMin) latMin = p.lat;
+    if (p.lat > latMax) latMax = p.lat;
+  }
+
+  const lonSpan = Math.max(lonMax - lonMin, minSpan);
+  const latSpan = Math.max(latMax - latMin, minSpan);
+  const lonMid = (lonMin + lonMax) / 2;
+  const latMid = (latMin + latMax) / 2;
+
+  return {
+    lonMin: quantise(lonMid - (lonSpan / 2) * (1 + padLonFrac)),
+    lonMax: quantise(lonMid + (lonSpan / 2) * (1 + padLonFrac)),
+    latMin: quantise(latMid - (latSpan / 2) * (1 + padLatFrac)),
+    latMax: quantise(latMid + (latSpan / 2) * (1 + padLatFrac)),
+  };
+}
+
+/** Standard smooth fly-to easing: slow in, fast through the middle, slow out. */
+function easeInOutCubic(t: number): number {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+/** Interpolate two cameras through their centre + span (a zoom-like flight),
+ *  which keeps the motion anchored even when the aspect ratios differ. */
+function interpolateCamera(from: Camera, to: Camera, t: number): Camera {
+  const lerp = (a: number, b: number) => a + (b - a) * t;
+  const fromLonMid = (from.lonMin + from.lonMax) / 2;
+  const fromLatMid = (from.latMin + from.latMax) / 2;
+  const toLonMid = (to.lonMin + to.lonMax) / 2;
+  const toLatMid = (to.latMin + to.latMax) / 2;
+  const lonMid = lerp(fromLonMid, toLonMid);
+  const latMid = lerp(fromLatMid, toLatMid);
+  const lonSpan = lerp(from.lonMax - from.lonMin, to.lonMax - to.lonMin);
+  const latSpan = lerp(from.latMax - from.latMin, to.latMax - to.latMin);
+  return { lonMin: lonMid - lonSpan / 2, lonMax: lonMid + lonSpan / 2, latMin: latMid - latSpan / 2, latMax: latMid + latSpan / 2 };
+}
+
+/**
+ * flyTo controller.  Renders the interpolated camera every animation frame
+ * while a flight is in progress and holds the target camera afterwards.
+ * Repeat notifications of an equal target are no-ops (deep-compared via a
+ * quantised key), so parent re-renders can never shake the camera.
+ */
+function useSmoothCamera(target: Camera): Camera {
+  const [displayed, setDisplayed] = useState<Camera>(target);
+  const displayedRef = useRef<Camera>(target);
+  const appliedKeyRef = useRef<string>(cameraKey(target));
+  const rafRef = useRef(0);
+
+  useEffect(() => {
+    const key = cameraKey(target);
+    if (key === appliedKeyRef.current) return;
+    appliedKeyRef.current = key;
+
+    const from = displayedRef.current;
+
+    const snap = () => {
+      displayedRef.current = target;
+      setDisplayed(target);
+    };
+
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      snap();
+      return;
+    }
+
+    cancelAnimationFrame(rafRef.current);
+    const startedAt = performance.now();
+    const step = (now: number) => {
+      const t = Math.min((now - startedAt) / FLY_DURATION_MS, 1);
+      const camera = interpolateCamera(from, target, easeInOutCubic(t));
+      displayedRef.current = camera;
+      setDisplayed(camera);
+      if (t < 1) rafRef.current = requestAnimationFrame(step);
+    };
+    rafRef.current = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [target]);
+
+  return displayed;
+}
+
+function cameraKey(c: Camera): string {
+  return `${c.lonMin}|${c.lonMax}|${c.latMin}|${c.latMax}`;
+}
+
+/** Canvas viewport for the current camera.  Pure, continuous in the camera,
+ *  so per-frame interpolation never produces discontinuous geometry. */
+function viewportOf(camera: Camera): Viewport {
+  const lonSpan = camera.lonMax - camera.lonMin;
+  const midLat = (camera.latMin + camera.latMax) / 2;
+  const cos = Math.max(Math.cos((midLat * Math.PI) / 180), 0.1);
+  const rawHeight = (CANVAS_WIDTH * (camera.latMax - camera.latMin)) / (lonSpan * cos);
+  return { ...camera, width: CANVAS_WIDTH, height: Math.max(Math.round(Math.min(rawHeight, CANVAS_WIDTH)), 1) };
 }
 
 function projector(view: Viewport) {
@@ -74,11 +212,23 @@ const TIER_COLOR: Record<Tier, string> = { low: "#22d3ee", mid: "#fbbf24", high:
 
 type Hover = { kind: "cluster"; cluster: Cluster; x: number; y: number } | { kind: "point"; point: GeoPoint; x: number; y: number } | null;
 
-export default function InteractiveGeoMap({ vehicles }: { vehicles: TrustedVehicle[] }) {
+export default function InteractiveGeoMap({
+  vehicles,
+  batteryLabels,
+}: {
+  vehicles: TrustedVehicle[];
+  /** Page-provided identity map (built over the FULL fleet) so "Battery N"
+   *  labels never shift with this map's filter scope.  Falls back to a
+   *  registry over the passed vehicles alone. */
+  batteryLabels?: ReadonlyMap<string, BatteryIdentity>;
+}) {
   const { focus, setFocus } = useFilters();
   const [hover, setHover] = useState<Hover>(null);
   /** Frame timestamp published by the rAF loop; 0 until live-tracking starts. */
   const [frameTime, setFrameTime] = useState(0);
+
+  const fallbackLabels = useMemo(() => batteryRegistry(vehicles), [vehicles]);
+  const labels = batteryLabels ?? fallbackLabels;
 
   const { points } = useMemo(() => geoPoints(vehicles), [vehicles]);
   const inRegion = useMemo(
@@ -98,8 +248,25 @@ export default function InteractiveGeoMap({ vehicles }: { vehicles: TrustedVehic
   );
 
   const emphasis = focus ? focusMembers : inRegion;
-  const view = useMemo(() => (emphasis.length ? buildViewport(emphasis) : null), [emphasis]);
-  const project = useMemo(() => (view ? projector(view) : null), [view]);
+
+  /**
+   * Camera target.  Overview pads by 12%/14%; focus pads wider (20%/26%) so
+   * vehicle-id and SOC labels stay inside the frame.  Both are quantised by
+   * `fitCamera`, and `useSmoothCamera` deep-compares, so neither live marker
+   * drift nor parent re-renders can move the camera once framed.  A focus
+   * whose members left the region falls back to the overview frame (the
+   * empty-state card renders instead of the map).
+   */
+  const target = useMemo<Camera>(
+    () =>
+      focus && focusMembers.length > 0
+        ? fitCamera(focusMembers, MIN_SPAN_FOCUS, 0.2, 0.26)
+        : fitCamera(inRegion, MIN_SPAN_OVERVIEW, 0.12, 0.14),
+    [focus, focusMembers, inRegion],
+  );
+  const camera = useSmoothCamera(target);
+  const view = useMemo(() => viewportOf(camera), [camera]);
+  const project = useMemo(() => projector(view), [view]);
 
   // Sensor-style refresh while live-tracking: ~15 fps re-render.
   useEffect(() => {
@@ -117,7 +284,7 @@ export default function InteractiveGeoMap({ vehicles }: { vehicles: TrustedVehic
     return () => cancelAnimationFrame(raf);
   }, [focus]);
 
-  if (!view || !project || emphasis.length === 0) {
+  if (inRegion.length === 0 || emphasis.length === 0) {
     return (
       <section className={`${CARD} px-6 py-14 text-sm text-slate-500`}>
         No measured latitude/longitude in the current filter scope — nothing to map without inventing geometry.
@@ -127,7 +294,9 @@ export default function InteractiveGeoMap({ vehicles }: { vehicles: TrustedVehic
 
   /** Read from the rAF loop's own timestamp, not `Date.now()`: render stays pure. */
   const now = frameTime;
-  /** Emulated smooth motion around the last validated fix (live mode only). */
+  /** Emulated smooth motion around the last validated fix (live mode only).
+   *  Applied strictly AFTER projection inputs are fixed: the camera never
+   *  sees this drift, so tracking stays visually calm. */
   const livePosition = (p: GeoPoint) => {
     if (!focus) return { lat: p.lat, lon: p.lon };
     const seed = hashSeed(p.vehicleId);
@@ -157,7 +326,7 @@ export default function InteractiveGeoMap({ vehicles }: { vehicles: TrustedVehic
         <div>
           <p className={EYEBROW}>{focus ? "Live Location — Tracking Scope" : "Deployment Intelligence"}</p>
           <h2 className="mt-2 text-lg font-semibold tracking-tight text-white">
-            {focus ? `Tracking ${focusMembers.length} asset${focusMembers.length === 1 ? "" : "s"} — ${focus.label}` : "Charger density & live fleet position"}
+            {focus ? `Tracking ${focusMembers.length} asset${focusMembers.length === 1 ? "" : "s"} — ${focus.label}` : "Live battery positions & deployment density"}
           </h2>
         </div>
         {focus && (
@@ -218,6 +387,7 @@ export default function InteractiveGeoMap({ vehicles }: { vehicles: TrustedVehic
                 focusMembers.map((p) => {
                   const pos = livePosition(p);
                   const { x, y } = project(pos.lat, pos.lon);
+                  const label = labels.get(p.vehicleId)?.label ?? p.vehicleId;
                   return (
                     <g
                       key={p.vehicleId}
@@ -230,8 +400,8 @@ export default function InteractiveGeoMap({ vehicles }: { vehicles: TrustedVehic
                         <animate attributeName="opacity" values="0.8;0" dur="1.6s" repeatCount="indefinite" />
                       </circle>
                       <circle cx={x} cy={y} r={5} fill="#22d3ee" fillOpacity={0.9} stroke="#031018" strokeWidth="1.5" />
-                      <text x={x + 9} y={y - 7} fill="#e2f4ff" fontSize="11" fontFamily="ui-monospace, monospace">
-                        {p.vehicleId}
+                      <text x={x + 9} y={y - 7} fill="#e2f4ff" fontSize="11" fontWeight="600" fontFamily="ui-sans-serif, system-ui">
+                        {label}
                       </text>
                       <text x={x + 9} y={y + 6} fill="#7dd3fc" fontSize="10" fontFamily="ui-monospace, monospace">
                         {p.soc === null ? "SOC —" : `SOC ${p.soc}%`}
@@ -258,13 +428,16 @@ export default function InteractiveGeoMap({ vehicles }: { vehicles: TrustedVehic
               >
                 {hover.kind === "cluster" ? (
                   <>
-                    <p className="font-mono text-sm font-semibold text-white">{hover.cluster.count} trucks</p>
+                    <p className="font-mono text-sm font-semibold text-white">{hover.cluster.count} assets</p>
                     <p className="text-slate-400">{hover.cluster.city.name}, {hover.cluster.city.state}</p>
-                    <p className="mt-1 text-cyan-300">Click to open live location view</p>
+                    <p className="mt-1 text-cyan-300">Click to drill down — the asset list narrows to these trucks</p>
                   </>
                 ) : (
                   <>
-                    <p className="truncate font-mono text-xs font-semibold text-white">{hover.point.vehicleId}</p>
+                    <p className="truncate text-xs font-semibold text-white">{labels.get(hover.point.vehicleId)?.label ?? hover.point.vehicleId}</p>
+                    <p className="truncate font-mono text-[10px] text-slate-500">
+                      carrier {labels.get(hover.point.vehicleId)?.chassis ?? hover.point.vehicleId}
+                    </p>
                     <p className="font-mono text-slate-500">{hover.point.lat.toFixed(4)}, {hover.point.lon.toFixed(4)}</p>
                     <p className="mt-1 text-slate-500">
                       SOC {hover.point.soc === null ? "—" : `${hover.point.soc}%`} · {hover.point.speedKmh === null ? "—" : `${hover.point.speedKmh} km/h`}
@@ -276,8 +449,8 @@ export default function InteractiveGeoMap({ vehicles }: { vehicles: TrustedVehic
           </div>
           <p className="mt-3 text-[11px] leading-relaxed text-slate-600">
             {focus
-              ? "Markers interpolate smoothly around each truck's last validated GPS fix to emulate a live sensor feed; the underlying coordinates are never fabricated beyond this visual drift."
-              : "Click a bubble — or a ranked candidate — to drill into the live location view. The selection is a global filter: the asset sidebar narrows to exactly these trucks."}
+              ? "The camera flies to the selected scope and holds a locked, padded frame; markers interpolate smoothly around each truck's last validated GPS fix. Underlying coordinates are never fabricated beyond this visual drift."
+              : "Click a bubble — or a ranked candidate — to fly to the live location view. The selection is a global filter: the asset sidebar narrows to exactly these trucks."}
           </p>
         </div>
 
@@ -295,7 +468,7 @@ export default function InteractiveGeoMap({ vehicles }: { vehicles: TrustedVehic
                   <div className="flex items-center justify-between gap-2">
                     <p className="font-mono text-sm text-white">
                       <span className="mr-2 text-slate-600">{String(index + 1).padStart(2, "0")}</span>
-                      {cluster.count} trucks
+                      {cluster.count} assets
                     </p>
                     <span className="text-[10px] text-slate-500">{cluster.city.state}</span>
                   </div>

@@ -274,6 +274,52 @@ def test_vehicles_request_url_carries_the_filters_and_no_credentials(settings, m
     assert settings.api_passcode not in url
 
 
+# ------------------------------------------------------- tier-2 detail endpoint
+def test_detail_endpoint_url_is_derived_from_the_vehicles_path(settings):
+    url = UpstreamClient(settings).vehicle_request_url("M456D745")
+    assert url.endswith("/api/v1/vehicles/M456D745")
+    assert settings.api_secret_key not in url
+    assert settings.api_passcode not in url
+
+
+def test_detail_endpoint_serves_the_live_diagnostic_frame(settings, mock_api):
+    """Tier 2 returns the complete frame including the battery block under the
+    abbreviated v1 keys."""
+    mock_api.reset()
+    tok = token(settings, mock_api)
+    client = UpstreamClient(settings)
+
+    fleet_summary = client.fetch_vehicles(tok)
+    vid = next(iter(fleet_summary["vehicles"]))
+    detail = client.fetch_vehicle(tok, vid)
+
+    assert isinstance(detail, dict) and "last_updated" in detail
+    battery = detail["battery"]
+    assert isinstance(battery, dict), "tier-1 summary shape leaked into tier 2"
+    assert "batt_v" in battery and "chg_status" in battery
+    assert "batt_temp" in detail
+
+
+def test_detail_endpoint_404_is_not_retried(client, settings, mock_api):
+    """An unknown vehicle id is a 404: classified non-retryable, raised as a
+    client error -- the extractor turns it into a per-vehicle NULL fallback."""
+    mock_api.reset()
+    tok = token(settings, mock_api)
+
+    with pytest.raises(UpstreamClientError) as exc:
+        client.fetch_vehicle(tok, "GHOST999")
+
+    assert exc.value.status_code == 404
+    assert not client.delays, "a 404 must never be retried"
+
+
+def test_detail_endpoint_requires_a_token(settings, mock_api):
+    mock_api.reset()
+    client = UpstreamClient(settings)
+    with pytest.raises(AuthExpiredError):
+        client.fetch_vehicle("expired-or-missing", next(iter(mock_api.fleet.state)))
+
+
 def test_legacy_dashboard_endpoint_is_gone(client, mock_api, settings):
     """/api/dashboard-parameters is retired: the mock answers 410, which the
     transport classifies as a non-retryable client error rather than silently

@@ -69,8 +69,15 @@ export const CITIES_BY_STATE: Readonly<Record<string, readonly string[]>> = (() 
 
 const EV_SUFFIX = /_EV(\d+)$/i;
 
-export function isEvVehicle(vehicleId: string): boolean {
-  return EV_SUFFIX.test(vehicleId);
+/**
+ * Product pivot: a frame is a battery asset when it carries a *measured* SOC
+ * -- a live pack is reporting.  Frames without pack telemetry are carriers
+ * only ("Non-EV" in the filter's language).  Deliberately NOT keyed on the
+ * `_EV<n>` id suffix: the live v1 feed uses chassis plates, and the battery
+ * is what we track.
+ */
+export function isEvVehicle(vehicle: TrustedVehicle): boolean {
+  return numericValue(vehicle, "soc") !== null;
 }
 
 /** `51230911020019_ev2` -> 2, else null. */
@@ -79,15 +86,36 @@ export function batterySlot(vehicleId: string): number | null {
   return m ? Number(m[1]) : null;
 }
 
-/** `51230911020019_ev2` -> `51230911020019`. */
+/** `51230911020019_ev2` -> `51230911020019`; plain ids pass through. */
 export function truckChassis(vehicleId: string): string {
   return vehicleId.replace(EV_SUFFIX, "");
 }
 
-/** `51230911020019_ev2` -> `Battery 2`, else null. */
-export function batteryLabel(vehicleId: string): string | null {
-  const slot = batterySlot(vehicleId);
-  return slot === null ? null : `Battery ${slot}`;
+export interface BatteryIdentity {
+  /** Executive-facing asset name: "Battery 1", "Battery 2", ... */
+  label: string;
+  /** The carrier chassis this pack is mounted in. */
+  chassis: string;
+}
+
+/**
+ * Stable battery identity for the WHOLE fleet.  Every EV frame becomes
+ * "Battery N" (1-based, ordered by vehicle id) and the truck is reduced to
+ * its carrier chassis.  Pages build this once from the full vehicle list and
+ * pass it down, so labels never shift with the active filter scope.
+ */
+export function batteryRegistry(vehicles: TrustedVehicle[]): ReadonlyMap<string, BatteryIdentity> {
+  const registry = new Map<string, BatteryIdentity>();
+  vehicles
+    .filter((vehicle) => isEvVehicle(vehicle))
+    .sort((a, b) => a.vehicle_id.localeCompare(b.vehicle_id))
+    .forEach((vehicle, index) => {
+      registry.set(vehicle.vehicle_id, {
+        label: `Battery ${index + 1}`,
+        chassis: truckChassis(vehicle.vehicle_id),
+      });
+    });
+  return registry;
 }
 
 export interface BatteryAsset {
@@ -97,15 +125,21 @@ export interface BatteryAsset {
   vehicle: TrustedVehicle;
 }
 
-/** Active EV frames become battery packs, capped to the live EV count. */
-export function deriveBatteries(vehicles: TrustedVehicle[], limit = 3): BatteryAsset[] {
+/** Active EV frames become battery packs -- all of them, not a capped few. */
+export function deriveBatteries(vehicles: TrustedVehicle[], limit = Number.POSITIVE_INFINITY): BatteryAsset[] {
+  const registry = batteryRegistry(vehicles);
   return vehicles
+    .filter((vehicle) => isEvVehicle(vehicle))
+    .sort((a, b) => a.vehicle_id.localeCompare(b.vehicle_id))
     .map((vehicle) => {
-      const slot = batterySlot(vehicle.vehicle_id);
-      return slot === null ? null : { batteryId: `Battery ${slot}`, truckId: truckChassis(vehicle.vehicle_id), slot, vehicle };
+      const identity = registry.get(vehicle.vehicle_id);
+      return {
+        batteryId: identity?.label ?? vehicle.vehicle_id,
+        truckId: identity?.chassis ?? truckChassis(vehicle.vehicle_id),
+        slot: batterySlot(vehicle.vehicle_id) ?? 0,
+        vehicle,
+      };
     })
-    .filter((b): b is BatteryAsset => b !== null)
-    .sort((a, b) => a.slot - b.slot)
     .slice(0, limit);
 }
 
@@ -126,8 +160,8 @@ export function vehicleCity(vehicle: TrustedVehicle): { name: string; state: str
 
 export function applyVehicleFilters(vehicles: TrustedVehicle[], filters: FilterState): TrustedVehicle[] {
   return vehicles.filter((v) => {
-    if (filters.ev === "ev" && !isEvVehicle(v.vehicle_id)) return false;
-    if (filters.ev === "non-ev" && isEvVehicle(v.vehicle_id)) return false;
+    if (filters.ev === "ev" && !isEvVehicle(v)) return false;
+    if (filters.ev === "non-ev" && isEvVehicle(v)) return false;
 
     if (filters.geo.state) {
       const place = vehicleCity(v);
