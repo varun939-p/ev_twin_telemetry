@@ -12,5 +12,10 @@ pydantic-settings==2.15.0   # env-driven configuration
 requests==2.34.2            # HTTP transport
 python-dotenv==1.2.3        # .env loading (used by pydantic-settings)
 
+# --- FastAPI control plane (Phase 3 provisioning demo) ----------------------
+fastapi==0.115.12           # /api/provision-site receiver
+uvicorn[standard]==0.34.0   # ASGI server for the control plane
+
 # --- development / CI -------------------------------------------------------
 pytest==9.1.1               # test runner; tests/ needs nothing else
+python-multipart==0.0.20

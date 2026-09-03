@@ -39,6 +39,9 @@ __all__ = [
     "FieldError",
     "ParsedVehicle",
     "RejectedVehicle",
+    "SiteProvisionRecord",
+    "SiteProvisionRequest",
+    "SiteProvisionResponse",
     "ValidatedPayload",
     "VehicleParams",
     "naive_to_aware",
@@ -406,3 +409,54 @@ def parse_payload(
         )
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# site-provisioning (control plane) contracts
+# ---------------------------------------------------------------------------
+# Wire DTOs for the Next.js "Spin up isolated twin" form consumed by
+# `telemetry.main` (POST /api/provision-site).  They are deliberately the
+# camelCase names the browser emits (`SiteConfig` on the frontend) so the
+# payload validates with zero translation, and they live *alongside* the
+# database-layer models above -- nothing pre-existing is altered or removed.
+#
+# `vehicleFilter` (a client-side function on the frontend) is never serialised,
+# so it is simply absent here; any extra keys are ignored via `extra="ignore"`.
+
+_SITE_ID_RE: Final = re.compile(r"^[A-Za-z0-9._-]{3,32}$")
+
+
+class SiteProvisionRequest(BaseModel):
+    """Inbound payload from the "Spin up isolated twin" form."""
+
+    model_config = ConfigDict(extra="ignore", str_strip_whitespace=True)
+
+    siteId: str = Field(
+        min_length=3,
+        max_length=32,
+        pattern=_SITE_ID_RE.pattern,
+        description="Operator-chosen site key, e.g. SWP-PUNE-01",
+    )
+    label: str = Field(default="", max_length=64)
+    customer: str = Field(min_length=1, max_length=64)
+    chargers: int = Field(ge=0, le=512)
+    dgCapacityKw: int = Field(ge=0, le=100_000)
+    gridFeederKw: int = Field(ge=0, le=100_000)
+
+
+class SiteProvisionRecord(SiteProvisionRequest):
+    """A request plus the server-side audit trail, as stored on disk."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    received_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    source: str = Field(default="nextjs-dashboard")
+
+
+class SiteProvisionResponse(BaseModel):
+    """200 body. `ok` is always true on this route; failures are non-2xx."""
+
+    ok: bool = True
+    siteId: str
+    message: str
+    totalSites: int
