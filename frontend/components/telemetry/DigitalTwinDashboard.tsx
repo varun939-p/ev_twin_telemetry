@@ -15,7 +15,7 @@
  * `generated_at`, so server and client markup match exactly.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { batteryRegistry, type BatteryIdentity } from "@/lib/fleet";
 import {
@@ -191,6 +191,14 @@ function VehicleList({
   const [query, setQuery] = useState("");
   const [onlyAttention, setOnlyAttention] = useState(false);
 
+  /** Keep the selected card visible: when the selection arrives from the geo
+   *  map (or from another page via the global context) the card may be far
+   *  outside the list's scroll window.  `block: "nearest"` is a no-op when it
+   *  is already visible, so ordinary clicks never jump the page. */
+  useEffect(() => {
+    document.getElementById(`asset-card-${selectedId}`)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [selectedId]);
+
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
     return vehicles
@@ -243,7 +251,7 @@ function VehicleList({
           const stale = Number.isFinite(ageHours) && ageHours > 24;
           const soc = typeof vehicle.values.soc === "number" ? vehicle.values.soc : null;
           return (
-            <li key={vehicle.vehicle_id} className="px-2">
+            <li key={vehicle.vehicle_id} id={`asset-card-${vehicle.vehicle_id}`} className="px-2">
               <button
                 type="button"
                 onClick={() => onSelect(vehicle.vehicle_id)}

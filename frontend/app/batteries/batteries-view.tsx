@@ -11,7 +11,7 @@
  * (range / destination station / ETA).
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 
 import GeoCascadeFilter from "@/components/telemetry/GeoCascadeFilter";
 import InteractiveGeoMap from "@/components/telemetry/InteractiveGeoMap";
@@ -37,13 +37,24 @@ function Cell({ label, value, unit, tone = "text-white" }: { label: string; valu
 
 export default function BatteriesView({ data }: { data: TrustedTelemetryDocument }) {
   const filters = useFilters();
+  const { selection, selectVehicle } = filters;
 
   const batteries = useMemo(() => deriveBatteries(data.vehicles), [data.vehicles]);
   const counts = useMemo(() => stateCounts(data.vehicles), [data.vehicles]);
   const registry = useMemo(() => batteryRegistry(data.vehicles), [data.vehicles]);
 
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const selected = batteries.find((b) => b.batteryId === selectedId) ?? batteries[0] ?? null;
+  /** Bi-directional map link: the open pack is derived from the global
+   *  selection (set by a card click here or a marker click on the geo map);
+   *  a map-originated selection additionally scrolls its card into view. */
+  useEffect(() => {
+    if (selection?.origin !== "map") return;
+    const pack = batteries.find((b) => b.vehicle.vehicle_id === selection.vehicleId);
+    if (pack) {
+      document.getElementById(`pack-card-${pack.batteryId}`)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }, [selection, batteries]);
+
+  const selected = batteries.find((b) => b.vehicle.vehicle_id === selection?.vehicleId) ?? batteries[0] ?? null;
 
   /** Geo filter applies to the pack list & map (EV frames only). */
   const evVehicles = useMemo(
@@ -82,8 +93,9 @@ export default function BatteriesView({ data }: { data: TrustedTelemetryDocument
               return (
                 <button
                   key={b.batteryId}
+                  id={`pack-card-${b.batteryId}`}
                   type="button"
-                  onClick={() => setSelectedId(b.batteryId)}
+                  onClick={() => selectVehicle(b.vehicle.vehicle_id, "list")}
                   className={`rounded-xl border p-4 text-left transition ${
                     active ? "border-cyan-400/30 bg-cyan-400/[0.07]" : "border-white/[0.07] bg-black/20 hover:border-white/[0.16]"
                   }`}

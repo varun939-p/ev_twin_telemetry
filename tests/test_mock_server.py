@@ -109,6 +109,9 @@ def test_engine_runs_against_a_documented_only_upstream(documented_only_api, pg_
         api_passcode="MockPasscode123",
         database_url="sqlite://",
         _env_file=None,
+        # tiny harness fleet: keep the live-date resolver out of these
+        # unit-level paths (covered in tests/test_live_date.py)
+        live_date_min_vehicles=1,
     )
     client = UpstreamClient(settings)
     extractor = TelemetryExtractor(settings, client, TokenManager(settings, client))
@@ -155,6 +158,9 @@ def test_two_tier_pipeline_populates_battery_telemetry():
             api_passcode="MockPasscode123",
             database_url="sqlite://",
             _env_file=None,
+            # tiny harness fleet: keep the live-date resolver out of these
+            # unit-level paths (covered in tests/test_live_date.py)
+            live_date_min_vehicles=1,
         )
         client = UpstreamClient(settings)
         extractor = TelemetryExtractor(settings, client, TokenManager(settings, client))
@@ -203,6 +209,9 @@ def test_detail_fetch_failure_keeps_the_summary_frame():
             api_passcode="MockPasscode123",
             database_url="sqlite://",
             _env_file=None,
+            # tiny harness fleet: keep the live-date resolver out of these
+            # unit-level paths (covered in tests/test_live_date.py)
+            live_date_min_vehicles=1,
         )
         client = UpstreamClient(settings)
         extractor = TelemetryExtractor(settings, client, TokenManager(settings, client))

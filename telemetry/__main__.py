@@ -132,6 +132,11 @@ def cmd_once(args: argparse.Namespace) -> int:
     if args.dry_run:
         payload: VehiclesPayload = extractor.fetch_only()
         validated = parse_payload(payload, settings.tz, ingest_time=datetime.now(timezone.utc))
+        # The live-date resolver may have pinned the batch to a date other
+        # than API_DATE; the capture records exactly what was called and why,
+        # so `main_parser.py` provenance shows the resolved feed, not a guess.
+        resolution = extractor.date_resolution
+        resolved_date = resolution.resolved_date if resolution else settings.api_date
         print(
             json.dumps(
                 {
@@ -140,8 +145,12 @@ def cmd_once(args: argparse.Namespace) -> int:
                     # code path that builds the real request.
                     "request": {
                         "method": "GET",
-                        "url": client.vehicles_request_url(),
+                        "url": client.vehicles_request_url(resolved_date),
                         "date": settings.api_date,
+                        "resolved_date": resolved_date,
+                        "date_source": resolution.source if resolution else "configured",
+                        "date_probes": resolution.probes if resolution else 0,
+                        "date_satisfied": resolution.satisfied if resolution else True,
                     },
                     "seen": validated.seen,
                     "accepted": validated.accepted,
@@ -164,7 +173,18 @@ def cmd_once(args: argparse.Namespace) -> int:
         return 0
 
     orchestrator = TelemetryOrchestrator(settings, factory, extractor=extractor, tokens=tokens, client=client)
-    return 0 if orchestrator.run_once() else 1
+    ok = orchestrator.run_once()
+    resolution = extractor.date_resolution
+    if resolution is not None:
+        log.info(
+            "live-date: ingested batch from date=%s (%s, %d active vehicle(s), %d probe(s)%s)",
+            resolution.resolved_date or "<server default>",
+            resolution.source,
+            resolution.active_vehicles,
+            resolution.probes,
+            "" if resolution.satisfied else ", best-effort",
+        )
+    return 0 if ok else 1
 
 
 # ------------------------------------------------------------------ fields

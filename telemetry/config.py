@@ -64,6 +64,42 @@ class Settings(BaseSettings):
     api_date: str | None = Field(default=None, description="YYYY-MM-DD; empty => server default (today, IST)")
     api_vehicle_filter: str | None = Field(default=None, description="substring filter on vehicle id")
 
+    # ------------------------------------------------- live date resolution
+    # The upstream's `date` filter is the single biggest cause of silent data
+    # loss: with no (or a stale) API_DATE the fleet list can come back empty,
+    # or as a couple of dead roster entries, while a fresher batch is sitting
+    # one query parameter away.  When a tier-1 batch carries fewer active
+    # vehicles than `live_date_min_vehicles`, the engine probes for the
+    # freshest date that actually holds a live fleet (the fleet's own
+    # `last_updated` dates first, then a walk back over recent days) and
+    # ingests that instead of nothing.  See `telemetry.extractor`.
+    live_date_fallback: bool = Field(
+        default=True,
+        description="Probe for a fresher reporting date when a tier-1 batch is empty/dead.",
+    )
+    live_date_min_vehicles: int = Field(
+        default=5,
+        ge=1,
+        description="Active-vehicle count a batch must reach to be accepted without probing.",
+    )
+    live_date_probe_days: int = Field(
+        default=14,
+        ge=1,
+        le=60,
+        description="How many days back the walk-back probe tier reaches (newest first).",
+    )
+    live_date_max_probes: int = Field(
+        default=8,
+        ge=1,
+        le=32,
+        description="Hard cap on tier-1 GETs spent per date resolution.",
+    )
+    live_date_reprobe_seconds: float = Field(
+        default=900.0,
+        ge=0,
+        description="Cooldown before re-probing when the last resolution ended best-effort.",
+    )
+
     # ------------------------------------------------------- token lifetime
     # The upstream token lives 3540 s (59 min).  We rotate proactively at 3300 s
     # (55 min) -- and never later than (lifetime - safety_margin) -- so a request

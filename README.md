@@ -17,32 +17,34 @@ run it.
 
 ---
 
-## Field mapping: 15 measured, 9 held NULL
+## Field mapping: all 24 parameters, two tiers
 
-Verified against a real 100-vehicle pull (`blue_energy_response.json`,
-2026-08-28):
+Verified against the live v1 contract (Postman, 2026-09) and a real
+100-vehicle pull (`blue_energy_response.json`, 2026-08-28):
 
-* **10 parameters** arrive under the wire keys `DASHBOARD_API_GUIDE.md`
-  documents (`soc`, `soh`, `odo`, `residual_mileage`, `cycles`, `batt_temp`,
-  `min_cell_v`, `max_cell_v`, `speed`, `regen_kwh`) plus `last_updated`.
-* **5 more** arrive under inferred aliases and are confirmed present:
-  `max_temp_c`, `min_temp_c`, `battery_avg_temp_c`, `latitude`, `longitude`.
-* **9 are not measured upstream at all** — the auxiliary thermal and secondary
-  sub-pack diagnostics: `total_power_kwh`, `charging_status`, `battery_total_v`,
-  `battery_current_a`, `max_cell_v_cell_no`, `min_cell_v_pack_no`,
-  `min_cell_v_cell_no`, `max_temp_pack_no`, `work_status`.
+* **Tier 1 — `GET /api/v1/vehicles`** returns the fleet summary: operational
+  keys (`soc`, `odo`, `speed`, `latitude`, `longitude`, …) and an explicit
+  `"battery": null` placeholder per frame.
+* **Tier 2 — `GET /api/v1/vehicles/{id}`** returns the complete live
+  diagnostic frame, including the battery block under the abbreviated v1 keys
+  (`batt_v`, `chg_status`, `batt_temp`, `batt_a`, `tot_power_kwh`,
+  `max_cell_no`, `min_pack_no`, `min_cell_no`, `max_t_pack`, `work_sts`).
+  The engine fetches it per vehicle, concurrently, and merges it into the
+  summary frame (`merge_vehicle_frames`) — detail nulls never erase summary
+  readings.
 
-Those 9 are declared `unmeasured=True` in `telemetry/fields.py` and are **pinned
-to `NULL`** by `telemetry.schemas.parse_payload`, whatever a frame carries. The
-UI renders them as disabled "awaiting upstream" tiles. A zero is never
-substituted for an absent measurement — they are opposite claims about the
-truck. If the upstream ever starts sending one, the value is discarded and
-recorded as a `FieldError` so the change is visible rather than silent.
+Nothing is pinned NULL any more: a parameter is `NULL` **only** when the
+merged tier-1 + tier-2 frame genuinely lacks every alias for it (or carries an
+unusable sentinel). The historical 2026-08-28 capture predates the tier-2
+battery block, so its nine auxiliary channels are honestly NULL there; a
+fresh two-tier pull measures all 24, and the UI renders exactly what the
+validated document's per-field `field_status` says — "awaiting upstream" for
+real gaps, never a fabricated zero.
 
-`REQUIRE_ALL_FIELDS` therefore gates on the 15 measured parameters only; the
-permanently-absent 9 can never quarantine a fleet.
+`REQUIRE_ALL_FIELDS=true` gates on all 24 parameters; leave it `false` for
+field-restricted API clients.
 
-Close the gap with one command against the real API:
+Close any remaining gap with one command against the real API:
 
 ```bash
 python -m telemetry once --dry-run     # prints accepted values + the `missing` list per vehicle
@@ -52,6 +54,20 @@ python -m telemetry fields             # prints the full mapping table
 Then add the real keys to the `aliases` tuples in `telemetry/fields.py` — one
 line per parameter, and the model, ORM and upsert all pick it up automatically.
 See `docs/ARCHITECTURE.md` §7.
+
+### Live date resolution
+
+The upstream keys every batch on `date` (default: today, IST). An unset or
+stale `API_DATE` can therefore answer with an empty fleet — or a couple of
+dead roster entries — while a live batch sits one query parameter away. When a
+tier-1 batch carries fewer than `LIVE_DATE_MIN_VEHICLES` active vehicles, the
+engine probes, newest first: the fleet's own `last_updated` dates, then a walk
+back over `LIVE_DATE_PROBE_DAYS` recent days (bounded by
+`LIVE_DATE_MAX_PROBES`), and ingests the freshest batch that holds a live
+fleet. If nothing reaches the threshold, the richest batch seen is ingested
+and reported — never an empty payload. The decision is cached, so steady-state
+polls still send exactly one tier-1 GET. `LIVE_DATE_FALLBACK=false` restores
+the strict one-request behaviour.
 
 ---
 
@@ -133,8 +149,11 @@ list in `.env.example`. The important ones:
 | `TOKEN_EXPIRY_SAFETY_MARGIN` | `240` | headroom kept before expiry |
 | `HTTP_MAX_RETRIES` | `5` | 5xx / timeouts only — never 400/401/403/404 |
 | `BACKOFF_BASE_SECONDS` / `BACKOFF_MAX_SECONDS` | `1` / `60` | exponential, full jitter |
-| `REQUIRE_ALL_FIELDS` | `false` | `true` rejects frames missing any of the 15 **measured** parameters |
+| `REQUIRE_ALL_FIELDS` | `false` | `true` rejects frames missing any of the 24 parameters |
 | `WRITE_UNCHANGED` | `false` | `true` archives a row even when nothing changed |
+| `LIVE_DATE_FALLBACK` | `true` | probe for a fresher live batch when a tier-1 batch is empty/dead |
+| `LIVE_DATE_MIN_VEHICLES` | `5` | active-vehicle count a batch must reach without probing |
+| `LIVE_DATE_PROBE_DAYS` / `LIVE_DATE_MAX_PROBES` | `14` / `8` | walk-back horizon / probe budget per resolution |
 | `SOURCE_TIMEZONE` | `Asia/Kolkata` | the API's naive `last_updated` is IST |
 | `METRICS_ENABLED` / `METRICS_PORT` | `false` / `9464` | Prometheus text endpoint |
 
@@ -178,14 +197,14 @@ is converted on the way in — see `docs/ARCHITECTURE.md` §5.
 ## Tests
 
 ```bash
-# no PostgreSQL needed: 66 pass, the 28 database-backed ones skip
+# no PostgreSQL needed: 132 pass, the 21 database-backed ones skip
 pytest
 
-# everything, including the PostgreSQL upsert tests: 94 pass
+# everything, including the PostgreSQL upsert tests: 153 pass
 export TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@127.0.0.1:5432/twin
 pytest
 
-# just the database-independent tests (validation, rotation, retry)
+# just the database-independent tests (validation, rotation, retry, live-date)
 pytest -k "not repository and not e2e"
 ```
 
@@ -195,7 +214,7 @@ prove nothing about the statement that ships.
 
 What the suite actually proves:
 
-* **94 tests**, no mocking of the code under test — the retry, auth and loop
+* **153 tests**, no mocking of the code under test — the retry, auth and loop
   tests drive a real HTTP server and a real PostgreSQL.
 * Token rotation at exactly 55 minutes, driven by a fake clock (no sleeping).
 * A revoked token mid-run: exactly one re-auth, zero failed cycles, **and the
@@ -216,7 +235,7 @@ telemetry/          the engine (fields → schemas → api/auth → extractor �
 telemetry/main.py   FastAPI control plane (provisioning + manual ingestion)
 main_parser.py      local capture → validated trusted JSON for the frontend
 frontend/           Next.js 16 dashboard (app/ router, @/ alias → frontend/)
-tests/              89 tests, 28 PostgreSQL-gated skips
+tests/              153 tests, 21 PostgreSQL-gated skips
 tools/              mock upstream server + smoke test
 deploy/schema.sql   the DDL
 docs/               ARCHITECTURE.md — read this
@@ -229,5 +248,15 @@ their client views live under `frontend/app/`. The `@/` alias resolves to
 `frontend/` (see `frontend/tsconfig.json`), so an import of
 `@/components/telemetry/ViewNav` must find
 `frontend/components/telemetry/ViewNav.tsx`.
+
+The Trucks / Batteries geo map renders **real surveyed geography**:
+`frontend/data/india_states.json` is a simplified extract (36 state/UT
+MultiPolygons, ~19k points) of the MIT-licensed `states_india.geojson`
+(© 2024 Mr Akshay Shinde, https://github.com/mraxays/india-states.geojson —
+license text in `frontend/data/india_states.LICENSE`). `lib/india-geo.ts`
+compiles it once into degree-space SVG paths; the camera rides a single group
+transform. Fleet markers are measured GPS fixes only, coloured by live motion
+state, and clicking one selects the asset in the list (and vice-versa) through
+the global `FilterContext`.
 
 Module-by-module explanation in `docs/ARCHITECTURE.md` §2.

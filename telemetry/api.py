@@ -38,6 +38,24 @@ log = logging.getLogger(__name__)
 _RETRY_STATUS: Final[frozenset[int]] = frozenset({500, 502, 503, 504})
 
 
+class _UseSettingsDate:
+    """Sentinel: "send whatever `Settings.api_date` says" (the default).
+
+    The live-date resolver needs to ask for *one specific* date -- including
+    "no date at all" (the upstream's today-IST default) even when `API_DATE`
+    is set -- so `fetch_vehicles(token, date=...)` distinguishes
+    *not mentioned* (sentinel) from *explicitly omitted* (None).
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover - cosmetics
+        return "<use settings date>"
+
+
+USE_SETTINGS_DATE: Final = _UseSettingsDate()
+
+
 def is_auth_required(response: Response) -> bool:
     """True when a 401 carries the guide §5 marker `"auth": "required"`.
 
@@ -87,16 +105,21 @@ class UpstreamClient:
         )
 
     # -------------------------------------------------------------- vehicles
-    def fetch_vehicles(self, token: str) -> dict[str, Any]:
+    def fetch_vehicles(self, token: str, date: str | None | _UseSettingsDate = USE_SETTINGS_DATE) -> dict[str, Any]:
         """GET /api/v1/vehicles (tier 1) with a Bearer token.
 
         Returns the fleet summary: per-vehicle frames are high-level only and
         carry `"battery": null`.  Deep telemetry comes from `fetch_vehicle`.
+
+        `date` overrides the query-string date filter for this one request:
+        the sentinel (default) keeps `Settings.api_date`, `None` omits the
+        parameter entirely, and a string pins that exact day.  The live-date
+        resolver in `telemetry.extractor` uses all three.
         """
         return self._request(
             "GET",
             self.settings.vehicles_url(),
-            params=self._query_params(),
+            params=self._query_params(date),
             headers={"Authorization": f"Bearer {token}"},
             label="vehicles",
             endpoint="vehicles",
@@ -118,22 +141,24 @@ class UpstreamClient:
             endpoint="vehicles",
         )
 
-    def _query_params(self) -> dict[str, str]:
+    def _query_params(self, date: str | None | _UseSettingsDate = USE_SETTINGS_DATE) -> dict[str, str]:
         params: dict[str, str] = {}
-        if self.settings.api_date:
-            params["date"] = self.settings.api_date
+        resolved_date = self.settings.api_date if isinstance(date, _UseSettingsDate) else date
+        if resolved_date:
+            params["date"] = resolved_date
         if self.settings.api_vehicle_filter:
             params["vehicle"] = self.settings.api_vehicle_filter
         return params
 
-    def vehicles_request_url(self) -> str:
+    def vehicles_request_url(self, date: str | None | _UseSettingsDate = USE_SETTINGS_DATE) -> str:
         """The exact GET URL the vehicles call will use, query string included.
 
         Descriptive only: nothing is sent and no header is included, so it is
         safe to log and to print.  The CLI uses it to state what it is about to
         call; `_request` logs the same assembly immediately before sending.
+        Pass `date` to describe a date-pinned call (see `fetch_vehicles`).
         """
-        return self._full_url(self.settings.vehicles_url(), self._query_params())
+        return self._full_url(self.settings.vehicles_url(), self._query_params(date))
 
     def vehicle_request_url(self, vehicle_id: str) -> str:
         """The exact tier-2 GET URL for one vehicle (descriptive, see above)."""

@@ -40,6 +40,22 @@ export interface FocusSelection {
   vehicleIds: string[];
 }
 
+/**
+ * The asset the map and the asset lists are jointly pointing at.
+ *
+ * This is the bi-directional half of the geo map: `origin: "map"` selections
+ * make the host page scroll the asset's card into view and open its parameter
+ * panel; `origin: "list"` selections make the map camera fly to the truck.
+ * `seq` increments on every selection (including re-selecting the same
+ * asset) so consumers can react to repeated clicks.  A pointer, not a filter:
+ * it narrows nothing.
+ */
+export interface AssetSelection {
+  vehicleId: string;
+  origin: "map" | "list";
+  seq: number;
+}
+
 export interface FilterState {
   ev: EvFilter;
   geo: GeoSelection;
