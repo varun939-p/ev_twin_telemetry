@@ -585,7 +585,7 @@ export default function DigitalTwinDashboard({
             {data.pipeline_health.attention.length > 0 && (
               <section className="rounded-2xl border border-amber-400/15 bg-amber-400/[0.05] px-5 py-5">
                 <h2 className={`${EYEBROW} text-amber-300`}>Needs Attention</h2>
-                <ul className="mt-3 space-y-3">
+                <ul className="mt-3 space-y-3 max-h-96 overflow-y-auto pr-2">
                   {data.pipeline_health.attention.map((item) => (
                     <li key={item.vehicle_id}>
                       <button type="button" onClick={() => select(item.vehicle_id)} className="w-full text-left">
