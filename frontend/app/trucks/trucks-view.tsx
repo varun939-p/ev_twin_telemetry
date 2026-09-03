@@ -13,7 +13,7 @@
  * overview ignores only the focus so a cluster can be (re)selected.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import DataIngestionPanel from "@/components/telemetry/DataIngestionPanel";
 import GeoCascadeFilter from "@/components/telemetry/GeoCascadeFilter";
@@ -22,11 +22,10 @@ import LiveClock from "@/components/telemetry/LiveClock";
 import ViewNav from "@/components/telemetry/ViewNav";
 import { applyVehicleFilters, isEvVehicle, stateCounts, type EvFilter } from "@/lib/fleet";
 import { useFilters } from "@/lib/FilterContext";
-import { formatValue, numericValue, type TrustedTelemetryDocument, type TrustedVehicle } from "@/lib/trusted-telemetry";
+import { formatValue, numericValue, type TrustedTelemetryDocument } from "@/lib/trusted-telemetry";
 
 const CARD = "rounded-2xl border border-white/[0.06] bg-slate-900/40 backdrop-blur-md";
 const EYEBROW = "text-[10px] font-medium uppercase tracking-[0.24em] text-slate-500";
-const HAIRLINE = "h-px bg-white/[0.06]";
 
 function Tile({ label, value, unit, muted = false }: { label: string; value: string | null; unit?: string; muted?: boolean }) {
   return (
@@ -54,15 +53,11 @@ export default function TrucksView({ data }: { data: TrustedTelemetryDocument })
 
   const counts = useMemo(() => stateCounts(vehicles), [vehicles]);
 
-  useEffect(() => {
-    if (selectedId && !scoped.some((v) => v.vehicle_id === selectedId)) {
-      setSelectedId(scoped[0]?.vehicle_id ?? null);
-    } else if (!selectedId && scoped.length) {
-      setSelectedId(scoped[0].vehicle_id);
-    }
-  }, [scoped, selectedId]);
-
-  const selected = scoped.find((v) => v.vehicle_id === selectedId) ?? null;
+  /** Derived, not synced by an effect: when the filter drops the current pick
+   *  (or nothing has been clicked yet) the first asset in scope is the
+   *  selection.  Writing this back into state from an effect would cost an
+   *  extra render on every filter change. */
+  const selected = scoped.find((v) => v.vehicle_id === selectedId) ?? scoped[0] ?? null;
 
   const liveFields = useMemo(
     () => (selected ? Object.entries(selected.field_status).filter(([, s]) => s === "measured").map(([f]) => f) : []),
@@ -149,7 +144,7 @@ export default function TrucksView({ data }: { data: TrustedTelemetryDocument })
           <ul className="mt-3 max-h-[420px] space-y-1.5 overflow-y-auto pr-1">
             {scoped.map((v) => {
               const soc = numericValue(v, "soc");
-              const active = v.vehicle_id === selectedId;
+              const active = v.vehicle_id === selected?.vehicle_id;
               return (
                 <li key={v.vehicle_id}>
                   <button

@@ -2,12 +2,15 @@
 
 Why this file exists
 --------------------
-The upstream guide's sample frame carries 11 keys: 10 of the 24 parameters
-(`soc`, `soh`, `odo`, `residual_mileage`, `cycles`, `batt_temp`, `min_cell_v`,
-`max_cell_v`, `speed`, `regen_kwh`) plus the `last_updated` timestamp.  The
-remaining **14 parameters** are required by the product spec but their upstream
-keys are not in the guide -- their aliases below are inferred, and are flagged
-`documented=False` so `python -m telemetry fields` marks them for verification.
+The upstream `GET /api/v1/vehicles` frame carries 11 keys: 10 of the 24
+parameters (`soc`, `soh`, `odo`, `residual_mileage`, `cycles`, `batt_temp`,
+`min_cell_v`, `max_cell_v`, `speed`, `regen_kwh`) plus the `last_updated`
+timestamp.  Of the remaining 14, five arrive under registry aliases outside the
+guide sample (`max_temp_c`, `min_temp_c`, `battery_avg_temp_c`, `latitude`,
+`longitude`), leaving **9 parameters the upstream does not measure at all** --
+the auxiliary thermal and secondary sub-pack diagnostics.  Those 9 are flagged
+`unmeasured=True` so the NULL is a declared contract rather than an accident of
+one payload.
 
 Rather than hard-coding guesses in three places (model, schema, SQL), every
 parameter is declared ONCE here with:
@@ -15,7 +18,8 @@ parameter is declared ONCE here with:
   * its canonical name (== column name in PostgreSQL),
   * the ordered set of accepted upstream aliases,
   * its type / range / precision,
-  * whether it is monotonic (used by the upsert's anti-regression guard).
+  * whether it is monotonic (used by the upsert's anti-regression guard),
+  * whether it is `unmeasured` (pinned NULL; never coerced, never defaulted).
 
 The Pydantic model, the SQLAlchemy ORM and the upsert statement are all
 generated from this registry, so renaming a column or accepting a new alias is
@@ -42,6 +46,10 @@ class ParamSpec:
     monotonic: bool = False       # counter-like: a decrease means a bad/rolled-back reading
     documented: bool = False      # True => key confirmed by DASHBOARD_API_GUIDE.md
     nullable: bool = True
+    # True => the upstream is KNOWN not to measure this parameter.  The value is
+    # pinned to NULL by `telemetry.schemas.parse_payload` -- it is never read,
+    # never coerced and, above all, never defaulted to 0.  See UNMEASURED_NAMES.
+    unmeasured: bool = False
 
 
 def _f(name: str, label: str, unit: str, *aliases: str, **kw) -> ParamSpec:
@@ -81,23 +89,23 @@ PARAM_SPECS: Final[tuple[ParamSpec, ...]] = (
     # 12  Vehicle Speed (km/h)
     _f("speed_kmh", "Vehicle Speed", "km/h", "speed", "vehicle_speed", minimum=0, maximum=250, documented=True),
     # 13  Total Power Consumption (kWh)
-    _f("total_power_kwh", "Total Power Consumption", "kWh", "total_power_consumption_kwh", "power_kwh", "energy_kwh", minimum=0),
+    _f("total_power_kwh", "Total Power Consumption", "kWh", "total_power_consumption_kwh", "power_kwh", "energy_kwh", minimum=0, unmeasured=True),
     # 14  Charging Status (0/1)
-    _i("charging_status", "Charging Status", "0/1", "charge_status", "is_charging", minimum=0, maximum=1),
+    _i("charging_status", "Charging Status", "0/1", "charge_status", "is_charging", minimum=0, maximum=1, unmeasured=True),
     # 15  Battery Average Temperature (degC)
     _f("battery_avg_temp_c", "Battery Average Temperature", "degC", "avg_temp", "batt_avg_temp", "battery_average_temp", minimum=-40, maximum=150),
     # 16  Battery Total Voltage (V)
-    _f("battery_total_v", "Battery Total Voltage", "V", "total_v", "pack_v", "batt_total_v", "battery_voltage", minimum=0, maximum=1500),
+    _f("battery_total_v", "Battery Total Voltage", "V", "total_v", "pack_v", "batt_total_v", "battery_voltage", minimum=0, maximum=1500, unmeasured=True),
     # 17  Battery Current (A)  -- can be negative (regen/discharge convention)
-    _f("battery_current_a", "Battery Current", "A", "current_a", "batt_current", "pack_current_a", minimum=-3000, maximum=3000),
+    _f("battery_current_a", "Battery Current", "A", "current_a", "batt_current", "pack_current_a", minimum=-3000, maximum=3000, unmeasured=True),
     # 18  Maximum Cell Voltage Cell Number
-    _i("max_cell_v_cell_no", "Max Cell Voltage Cell Number", "", "max_cell_v_cell_number", "max_v_cell_no", minimum=0, maximum=4096),
+    _i("max_cell_v_cell_no", "Max Cell Voltage Cell Number", "", "max_cell_v_cell_number", "max_v_cell_no", minimum=0, maximum=4096, unmeasured=True),
     # 19  Minimum Cell Voltage Battery Number
-    _i("min_cell_v_pack_no", "Min Cell Voltage Battery Number", "", "min_cell_v_battery_number", "min_v_pack_no", minimum=0, maximum=64),
+    _i("min_cell_v_pack_no", "Min Cell Voltage Battery Number", "", "min_cell_v_battery_number", "min_v_pack_no", minimum=0, maximum=64, unmeasured=True),
     # 20  Minimum Cell Voltage Cell Number
-    _i("min_cell_v_cell_no", "Min Cell Voltage Cell Number", "", "min_cell_v_cell_number", "min_v_cell_no", minimum=0, maximum=4096),
+    _i("min_cell_v_cell_no", "Min Cell Voltage Cell Number", "", "min_cell_v_cell_number", "min_v_cell_no", minimum=0, maximum=4096, unmeasured=True),
     # 21  Maximum Temperature Battery Number
-    _i("max_temp_pack_no", "Max Temperature Battery Number", "", "max_temp_battery_number", "max_t_pack_no", minimum=0, maximum=64),
+    _i("max_temp_pack_no", "Max Temperature Battery Number", "", "max_temp_battery_number", "max_t_pack_no", minimum=0, maximum=64, unmeasured=True),
     # 22  Vehicle Work Status  -- upstream type unknown, stored verbatim as text
     ParamSpec(
         name="work_status",
@@ -106,6 +114,7 @@ PARAM_SPECS: Final[tuple[ParamSpec, ...]] = (
         kind="str",
         aliases=("work_status", "vehicle_work_status", "veh_work_status", "workstate"),
         nullable=True,
+        unmeasured=True,
     ),
     # 23  Latitude
     _f("latitude", "Latitude", "deg", "lat", minimum=-90, maximum=90),
@@ -130,6 +139,24 @@ MONOTONIC_NAMES: Final[tuple[str, ...]] = tuple(p.name for p in PARAM_SPECS if p
 
 # Every field the Pydantic model will emit (24 params + vehicle timestamp).
 COLUMN_NAMES: Final[tuple[str, ...]] = tuple(p.name for p in PARAM_SPECS)
+
+# ---------------------------------------------------------------------------
+# THE 9 UNMEASURED PARAMETERS
+#
+# Confirmed absent from `GET /api/v1/vehicles` on every frame of the verified
+# production capture (`blue_energy_response.json`, 100/100 vehicles): auxiliary
+# thermal diagnostics and the secondary sub-pack diagnostics.  Declaring them
+# here -- rather than letting "the upstream happened not to send it" imply it --
+# makes the NULL a *contract*: `telemetry.schemas.parse_payload` pins these to
+# NULL unconditionally, and the UI renders them disabled.  A zero is never a
+# substitute for an absent measurement.
+# ---------------------------------------------------------------------------
+UNMEASURED_NAMES: Final[tuple[str, ...]] = tuple(p.name for p in PARAM_SPECS if p.unmeasured)
+UNMEASURED: Final[frozenset[str]] = frozenset(UNMEASURED_NAMES)
+MEASURED_NAMES: Final[tuple[str, ...]] = tuple(p.name for p in PARAM_SPECS if not p.unmeasured)
+
+assert len(UNMEASURED_NAMES) == 9, f"expected 9 unmeasured parameters, got {len(UNMEASURED_NAMES)}"
+assert len(MEASURED_NAMES) == 15, f"expected 15 measured parameters, got {len(MEASURED_NAMES)}"
 
 
 def spec(name: str) -> ParamSpec:

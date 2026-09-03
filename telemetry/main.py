@@ -8,7 +8,7 @@ Demo constraints honoured:
     paths work.
 
 Run:
-    uvicorn backend.main:app --host 0.0.0.0 --port 8000
+    uvicorn telemetry.main:app --host 0.0.0.0 --port 8000
 """
 
 from __future__ import annotations

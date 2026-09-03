@@ -7,10 +7,10 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from telemetry.fields import PARAM_SPECS
+from telemetry.fields import MEASURED_NAMES, PARAM_SPECS, UNMEASURED_NAMES
 from telemetry.schemas import (
     AuthResponse,
-    DashboardPayload,
+    VehiclesPayload,
     VehicleParams,
     parse_payload,
     parse_source_timestamp,
@@ -53,7 +53,7 @@ FULL_FRAME = {
 
 
 def _parse(frame, **kwargs):
-    payload = DashboardPayload(ok=True, vehicles={"AP39WG5383": frame})
+    payload = VehiclesPayload(ok=True, vehicles={"AP39WG5383": frame})
     kwargs.setdefault("ingest_time", datetime(2026, 8, 21, 5, 0, tzinfo=timezone.utc))
     return parse_payload(payload, IST, **kwargs)
 
@@ -75,23 +75,37 @@ def test_guide_frame_maps_documented_fields():
     assert values["regen_kwh"] == 12.4
 
 
-def test_full_frame_covers_all_24_parameters():
+def test_full_frame_emits_all_24_keys_and_holds_the_9_unmeasured_as_null():
+    """A frame that carries all 24 keys still stores NULL for the declared-
+    unmeasured 9.  The NULL is a contract, not an accident of the payload."""
     result = _parse(FULL_FRAME)
-    assert result.accepted == 1
+    assert result.accepted == 1, result.rejected
     vehicle = result.ok[0]
-    assert vehicle.missing == []
-    assert vehicle.field_errors == []
-    assert all(name in vehicle.values for name in (p.name for p in PARAM_SPECS))
+
     assert len(vehicle.values) == 24
+    assert all(name in vehicle.values for name in (p.name for p in PARAM_SPECS))
+
+    # the 15 measured parameters are populated ...
+    for name in MEASURED_NAMES:
+        assert vehicle.values[name] is not None, name
+    # ... the 9 unmeasured ones are NULL, never 0
+    for name in UNMEASURED_NAMES:
+        assert vehicle.values[name] is None, f"{name} must be NULL, got {vehicle.values[name]!r}"
+
+    # and both facts are reported, not silently applied
+    assert set(vehicle.missing) == set(UNMEASURED_NAMES)
+    assert {e.field for e in vehicle.field_errors} == set(UNMEASURED_NAMES)
+    assert all("unmeasured" in e.error for e in vehicle.field_errors)
 
 
-def test_every_parameter_accepts_its_canonical_name():
+def test_every_measured_parameter_accepts_its_canonical_name():
     """The DB column name must also be a valid input key (round-tripping)."""
-    frame = {p.name: 1 for p in PARAM_SPECS}
-    frame["work_status"] = "RUNNING"
+    frame = {name: 1 for name in MEASURED_NAMES}
     result = _parse(frame)
     assert result.accepted == 1, result.rejected
-    assert result.ok[0].missing == []
+    assert result.ok[0].missing == list(UNMEASURED_NAMES)
+    for name in MEASURED_NAMES:
+        assert result.ok[0].values[name] is not None, name
 
 
 def test_unknown_keys_are_ignored_not_fatal():
@@ -105,12 +119,10 @@ def test_integer_parameters_stay_integers():
     # NOTE: this used to feed `charging_status: True` and expect 1 -- which was
     # the very coercion the P1 Boolean Trap fix now forbids.  The int-rounding
     # behaviour it covers is kept; boolean rejection has its own test below.
-    result = _parse({**GUIDE_FRAME, "cycles": 312.0, "charging_status": 1})
+    result = _parse({**GUIDE_FRAME, "cycles": 312.0})
     values = result.ok[0].values
     assert values["charge_cycles"] == 312
     assert isinstance(values["charge_cycles"], int)
-    assert values["charging_status"] == 1
-    assert isinstance(values["charging_status"], int)
 
 
 def test_numeric_strings_are_coerced():
@@ -137,41 +149,67 @@ def test_out_of_range_is_a_validation_failure_not_a_silent_write():
     assert any("soc" in e.field for e in result.rejected[0].errors)
 
 
-def test_negative_current_is_allowed():
-    """Discharge/regen conventions make battery current legitimately negative."""
+def test_negative_values_are_allowed_on_measured_fields():
+    """Sub-zero cell temperature and southern-hemisphere coordinates are real."""
+    result = _parse({**GUIDE_FRAME, "batt_temp": -5.5, "lat": -12.25})
+    values = result.ok[0].values
+    assert values["battery_temp_c"] == -5.5
+    assert values["latitude"] == -12.25
+
+
+def test_battery_current_is_held_null_while_it_is_unmeasured():
+    """`battery_current_a` is one of the 9: a plausible reading is still NULL."""
     result = _parse({**GUIDE_FRAME, "battery_current_a": -120.5})
-    assert result.ok[0].values["battery_current_a"] == -120.5
+    assert result.accepted == 1, result.rejected
+    assert result.ok[0].values["battery_current_a"] is None
 
 
 # ------------------------------------------- P1 regression coverage (handoff)
-def test_p1_charging_status_of_one_is_accepted():
-    """A documented, in-bounds flag value must still pass (no over-rejection)."""
-    result = _parse({**GUIDE_FRAME, "charging_status": 1})
+def test_p1_in_bounds_integer_is_accepted():
+    """A documented, in-bounds counter must still pass (no over-rejection)."""
+    result = _parse({**GUIDE_FRAME, "cycles": 312})
     assert result.accepted == 1, result.rejected
-    assert result.ok[0].values["charging_status"] == 1
-    assert isinstance(result.ok[0].values["charging_status"], int)
+    assert result.ok[0].values["charge_cycles"] == 312
+    assert isinstance(result.ok[0].values["charge_cycles"], int)
 
 
-def test_p1_charging_status_of_two_fails_the_bounds_check():
-    """Integer fields used to return before min/max ran; 2 must now be rejected."""
-    result = _parse({**GUIDE_FRAME, "charging_status": 2})
-    assert result.accepted == 0, "charging_status=2 slipped past maximum=1"
+def test_p1_out_of_bounds_integer_fails_the_bounds_check():
+    """Integer fields used to return before min/max ran.
+
+    Re-pointed from `charging_status` (now declared unmeasured and pinned NULL)
+    to `charge_cycles`, a MEASURED monotonic integer, so the regression the test
+    was written for is still actually guarded.
+    """
+    result = _parse({**GUIDE_FRAME, "cycles": -5})
+    assert result.accepted == 0, "charge_cycles=-5 slipped past minimum=0"
     rejected = result.rejected[0]
     assert any(
-        e.field == "charging_status" and "above maximum" in e.error
-        for e in rejected.errors
+        e.field == "cycles" and "below minimum" in e.error for e in rejected.errors
     ), rejected.errors
 
 
-def test_p1_negative_cell_number_fails_the_bounds_check():
-    """A cell index cannot be negative; the old int path skipped minimum=0."""
-    result = _parse({**GUIDE_FRAME, "max_cell_v_cell_no": -5})
-    assert result.accepted == 0, "max_cell_v_cell_no=-5 slipped past minimum=0"
+def test_p1_out_of_range_float_fails_the_bounds_check():
+    """A coordinate outside the physical range must not reach the database."""
+    result = _parse({**GUIDE_FRAME, "lat": -95})
+    assert result.accepted == 0, "latitude=-95 slipped past minimum=-90"
     rejected = result.rejected[0]
-    assert any(
-        e.field == "max_cell_v_cell_no" and "below minimum" in e.error
-        for e in rejected.errors
-    ), rejected.errors
+    assert any("below minimum" in e.error for e in rejected.errors), rejected.errors
+
+
+def test_p1_junk_in_an_unmeasured_field_does_not_sink_the_frame():
+    """The other half of the P1 guard: an out-of-range value on one of the 9
+    must NOT quarantine the vehicle.  The 15 measured readings are worth more
+    than a channel we are not reading anyway."""
+    result = _parse({**GUIDE_FRAME, "charging_status": 2, "max_cell_v_cell_no": -5})
+    assert result.accepted == 1, f"frame was quarantined over unmeasured fields: {result.rejected}"
+    assert not result.rejected
+    vehicle = result.ok[0]
+    assert vehicle.values["charging_status"] is None
+    assert vehicle.values["max_cell_v_cell_no"] is None
+    # ...and the junk is still visible
+    assert {"charging_status", "max_cell_v_cell_no"} <= {e.field for e in vehicle.field_errors}
+    # the measured readings survived
+    assert vehicle.values["soc"] == 78 and vehicle.values["charge_cycles"] == 312
 
 
 def test_p1_boolean_in_numeric_field_is_rejected_not_coerced():
@@ -189,7 +227,7 @@ def test_p1_boolean_in_numeric_field_is_rejected_not_coerced():
 
 # ----------------------------------------------------------------- isolation
 def test_one_bad_vehicle_does_not_sink_the_fleet():
-    payload = DashboardPayload(
+    payload = VehiclesPayload(
         ok=True,
         vehicles={
             "AP39WG5383": GUIDE_FRAME,
@@ -205,9 +243,21 @@ def test_one_bad_vehicle_does_not_sink_the_fleet():
 
 
 def test_require_all_fields_mode_rejects_partial_frames():
+    """The gate counts only the 15 measured parameters -- the 9 unmeasured ones
+    can never arrive, so including them would quarantine the entire fleet."""
     result = _parse(GUIDE_FRAME, require_all_fields=True)
     assert result.accepted == 0
-    assert "missing 14 required parameter(s)" in result.rejected[0].reason
+    reason = result.rejected[0].reason
+    assert "missing 5 required parameter(s)" in reason
+    assert not any(name in reason for name in UNMEASURED_NAMES), reason
+
+
+def test_require_all_fields_never_rejects_over_the_unmeasured_nine():
+    """A frame carrying all 15 measured parameters passes even though 9 keys are
+    absent -- that absence is the declared contract, not a defect."""
+    result = _parse(FULL_FRAME, require_all_fields=True)
+    assert result.accepted == 1, result.rejected
+    assert set(result.ok[0].missing) == set(UNMEASURED_NAMES)
 
 
 def test_require_all_fields_accepts_complete_frames():
@@ -254,14 +304,14 @@ def test_timestamp_parsing(raw, expected):
 
 
 def test_vehicle_id_is_normalised_to_uppercase():
-    payload = DashboardPayload(ok=True, vehicles={"ap39wg5383": GUIDE_FRAME})
+    payload = VehiclesPayload(ok=True, vehicles={"ap39wg5383": GUIDE_FRAME})
     result = parse_payload(payload, IST)
     assert result.ok[0].vehicle_id == "AP39WG5383"
 
 
 # ------------------------------------------------------------------ envelope
 def test_dashboard_envelope_tolerates_missing_vehicles():
-    assert DashboardPayload.model_validate({"ok": True}).vehicles == {}
+    assert VehiclesPayload.model_validate({"ok": True}).vehicles == {}
 
 
 def test_auth_response_validates_documented_shape():

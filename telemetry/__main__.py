@@ -24,10 +24,10 @@ from .auth import TokenManager
 from .config import Settings, get_settings
 from .db import build_engine, build_session_factory, init_schema, ping
 from .extractor import TelemetryExtractor
-from .fields import PARAM_SPECS
+from .fields import MEASURED_NAMES, PARAM_SPECS, UNMEASURED_NAMES
 from .logging_setup import configure_logging
 from .orchestrator import TelemetryOrchestrator
-from .schemas import DashboardPayload, parse_payload
+from .schemas import VehiclesPayload, parse_payload
 
 log = logging.getLogger("telemetry.cli")
 
@@ -117,7 +117,7 @@ def cmd_once(args: argparse.Namespace) -> int:
 
     log.info(
         "target: GET %s | date=%s",
-        settings.dashboard_url(),
+        settings.vehicles_url(),
         settings.api_date or "<not set -- upstream defaults to today, IST>",
     )
 
@@ -130,7 +130,7 @@ def cmd_once(args: argparse.Namespace) -> int:
     extractor = TelemetryExtractor(settings, client, tokens)
 
     if args.dry_run:
-        payload: DashboardPayload = extractor.fetch_only()
+        payload: VehiclesPayload = extractor.fetch_only()
         validated = parse_payload(payload, settings.tz, ingest_time=datetime.now(timezone.utc))
         print(
             json.dumps(
@@ -140,7 +140,7 @@ def cmd_once(args: argparse.Namespace) -> int:
                     # code path that builds the real request.
                     "request": {
                         "method": "GET",
-                        "url": client.dashboard_request_url(),
+                        "url": client.vehicles_request_url(),
                         "date": settings.api_date,
                     },
                     "seen": validated.seen,
@@ -168,6 +168,13 @@ def cmd_once(args: argparse.Namespace) -> int:
 
 
 # ------------------------------------------------------------------ fields
+def _source_label(spec) -> str:  # noqa: ANN001 - ParamSpec, kept untyped to avoid a cycle
+    """The `source` column of the mapping table."""
+    if spec.unmeasured:
+        return "UNMEASURED -- pinned NULL"
+    return "documented" if spec.documented else "INFERRED -- verify"
+
+
 def cmd_fields(_args: argparse.Namespace) -> int:
     width = max(len(p.name) for p in PARAM_SPECS)
     print(f"{'#':>2}  {'column':<{width}}  {'unit':<6}  {'type':<6}  {'upstream aliases (first = preferred)':<50}  source")
@@ -176,11 +183,13 @@ def cmd_fields(_args: argparse.Namespace) -> int:
         print(
             f"{index:>2}  {spec.name:<{width}}  {spec.unit:<6}  {spec.kind:<6}  "
             f"{', '.join(spec.aliases):<50}  "
-            f"{'documented' if spec.documented else 'INFERRED -- verify'}"
+            f"{_source_label(spec)}"
         )
     documented = sum(1 for p in PARAM_SPECS if p.documented)
-    print(f"\n{len(PARAM_SPECS)} parameters; {documented} have keys confirmed by DASHBOARD_API_GUIDE.md, "
-          f"{len(PARAM_SPECS) - documented} use inferred keys (add the real ones to `aliases` in telemetry/fields.py).")
+    print(f"\n{len(PARAM_SPECS)} parameters: {documented} with keys confirmed by the API guide, "
+          f"{len(MEASURED_NAMES) - documented} present under inferred keys, "
+          f"{len(UNMEASURED_NAMES)} unmeasured upstream and pinned NULL.")
+    print(f"unmeasured (held NULL, never zero): {', '.join(UNMEASURED_NAMES)}")
     return 0
 
 

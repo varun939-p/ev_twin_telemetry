@@ -86,16 +86,16 @@ class UpstreamClient:
             endpoint="auth",
         )
 
-    # ------------------------------------------------------------- dashboard
-    def fetch_dashboard(self, token: str) -> dict[str, Any]:
-        """GET /api/dashboard-parameters with a Bearer token."""
+    # -------------------------------------------------------------- vehicles
+    def fetch_vehicles(self, token: str) -> dict[str, Any]:
+        """GET /api/v1/vehicles with a Bearer token."""
         return self._request(
             "GET",
-            self.settings.dashboard_url(),
+            self.settings.vehicles_url(),
             params=self._query_params(),
             headers={"Authorization": f"Bearer {token}"},
-            label="dashboard",
-            endpoint="dashboard",
+            label="vehicles",
+            endpoint="vehicles",
         )
 
     def _query_params(self) -> dict[str, str]:
@@ -106,14 +106,14 @@ class UpstreamClient:
             params["vehicle"] = self.settings.api_vehicle_filter
         return params
 
-    def dashboard_request_url(self) -> str:
-        """The exact GET URL the dashboard call will use, query string included.
+    def vehicles_request_url(self) -> str:
+        """The exact GET URL the vehicles call will use, query string included.
 
         Descriptive only: nothing is sent and no header is included, so it is
         safe to log and to print.  The CLI uses it to state what it is about to
         call; `_request` logs the same assembly immediately before sending.
         """
-        return self._full_url(self.settings.dashboard_url(), self._query_params())
+        return self._full_url(self.settings.vehicles_url(), self._query_params())
 
     @staticmethod
     def _full_url(url: str, params: dict[str, str] | None) -> str:
@@ -144,13 +144,13 @@ class UpstreamClient:
         params: dict[str, str] | None = None,
         headers: dict[str, str] | None = None,
         label: str,
-        endpoint: str = "dashboard",
+        endpoint: str = "vehicles",
     ) -> dict[str, Any]:
         attempt = 0
         while True:
             # State the endpoint before calling it: method + fully assembled URL,
             # query string included, e.g.
-            #     dashboard: GET http://host/api/dashboard-parameters?date=2026-08-21
+            #     vehicles: GET https://track.blueenergymotors.com/api/v1/vehicles?date=2026-08-21
             # Logged per attempt, so a retry shows the exact URL it re-sent.  Only
             # the URL is logged, never `json_body` -- the auth call carries the
             # credentials in its body and must stay out of the logs.

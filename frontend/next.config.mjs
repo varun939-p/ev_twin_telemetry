@@ -6,7 +6,7 @@
  * the proxy hop is server-to-server, so the sandboxed preview (and any locked
  * down corporate browser) never needs to reach `127.0.0.1` or pass CORS.
  *
- * Point `BACKEND_URL` at wherever `uvicorn backend.main:app` runs.
+ * Point `BACKEND_URL` at wherever `uvicorn telemetry.main:app` runs.
  */
 const BACKEND_URL = process.env.BACKEND_URL ?? "http://127.0.0.1:8000";
 

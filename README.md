@@ -1,10 +1,11 @@
 # EV Battery Swap Station Digital Twin — Telemetry Extraction Engine
 
-Pulls fleet telemetry from the Dashboard Parameters API into PostgreSQL, where
-the frontend dashboard reads it.
+Pulls fleet telemetry from the Blue Energy Motors vehicles API
+(`GET https://track.blueenergymotors.com/api/v1/vehicles`) into PostgreSQL,
+where the frontend dashboard reads it.
 
 ```
-GET /api/dashboard-parameters  ──►  Pydantic validation  ──►  PostgreSQL upsert
+GET /api/v1/vehicles           ──►  Pydantic validation  ──►  PostgreSQL upsert
         (Bearer token,                 (24 parameters,         vehicles
          59-min lifetime,               quarantine on            vehicle_state  ◄── dashboard reads this
          no refresh endpoint)            bad data)               telemetry      ◄── history / trends
@@ -16,17 +17,30 @@ run it.
 
 ---
 
-## ⚠️ Before you go live: 14 of the 24 field names are guesses
+## Field mapping: 15 measured, 9 held NULL
 
-`DASHBOARD_API_GUIDE.md` documents the wire keys for **10 of your 24
-parameters** (`soc`, `soh`, `odo`, `residual_mileage`, `cycles`, `batt_temp`,
-`min_cell_v`, `max_cell_v`, `speed`, `regen_kwh`) plus `last_updated`.
+Verified against a real 100-vehicle pull (`blue_energy_response.json`,
+2026-08-28):
 
-The other 14 — max/min temperature, total power, charging status, battery
-voltage/current, the four cell/battery numbers, work status, lat/long — use
-**inferred** key names with three or four aliases each. Nothing breaks if a guess
-is wrong (missing keys become `NULL` and are logged loudly), but the columns will
-be empty.
+* **10 parameters** arrive under the wire keys `DASHBOARD_API_GUIDE.md`
+  documents (`soc`, `soh`, `odo`, `residual_mileage`, `cycles`, `batt_temp`,
+  `min_cell_v`, `max_cell_v`, `speed`, `regen_kwh`) plus `last_updated`.
+* **5 more** arrive under inferred aliases and are confirmed present:
+  `max_temp_c`, `min_temp_c`, `battery_avg_temp_c`, `latitude`, `longitude`.
+* **9 are not measured upstream at all** — the auxiliary thermal and secondary
+  sub-pack diagnostics: `total_power_kwh`, `charging_status`, `battery_total_v`,
+  `battery_current_a`, `max_cell_v_cell_no`, `min_cell_v_pack_no`,
+  `min_cell_v_cell_no`, `max_temp_pack_no`, `work_status`.
+
+Those 9 are declared `unmeasured=True` in `telemetry/fields.py` and are **pinned
+to `NULL`** by `telemetry.schemas.parse_payload`, whatever a frame carries. The
+UI renders them as disabled "awaiting upstream" tiles. A zero is never
+substituted for an absent measurement — they are opposite claims about the
+truck. If the upstream ever starts sending one, the value is discarded and
+recorded as a `FieldError` so the change is visible rather than silent.
+
+`REQUIRE_ALL_FIELDS` therefore gates on the 15 measured parameters only; the
+permanently-absent 9 can never quarantine a fleet.
 
 Close the gap with one command against the real API:
 
@@ -111,7 +125,7 @@ list in `.env.example`. The important ones:
 
 | Variable | Default | Notes |
 |---|---|---|
-| `API_BASE_URL` | — | **required**, no trailing slash |
+| `API_BASE_URL` | `https://track.blueenergymotors.com` | no trailing slash; set only for staging or the mock |
 | `API_SECRET_KEY` / `API_PASSCODE` | — | **required**; shown once by the admin endpoint |
 | `DATABASE_URL` | — | **required**; `postgresql+psycopg://…` (psycopg **3**) |
 | `POLL_INTERVAL_SECONDS` | `60` | |
@@ -119,7 +133,7 @@ list in `.env.example`. The important ones:
 | `TOKEN_EXPIRY_SAFETY_MARGIN` | `240` | headroom kept before expiry |
 | `HTTP_MAX_RETRIES` | `5` | 5xx / timeouts only — never 400/401/403/404 |
 | `BACKOFF_BASE_SECONDS` / `BACKOFF_MAX_SECONDS` | `1` / `60` | exponential, full jitter |
-| `REQUIRE_ALL_FIELDS` | `false` | `true` rejects frames missing any of the 24 |
+| `REQUIRE_ALL_FIELDS` | `false` | `true` rejects frames missing any of the 15 **measured** parameters |
 | `WRITE_UNCHANGED` | `false` | `true` archives a row even when nothing changed |
 | `SOURCE_TIMEZONE` | `Asia/Kolkata` | the API's naive `last_updated` is IST |
 | `METRICS_ENABLED` / `METRICS_PORT` | `false` / `9464` | Prometheus text endpoint |
@@ -199,10 +213,21 @@ What the suite actually proves:
 
 ```
 telemetry/          the engine (fields → schemas → api/auth → extractor → repository)
-tests/              94 tests
+telemetry/main.py   FastAPI control plane (provisioning + manual ingestion)
+main_parser.py      local capture → validated trusted JSON for the frontend
+frontend/           Next.js 16 dashboard (app/ router, @/ alias → frontend/)
+tests/              89 tests, 28 PostgreSQL-gated skips
 tools/              mock upstream server + smoke test
 deploy/schema.sql   the DDL
 docs/               ARCHITECTURE.md — read this
 ```
+
+### Frontend layout
+
+All dashboard components live under `frontend/components/telemetry/`; pages and
+their client views live under `frontend/app/`. The `@/` alias resolves to
+`frontend/` (see `frontend/tsconfig.json`), so an import of
+`@/components/telemetry/ViewNav` must find
+`frontend/components/telemetry/ViewNav.tsx`.
 
 Module-by-module explanation in `docs/ARCHITECTURE.md` §2.

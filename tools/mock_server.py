@@ -333,6 +333,19 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/dashboard-parameters":
+            # Retired and blocked upstream.  The mock mirrors that contract so
+            # nothing can silently drift back onto the old route.
+            self._send(
+                410,
+                {
+                    "ok": False,
+                    "error": "endpoint retired",
+                    "detail": "/api/dashboard-parameters is blocked; use /api/v1/vehicles",
+                },
+            )
+            return
+
+        if path == "/api/v1/vehicles":
             auth = self.headers.get("Authorization", "")
             token = auth[7:].strip() if auth.lower().startswith("bearer ") else None
             if not self.fleet.token_valid(token):
@@ -380,7 +393,8 @@ def serve(port: int = 8899, vehicles: int = 8, all_fields: bool = True) -> int:
     host, bound_port = server.server_address[:2]
     print(f"mock dashboard API on http://{host}:{bound_port}")
     print(f"  POST /api/auth/api-token         secret_key={SECRET_KEY} passcode={PASSCODE}")
-    print(f"  GET  /api/dashboard-parameters   {vehicles} vehicles, all_fields={all_fields}")
+    print(f"  GET  /api/v1/vehicles            {vehicles} vehicles, all_fields={all_fields}")
+    print("  GET  /api/dashboard-parameters   410 -- retired, use /api/v1/vehicles")
     print("  control: POST /__control/fail?count=N | /__control/revoke | /__control/latency?ms=N | /__control/bad-creds?on=1")
     try:
         server.serve_forever()

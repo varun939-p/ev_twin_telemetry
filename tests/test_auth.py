@@ -188,6 +188,6 @@ def test_real_auth_handshake_with_mock_upstream(settings, mock_api):
     assert len(token) == 128, "the guide specifies a 128 hex character token"
     assert manager.lifetime_seconds == 3540
 
-    payload = client.fetch_dashboard(token)
+    payload = client.fetch_vehicles(token)
     assert payload["ok"] is True
     assert payload["vehicles"], "the mock should serve vehicles to a valid token"

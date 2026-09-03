@@ -13,7 +13,7 @@ Pipeline (AWS credits pending, so this stage is file -> file, no DB, no HTTP):
         -> read_text()            encoding sniff (the capture is UTF-16LE + CRLF)
         -> extract_document()     drop the console log preamble, keep the JSON
         -> normalise_envelope()   accept either payload shape (see below)
-        -> DashboardPayload       telemetry.schemas -- the ONLY gate to the data
+        -> VehiclesPayload        telemetry.schemas -- the ONLY gate to the data
         -> parse_payload()        per-field validation, `missing` / `field_errors`
         -> trusted_vehicle_telemetry.json
 
@@ -25,17 +25,18 @@ Two input shapes are accepted, because both occur in practice:
 
   1. **Upstream envelope** -- `{"ok": true, "summary": {...}, "vehicles":
      {"AP39WG5383": {...frame...}}}`, i.e. the verbatim body of
-     `GET /api/dashboard-parameters`.  Passed straight through.
+     `GET /api/v1/vehicles`.  Passed straight through.
   2. **`once --dry-run` capture** -- `{"request": {...}, "seen": N,
      "vehicles": [{"vehicle_id", "observed_at", "missing", "field_errors",
      "values"}]}`, i.e. what `python -m telemetry once --dry-run` prints (this
      is what `blue_energy_response.json` currently is: a UTF-16 console
      capture of a real 2026-08-28 pull, 100 vehicles).  Rebuilt into shape 1.
 
-The 9 fields the upstream does not send (`total_power_kwh`, `charging_status`,
+The 9 fields the upstream does not measure (`total_power_kwh`, `charging_status`,
 `battery_total_v`, `battery_current_a`, `max_cell_v_cell_no`,
 `min_cell_v_pack_no`, `min_cell_v_cell_no`, `max_temp_pack_no`, `work_status`)
-are carried through as explicit JSON `null` and are listed per vehicle in
+are declared `unmeasured=True` in `telemetry.fields` and pinned to explicit
+JSON `null` by the validator -- never `0`.  They are listed per vehicle in
 `missing_fields`, plus fleet-wide in `pipeline_health.unavailable_parameters`.
 That is what the frontend's Pipeline Health Toggle reads to gray a tile out.
 """
@@ -57,7 +58,7 @@ from zoneinfo import ZoneInfo
 
 from telemetry.fields import COLUMN_NAMES, PARAM_SPECS, SPEC_BY_NAME
 from telemetry.schemas import (
-    DashboardPayload,
+    VehiclesPayload,
     ParsedVehicle,
     ValidatedPayload,
     parse_payload,
@@ -167,7 +168,7 @@ class Provenance:
 def normalise_envelope(document: dict[str, Any], capture: RawCapture) -> tuple[dict[str, Any], Provenance]:
     """Map either accepted input shape onto `{"ok": ..., "vehicles": {id: frame}}`.
 
-    `DashboardPayload` (and therefore `parse_payload`) consumes the *upstream*
+    `VehiclesPayload` (and therefore `parse_payload`) consumes the *upstream*
     shape: a dict keyed by vehicle id whose values are raw frames.  A dry-run
     capture instead holds a list of already-parsed records, so it is rebuilt
     frame-by-frame here.
@@ -403,15 +404,14 @@ def run(
     envelope, provenance = normalise_envelope(document, capture)
     log.info("input shape: %s | %d vehicle frame(s)", provenance.input_shape, len(envelope["vehicles"]))
 
-    # The one and only gate: DashboardPayload -> parse_payload.
+    # The one and only gate: VehiclesPayload -> parse_payload.
     #
-    # require_all_fields stays False.  It is the *only* switch that would
-    # quarantine a vehicle for the 9 unprovisioned fields; with it on, all 100
-    # frames in this capture would be rejected and the dashboard would be empty.
-    # Turning it off changes no validation rule -- every value still passes the
-    # same per-field range/type checks, and a genuinely poisoned field still
-    # becomes NULL + a `FieldError` instead of taking the frame down.
-    payload = DashboardPayload.model_validate(envelope)
+    # `require_all_fields` is safe either way now: the completeness gate applies
+    # to the 15 measured parameters only, so the 9 declared-unmeasured fields can
+    # never quarantine a frame.  It stays False by default because a truck that
+    # genuinely drops one of the 15 is still worth rendering -- the missing
+    # parameter becomes NULL + a `FieldError` rather than taking the frame down.
+    payload = VehiclesPayload.model_validate(envelope)
     result = parse_payload(
         payload,
         tz,
