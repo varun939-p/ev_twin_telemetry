@@ -19,7 +19,7 @@ import GeoCascadeFilter from "@/components/telemetry/GeoCascadeFilter";
 import InteractiveGeoMap from "@/components/telemetry/InteractiveGeoMap";
 import LiveClock from "@/components/telemetry/LiveClock";
 import ViewNav from "@/components/telemetry/ViewNav";
-import { applyVehicleFilters, isEvVehicle, stateCounts, type EvFilter } from "@/lib/fleet";
+import { applyVehicleFilters, batteryRegistry, isEvVehicle, stateCounts } from "@/lib/fleet";
 import { useFilters } from "@/lib/FilterContext";
 import { formatValue, numericValue, type TrustedTelemetryDocument } from "@/lib/trusted-telemetry";
 
@@ -52,29 +52,27 @@ export default function TrucksView({ data }: { data: TrustedTelemetryDocument })
 
   const counts = useMemo(() => stateCounts(vehicles), [vehicles]);
 
+  /** Battery identity over the FULL fleet, so "Battery N" labels match every
+   *  other view regardless of this page's filter scope. */
+  const registry = useMemo(() => batteryRegistry(vehicles), [vehicles]);
+  const evTotal = useMemo(() => vehicles.filter((v) => isEvVehicle(v)).length, [vehicles]);
+  const chargingNow = useMemo(
+    () => scoped.filter((v) => numericValue(v, "charging_status") === 1).length,
+    [scoped],
+  );
+
   /** Derived, not synced by an effect: when the filter drops the current pick
    *  (or nothing has been clicked yet) the first asset in scope is the
    *  selection.  Writing this back into state from an effect would cost an
    *  extra render on every filter change. */
   const selected = scoped.find((v) => v.vehicle_id === selectedId) ?? scoped[0] ?? null;
 
-  const liveFields = useMemo(
-    () => (selected ? Object.entries(selected.field_status).filter(([, s]) => s === "measured").map(([f]) => f) : []),
-    [selected],
-  );
-
   const medianSoc = useMemo(() => {
     const socs = scoped.map((v) => numericValue(v, "soc")).filter((s): s is number => s !== null).sort((a, b) => a - b);
     return socs.length ? socs[Math.floor(socs.length / 2)] : null;
   }, [scoped]);
 
-  const evCount = scoped.filter((v) => isEvVehicle(v.vehicle_id)).length;
-
-  const evOptions: { id: EvFilter; label: string }[] = [
-    { id: "all", label: "All" },
-    { id: "ev", label: "EV" },
-    { id: "non-ev", label: "Non-EV" },
-  ];
+  const evCount = scoped.filter((v) => isEvVehicle(v)).length;
 
   return (
     <div className="min-h-screen bg-[#05070d] pb-12">
@@ -90,23 +88,9 @@ export default function TrucksView({ data }: { data: TrustedTelemetryDocument })
         <LiveClock />
       </header>
 
-      {/* persistent filters */}
-      <div className="mx-auto mt-5 flex max-w-[1680px] flex-wrap items-center justify-between gap-3 px-5 lg:px-8">
-        <GeoCascadeFilter counts={counts} />
-        <div className="flex overflow-hidden rounded-full border border-white/[0.08]">
-          {evOptions.map((opt) => (
-            <button
-              key={opt.id}
-              type="button"
-              onClick={() => filters.setEv(opt.id)}
-              className={`px-4 py-1.5 text-[11px] font-medium transition ${
-                filters.ev === opt.id ? "bg-cyan-400/15 text-cyan-200" : "text-slate-500 hover:text-slate-300"
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
+      {/* persistent filters -- consolidated bar: EV segment + region cascade + drill-down chip */}
+      <div className="mx-auto mt-5 max-w-[1680px] px-5 lg:px-8">
+        <GeoCascadeFilter counts={counts} evCounts={{ ev: evTotal, nonEv: vehicles.length - evTotal }} />
       </div>
 
       {/* primary strip: completeness moved out; live-parameters indication in */}
@@ -117,9 +101,9 @@ export default function TrucksView({ data }: { data: TrustedTelemetryDocument })
           <p className="text-[10px] text-slate-600">{evCount} EV · {scoped.length - evCount} non-EV</p>
         </div>
         <div className={CARD + " px-5 py-4"}>
-          <p className={EYEBROW}>Live parameters</p>
-          <p className="mt-1 font-mono text-2xl font-semibold text-cyan-300">{data.pipeline_health.parameters_available}<span className="text-sm text-slate-600"> / {data.pipeline_health.parameters_total}</span></p>
-          <p className="text-[10px] text-slate-600">active live metrics feeding this view</p>
+          <p className={EYEBROW}>Charging now</p>
+          <p className="mt-1 font-mono text-2xl font-semibold text-cyan-300">{chargingNow}</p>
+          <p className="text-[10px] text-slate-600">packs on the charger in scope</p>
         </div>
         <div className={CARD + " px-5 py-4"}>
           <p className={EYEBROW}>Median SOC</p>
@@ -143,6 +127,7 @@ export default function TrucksView({ data }: { data: TrustedTelemetryDocument })
           <ul className="mt-3 max-h-[420px] space-y-1.5 overflow-y-auto pr-1">
             {scoped.map((v) => {
               const soc = numericValue(v, "soc");
+              const identity = registry.get(v.vehicle_id);
               const active = v.vehicle_id === selected?.vehicle_id;
               return (
                 <li key={v.vehicle_id}>
@@ -157,7 +142,15 @@ export default function TrucksView({ data }: { data: TrustedTelemetryDocument })
                       <span className="truncate font-mono text-[11px] text-slate-200">{v.vehicle_id}</span>
                       <span className="font-mono text-[11px] text-cyan-300">{soc === null ? "—" : `${soc}%`}</span>
                     </div>
-                    <p className="mt-0.5 text-[10px] text-slate-600">{isEvVehicle(v.vehicle_id) ? "EV carrier" : "Non-EV"} · {v.measured_count}/24 live</p>
+                    <p className="mt-0.5 text-[10px] text-slate-600">
+                      {identity ? (
+                        <>
+                          carries <span className="text-cyan-300">{identity.label}</span>
+                        </>
+                      ) : (
+                        "No pack telemetry"
+                      )}
+                    </p>
                   </button>
                 </li>
               );
@@ -174,6 +167,11 @@ export default function TrucksView({ data }: { data: TrustedTelemetryDocument })
                 <div>
                   <p className={EYEBROW}>Carrier</p>
                   <h2 className="mt-1 font-mono text-lg font-semibold text-white">{selected.vehicle_id}</h2>
+                  <p className="mt-0.5 text-[11px] text-cyan-300">
+                    {registry.get(selected.vehicle_id)?.label
+                      ? `carries ${registry.get(selected.vehicle_id)?.label}`
+                      : "no pack telemetry"}
+                  </p>
                 </div>
                 <div className="text-right">
                   <p className="font-mono text-4xl font-semibold text-cyan-300">{formatValue(numericValue(selected, "soc"), "") ?? "—"}<span className="text-xl">%</span></p>
@@ -186,18 +184,6 @@ export default function TrucksView({ data }: { data: TrustedTelemetryDocument })
                 <Tile label="Odometer" value={formatValue(numericValue(selected, "odometer_km"), "")} unit="km" />
                 <Tile label="Internal Temp" value={formatValue(numericValue(selected, "battery_temp_c"), "")} unit="°C" />
               </div>
-
-              <div className="mt-4">
-                <p className={EYEBROW}>Live parameters indication ({liveFields.length} active)</p>
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {liveFields.map((f) => (
-                    <span key={f} className="rounded-full border border-emerald-400/15 bg-emerald-400/[0.05] px-2 py-0.5 font-mono text-[9px] text-emerald-200/90">
-                      {f}
-                    </span>
-                  ))}
-                  {liveFields.length === 0 && <span className="text-[10px] text-slate-600">No live parameters for this carrier.</span>}
-                </div>
-              </div>
             </>
           ) : (
             <p className="py-10 text-center text-sm text-slate-600">Select a carrier to inspect it.</p>
@@ -205,9 +191,9 @@ export default function TrucksView({ data }: { data: TrustedTelemetryDocument })
         </div>
       </div>
 
-      {/* drill-down heatmap + live location */}
+      {/* drill-down map + live location */}
       <div className="mx-auto mt-5 max-w-[1680px] px-5 lg:px-8">
-        <InteractiveGeoMap vehicles={mapScope} />
+        <InteractiveGeoMap vehicles={mapScope} batteryLabels={registry} />
       </div>
     </div>
   );

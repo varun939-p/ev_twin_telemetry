@@ -353,7 +353,7 @@ def build_output(
             "oldest_observed_at": oldest,
             "newest_observed_at": newest,
             "available_parameters": available,
-            # The 9 the frontend must gray out, with labels/units for the tiles.
+            # Parameters the frontend must gray out (coverage-driven), with labels/units.
             "unavailable_parameters": unavailable,
             "attention": attention,
         },

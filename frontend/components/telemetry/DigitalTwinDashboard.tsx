@@ -17,6 +17,7 @@
 
 import { useMemo, useState } from "react";
 
+import { batteryRegistry, type BatteryIdentity } from "@/lib/fleet";
 import {
   FIELD_GROUPS,
   STATUS_COPY,
@@ -25,6 +26,7 @@ import {
   formatValue,
   frameAgeHours,
   isMeasured,
+  numericValue,
   orderedParams,
   type FieldStatus,
   type ParameterHealth,
@@ -120,14 +122,34 @@ function PipelineRail({ assets }: { assets: number }) {
 
 /* -------------------------------------------------------------------- KPI */
 
-function KpiStrip({ summary }: { summary: ReturnType<typeof fleetSummary> }) {
+function KpiStrip({
+  summary,
+  chargingNow,
+  avgBatteryTempC,
+}: {
+  summary: ReturnType<typeof fleetSummary>;
+  chargingNow: number;
+  avgBatteryTempC: number | null;
+}) {
+  /** Operational-first strip: what the fleet is DOING right now.  Parameter
+   *  completeness lives in the pipeline-health rail, not above the fold. */
   const items: { label: string; value: string; hint: string; tone?: "accent" | "warn" }[] = [
-    { label: "Assets Live", value: String(summary.assets), hint: `${summary.stationary} stationary` },
-    { label: "Fleet Completeness", value: `${summary.completenessPct}%`, hint: `${summary.liveParams} of 24 parameters`, tone: "accent" },
-    { label: "Fields Held Null", value: String(summary.absentCells + summary.nullCells + summary.errorCells), hint: `${summary.absentCells} absent · ${summary.nullCells} null · ${summary.errorCells} rejected`, tone: "warn" },
-    { label: "Median SOC", value: summary.socMedian === null ? "—" : `${summary.socMedian}%`, hint: `min ${summary.socMin ?? "—"}% · ${summary.lowSoc} under 20%` },
-    { label: "Median Frame Age", value: formatAge(summary.medianFrameAgeHours), hint: `${summary.staleOver24h} assets over 24 h`, tone: summary.staleOver24h ? "warn" : undefined },
-    { label: "Worst Cell Imbalance", value: `${summary.maxCellImbalanceMv} mV`, hint: `min SOH ${summary.sohMin ?? "—"}%`, tone: summary.maxCellImbalanceMv > 100 ? "warn" : undefined },
+    { label: "Battery Assets", value: String(summary.assets), hint: `${summary.stationary} stationary` },
+    { label: "Charging Now", value: String(chargingNow), hint: "packs on the charger", tone: "accent" },
+    { label: "Median SOC", value: summary.socMedian === null ? "—" : `${summary.socMedian}%`, hint: `min ${summary.socMin ?? "—"}% across the fleet` },
+    {
+      label: "Low SOC Alerts",
+      value: String(summary.lowSoc),
+      hint: "packs under 20% — schedule swaps",
+      tone: summary.lowSoc ? "warn" : undefined,
+    },
+    { label: "Avg Pack Temp", value: avgBatteryTempC === null ? "—" : `${avgBatteryTempC}°C`, hint: "fleet mean battery temperature" },
+    {
+      label: "Median Frame Age",
+      value: formatAge(summary.medianFrameAgeHours),
+      hint: `${summary.staleOver24h} over 24 h`,
+      tone: summary.staleOver24h ? "warn" : undefined,
+    },
   ];
 
   return (
@@ -153,12 +175,14 @@ function KpiStrip({ summary }: { summary: ReturnType<typeof fleetSummary> }) {
 
 function VehicleList({
   vehicles,
+  registry,
   selectedId,
   onSelect,
   attentionIds,
   now,
 }: {
   vehicles: TrustedVehicle[];
+  registry: ReadonlyMap<string, BatteryIdentity>;
   selectedId: string;
   onSelect: (id: string) => void;
   attentionIds: Set<string>;
@@ -170,10 +194,15 @@ function VehicleList({
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
     return vehicles
-      .filter((v) => (q ? v.vehicle_id.toLowerCase().includes(q) : true))
+      .filter((v) => (q ? v.vehicle_id.toLowerCase().includes(q) || (registry.get(v.vehicle_id)?.label.toLowerCase().includes(q) ?? false) : true))
       .filter((v) => (onlyAttention ? attentionIds.has(v.vehicle_id) : true))
-      .sort((a, b) => a.vehicle_id.localeCompare(b.vehicle_id));
-  }, [vehicles, query, onlyAttention, attentionIds]);
+      .sort((a, b) => {
+        // Battery order first (Battery 1, Battery 2, ...), then the rest.
+        const aIdx = registry.has(a.vehicle_id) ? 0 : 1;
+        const bIdx = registry.has(b.vehicle_id) ? 0 : 1;
+        return aIdx !== bIdx ? aIdx - bIdx : a.vehicle_id.localeCompare(b.vehicle_id);
+      });
+  }, [vehicles, query, onlyAttention, attentionIds, registry]);
 
   return (
     // `xl:self-start` is the load-bearing fix: it opts this column out of the grid's
@@ -189,7 +218,7 @@ function VehicleList({
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search vehicle id…"
+            placeholder="Search battery or carrier…"
             className="w-full rounded-lg border border-white/[0.06] bg-black/30 px-3 py-2 text-xs text-slate-200 outline-none placeholder:text-slate-600 focus:border-cyan-400/40"
           />
           <button
@@ -209,6 +238,7 @@ function VehicleList({
       <ul className="max-h-[40rem] overflow-y-auto py-2">
         {rows.map((vehicle) => {
           const active = vehicle.vehicle_id === selectedId;
+          const identity = registry.get(vehicle.vehicle_id);
           const ageHours = vehicle.observed_at ? frameAgeHours(vehicle.observed_at, now) : Number.NaN;
           const stale = Number.isFinite(ageHours) && ageHours > 24;
           const soc = typeof vehicle.values.soc === "number" ? vehicle.values.soc : null;
@@ -223,15 +253,14 @@ function VehicleList({
               >
                 {active && <span className="absolute left-0 top-2 h-[calc(100%-1rem)] w-0.5 rounded-full bg-cyan-400" />}
                 <div className="flex items-center justify-between gap-2">
-                  <span className="truncate font-mono text-[11px] text-slate-200">{vehicle.vehicle_id}</span>
-                  <span className="shrink-0 font-mono text-[11px] tabular-nums text-slate-400">{soc === null ? "—" : `${soc}%`}</span>
+                  <span className="truncate text-[11px] font-semibold text-white">{identity?.label ?? vehicle.vehicle_id}</span>
+                  <span className="shrink-0 font-mono text-[11px] tabular-nums text-cyan-300">{soc === null ? "—" : `${soc}%`}</span>
                 </div>
-                <div className="mt-2 h-px w-full overflow-hidden rounded-full bg-white/[0.06]">
-                  <div className="h-full rounded-full bg-gradient-to-r from-cyan-400/80 to-emerald-400/80" style={{ width: `${vehicle.completeness_pct}%` }} />
-                </div>
-                <div className="mt-1.5 flex items-center justify-between text-[10px] text-slate-600">
-                  <span className="font-mono">{vehicle.measured_count}/24</span>
-                  <span className={stale ? "text-amber-400/90" : ""}>{Number.isFinite(ageHours) ? `${formatAge(ageHours)} old` : "no frame"}</span>
+                <div className="mt-0.5 flex items-center justify-between gap-2 text-[10px] text-slate-600">
+                  <span className="truncate font-mono">{identity?.chassis ?? vehicle.vehicle_id}</span>
+                  <span className={stale ? "shrink-0 text-amber-400/90" : "shrink-0"}>
+                    {Number.isFinite(ageHours) ? `${formatAge(ageHours)} old` : "no frame"}
+                  </span>
                 </div>
               </button>
             </li>
@@ -363,6 +392,26 @@ export default function DigitalTwinDashboard({
   const summary = useMemo(() => fleetSummary(data, referenceTime), [data, referenceTime]);
   const attentionIds = useMemo(() => new Set(data.pipeline_health.attention.map((a) => a.vehicle_id)), [data]);
 
+  /** Battery-first identity: built once over the full site scope so labels
+   *  ("Battery 1", "Battery 2", ...) are stable everywhere. */
+  const registry = useMemo(() => batteryRegistry(vehicles), [vehicles]);
+
+  /** Operational roll-ups for the KPI strip. */
+  const batteryStats = useMemo(() => {
+    let chargingNow = 0;
+    let tempSum = 0;
+    let tempCount = 0;
+    for (const vehicle of vehicles) {
+      if (numericValue(vehicle, "charging_status") === 1) chargingNow += 1;
+      const temp = numericValue(vehicle, "battery_temp_c");
+      if (temp !== null) {
+        tempSum += temp;
+        tempCount += 1;
+      }
+    }
+    return { chargingNow, avgBatteryTempC: tempCount ? Math.round((tempSum / tempCount) * 10) / 10 : null };
+  }, [vehicles]);
+
   const [internalId, setInternalId] = useState(vehicles[0]?.vehicle_id ?? "");
   const [showUnavailable, setShowUnavailable] = useState(true);
 
@@ -387,19 +436,19 @@ export default function DigitalTwinDashboard({
             <p className="text-[11px] font-medium uppercase tracking-[0.32em] text-cyan-400/90">EV Battery Swap Station</p>
             <h1 className="mt-2 text-3xl font-semibold tracking-tight text-white">Digital Twin — Real-Time Asset Layer</h1>
             <p className="mt-1.5 text-sm text-slate-500">
-              {activeSite.label} · {activeSite.customer} · {summary.assets} assets · {summary.quarantined} quarantined
+              {activeSite.label} · {activeSite.customer} · {summary.assets} battery assets live
             </p>
           </div>
           <LiveBadge lastSync={lastSync} />
         </header>
 
         <PipelineRail assets={summary.assets} />
-        <KpiStrip summary={summary} />
+        <KpiStrip summary={summary} chargingNow={batteryStats.chargingNow} avgBatteryTempC={batteryStats.avgBatteryTempC} />
 
         {/* -------------------------------------------------------- main grid */}
         <div className="grid grid-cols-1 gap-5 xl:grid-cols-12">
           <div className="xl:col-span-2">
-            <VehicleList vehicles={vehicles} selectedId={selected?.vehicle_id ?? ""} onSelect={select} attentionIds={attentionIds} now={referenceTime} />
+            <VehicleList vehicles={vehicles} registry={registry} selectedId={selected?.vehicle_id ?? ""} onSelect={select} attentionIds={attentionIds} now={referenceTime} />
           </div>
 
           <div className="space-y-5 xl:col-span-7">
@@ -407,15 +456,21 @@ export default function DigitalTwinDashboard({
               <section className={`${CARD} px-6 py-6`}>
                 <header className="flex flex-wrap items-end justify-between gap-3 pb-5">
                   <div>
-                    <h2 className="font-mono text-xl font-semibold tracking-tight text-white">{selected.vehicle_id}</h2>
+                    <p className={EYEBROW}>Battery Pack</p>
+                    <h2 className="mt-1 text-xl font-semibold tracking-tight text-white">
+                      {registry.get(selected.vehicle_id)?.label ?? selected.vehicle_id}
+                    </h2>
                     <p className="mt-1 text-[11px] text-slate-600">
+                      carrier <span className="font-mono text-slate-400">{registry.get(selected.vehicle_id)?.chassis ?? selected.vehicle_id}</span> ·{" "}
                       Frame {selected.observed_at ? new Date(selected.observed_at).toISOString().replace("T", " ").slice(0, 19) + " UTC" : "missing"} ·{" "}
                       {Number.isFinite(selectedAge) ? `${formatAge(selectedAge)} old` : "unknown age"}
                     </p>
                   </div>
                   <div className="text-right">
-                    <p className="text-3xl font-semibold tracking-tight tabular-nums text-cyan-300">{selected.completeness_pct}%</p>
-                    <p className="text-[11px] text-slate-600">{selected.measured_count} of 24 parameters measured</p>
+                    <p className="text-3xl font-semibold tracking-tight tabular-nums text-cyan-300">
+                      {numericValue(selected, "soc") === null ? "—" : `${numericValue(selected, "soc")}%`}
+                    </p>
+                    <p className="text-[11px] text-slate-600">State of Charge — primary</p>
                   </div>
                 </header>
 

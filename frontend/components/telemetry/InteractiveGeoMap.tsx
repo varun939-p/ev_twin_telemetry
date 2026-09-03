@@ -36,6 +36,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { batteryRegistry, type BatteryIdentity } from "@/lib/fleet";
 import { useFilters } from "@/lib/FilterContext";
 import {
   INDIA_BBOX,
@@ -211,11 +212,23 @@ const TIER_COLOR: Record<Tier, string> = { low: "#22d3ee", mid: "#fbbf24", high:
 
 type Hover = { kind: "cluster"; cluster: Cluster; x: number; y: number } | { kind: "point"; point: GeoPoint; x: number; y: number } | null;
 
-export default function InteractiveGeoMap({ vehicles }: { vehicles: TrustedVehicle[] }) {
+export default function InteractiveGeoMap({
+  vehicles,
+  batteryLabels,
+}: {
+  vehicles: TrustedVehicle[];
+  /** Page-provided identity map (built over the FULL fleet) so "Battery N"
+   *  labels never shift with this map's filter scope.  Falls back to a
+   *  registry over the passed vehicles alone. */
+  batteryLabels?: ReadonlyMap<string, BatteryIdentity>;
+}) {
   const { focus, setFocus } = useFilters();
   const [hover, setHover] = useState<Hover>(null);
   /** Frame timestamp published by the rAF loop; 0 until live-tracking starts. */
   const [frameTime, setFrameTime] = useState(0);
+
+  const fallbackLabels = useMemo(() => batteryRegistry(vehicles), [vehicles]);
+  const labels = batteryLabels ?? fallbackLabels;
 
   const { points } = useMemo(() => geoPoints(vehicles), [vehicles]);
   const inRegion = useMemo(
@@ -313,7 +326,7 @@ export default function InteractiveGeoMap({ vehicles }: { vehicles: TrustedVehic
         <div>
           <p className={EYEBROW}>{focus ? "Live Location — Tracking Scope" : "Deployment Intelligence"}</p>
           <h2 className="mt-2 text-lg font-semibold tracking-tight text-white">
-            {focus ? `Tracking ${focusMembers.length} asset${focusMembers.length === 1 ? "" : "s"} — ${focus.label}` : "Live fleet position & deployment density"}
+            {focus ? `Tracking ${focusMembers.length} asset${focusMembers.length === 1 ? "" : "s"} — ${focus.label}` : "Live battery positions & deployment density"}
           </h2>
         </div>
         {focus && (
@@ -374,6 +387,7 @@ export default function InteractiveGeoMap({ vehicles }: { vehicles: TrustedVehic
                 focusMembers.map((p) => {
                   const pos = livePosition(p);
                   const { x, y } = project(pos.lat, pos.lon);
+                  const label = labels.get(p.vehicleId)?.label ?? p.vehicleId;
                   return (
                     <g
                       key={p.vehicleId}
@@ -386,8 +400,8 @@ export default function InteractiveGeoMap({ vehicles }: { vehicles: TrustedVehic
                         <animate attributeName="opacity" values="0.8;0" dur="1.6s" repeatCount="indefinite" />
                       </circle>
                       <circle cx={x} cy={y} r={5} fill="#22d3ee" fillOpacity={0.9} stroke="#031018" strokeWidth="1.5" />
-                      <text x={x + 9} y={y - 7} fill="#e2f4ff" fontSize="11" fontFamily="ui-monospace, monospace">
-                        {p.vehicleId}
+                      <text x={x + 9} y={y - 7} fill="#e2f4ff" fontSize="11" fontWeight="600" fontFamily="ui-sans-serif, system-ui">
+                        {label}
                       </text>
                       <text x={x + 9} y={y + 6} fill="#7dd3fc" fontSize="10" fontFamily="ui-monospace, monospace">
                         {p.soc === null ? "SOC —" : `SOC ${p.soc}%`}
@@ -414,13 +428,16 @@ export default function InteractiveGeoMap({ vehicles }: { vehicles: TrustedVehic
               >
                 {hover.kind === "cluster" ? (
                   <>
-                    <p className="font-mono text-sm font-semibold text-white">{hover.cluster.count} trucks</p>
+                    <p className="font-mono text-sm font-semibold text-white">{hover.cluster.count} assets</p>
                     <p className="text-slate-400">{hover.cluster.city.name}, {hover.cluster.city.state}</p>
-                    <p className="mt-1 text-cyan-300">Click to open live location view</p>
+                    <p className="mt-1 text-cyan-300">Click to drill down — the asset list narrows to these trucks</p>
                   </>
                 ) : (
                   <>
-                    <p className="truncate font-mono text-xs font-semibold text-white">{hover.point.vehicleId}</p>
+                    <p className="truncate text-xs font-semibold text-white">{labels.get(hover.point.vehicleId)?.label ?? hover.point.vehicleId}</p>
+                    <p className="truncate font-mono text-[10px] text-slate-500">
+                      carrier {labels.get(hover.point.vehicleId)?.chassis ?? hover.point.vehicleId}
+                    </p>
                     <p className="font-mono text-slate-500">{hover.point.lat.toFixed(4)}, {hover.point.lon.toFixed(4)}</p>
                     <p className="mt-1 text-slate-500">
                       SOC {hover.point.soc === null ? "—" : `${hover.point.soc}%`} · {hover.point.speedKmh === null ? "—" : `${hover.point.speedKmh} km/h`}
@@ -451,7 +468,7 @@ export default function InteractiveGeoMap({ vehicles }: { vehicles: TrustedVehic
                   <div className="flex items-center justify-between gap-2">
                     <p className="font-mono text-sm text-white">
                       <span className="mr-2 text-slate-600">{String(index + 1).padStart(2, "0")}</span>
-                      {cluster.count} trucks
+                      {cluster.count} assets
                     </p>
                     <span className="text-[10px] text-slate-500">{cluster.city.state}</span>
                   </div>

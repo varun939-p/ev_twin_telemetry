@@ -39,7 +39,26 @@ _IST_EPOCH = datetime(2026, 8, 21, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
 VEHICLE_IDS = [
     "AP39WG5383", "AP39WH5376", "AP39WJ2210", "AP39WK8845",
     "AP39WL1102", "AP39WM7734", "AP39WN4419", "AP39WP9027",
+    # Extended demo fleet: chassis-style ids with `_EV<n>` battery slots, so
+    # the carrier/pack split is exercised on real-shaped ids.
+    *[f"5123{1100 + i}09{i:04d}_EV{(i % 4) + 1}" for i in range(4, 36)],
 ]
+
+# Demo deployment bases, weighted so drill-down has a hero cluster (Pune) and
+# believable secondary markets.  A real fleet is distributed across sites; a
+# single coordinate blob makes every geo filter and cluster look broken.
+_DEMO_BASES: tuple[tuple[str, float, float, int], ...] = (
+    ("Pune", 18.5204, 73.8567, 14),
+    ("Mumbai", 19.0760, 72.8777, 6),
+    ("Delhi NCR", 28.6139, 77.2090, 5),
+    ("Bengaluru", 12.9716, 77.5946, 5),
+    ("Hyderabad", 17.3850, 78.4867, 4),
+    ("Nagpur", 21.1458, 79.0882, 3),
+    ("Raurkela", 22.2601, 84.8300, 3),
+)
+_BASE_SPREAD: tuple[tuple[str, float, float], ...] = tuple(
+    (name, lat, lon) for name, lat, lon, weight in _DEMO_BASES for _ in range(weight)
+)
 
 # The 11 keys DASHBOARD_API_GUIDE.md documents.
 DOCUMENTED_KEYS = (
@@ -78,6 +97,7 @@ class Fleet:
     def _seed(index: int) -> dict[str, float]:
         rng = random.Random(1000 + index)
         batt = rng.uniform(24, 42)
+        _base_name, base_lat, base_lon = _BASE_SPREAD[index % len(_BASE_SPREAD)]
         return {
             # documented by DASHBOARD_API_GUIDE.md
             "soc": rng.uniform(25, 95),
@@ -98,8 +118,8 @@ class Fleet:
             "battery_avg_temp_c": batt,
             "battery_total_v": rng.uniform(480, 560),
             "battery_current_a": 0.0,
-            "latitude": 14.4 + rng.uniform(-0.4, 0.4),   # around Ongole, AP
-            "longitude": 80.1 + rng.uniform(-0.4, 0.4),
+            "latitude": base_lat + rng.uniform(-0.12, 0.12),   # demo site spread (see _BASE_SPREAD)
+            "longitude": base_lon + rng.uniform(-0.12, 0.12),
         }
 
     def _advance(self, state: dict[str, float], dt_minutes: float) -> None:
