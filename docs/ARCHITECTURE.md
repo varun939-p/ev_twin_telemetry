@@ -1,7 +1,7 @@
 # Phase 1 — Architecture & Schema Design
 
 Telemetry extraction engine for an EV Battery Swap Station Digital Twin.
-Source: `GET /api/dashboard-parameters` → PostgreSQL → dashboard.
+Source: `GET /api/v1/vehicles` → PostgreSQL → dashboard.
 
 ---
 
@@ -311,7 +311,7 @@ That prints every vehicle's accepted values, the `missing` list and any
 one raw frame:
 
 ```bash
-curl -s "$API_BASE_URL/api/dashboard-parameters" \
+curl -s "$API_BASE_URL/api/v1/vehicles" \
   -H "Authorization: Bearer $TOKEN" | python -m json.tool | head -60
 ```
 

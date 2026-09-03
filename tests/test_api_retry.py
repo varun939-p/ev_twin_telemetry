@@ -39,7 +39,7 @@ def test_500_is_retried_with_exponential_backoff(client, mock_api, settings):
     mock_api.control("/__control/fail?count=2")  # two 500s, then a real payload
     tok = token(settings, mock_api)
 
-    payload = client.fetch_dashboard(tok)
+    payload = client.fetch_vehicles(tok)
 
     assert payload["ok"] is True
     assert len(client.delays) == 2, "exactly two retries for two failures"
@@ -55,7 +55,7 @@ def test_gives_up_after_max_retries_and_raises_retryable(client, settings, mock_
     tok = token(settings, mock_api)
 
     with pytest.raises(RetryableUpstreamError) as exc:
-        client.fetch_dashboard(tok)
+        client.fetch_vehicles(tok)
 
     assert len(client.delays) == settings.http_max_retries
     assert exc.value.status_code == 500
@@ -69,7 +69,7 @@ def test_backoff_is_capped(client, settings, mock_api):
     settings.backoff_base_seconds = 1.0
     settings.backoff_max_seconds = 2.0
     tok = token(settings, mock_api)
-    client.fetch_dashboard(tok)
+    client.fetch_vehicles(tok)
     assert all(delay <= 2.0 for delay in client.delays), client.delays
 
 
@@ -86,7 +86,7 @@ def test_connection_errors_are_retried_then_raise_retryable(settings):
     client.session = Boom()  # type: ignore[assignment]
 
     with pytest.raises(RetryableUpstreamError, match="ConnectionError"):
-        client.fetch_dashboard("any-token")
+        client.fetch_vehicles("any-token")
     assert attempts["n"] == settings.http_max_retries + 1
 
 
@@ -111,7 +111,7 @@ def test_timeout_is_retried(settings):
             return Resp()
 
     client.session = Slow()  # type: ignore[assignment]
-    assert client.fetch_dashboard("tok")["ok"] is True
+    assert client.fetch_vehicles("tok")["ok"] is True
     assert attempts["n"] == 3
 
 
@@ -123,7 +123,7 @@ def test_400_is_not_retried(client, settings, mock_api):
     tok = token(settings, mock_api)
 
     with pytest.raises(UpstreamClientError) as exc:
-        client.fetch_dashboard(tok)
+        client.fetch_vehicles(tok)
     assert exc.value.status_code == 400
     assert client.delays == []
 
@@ -144,7 +144,7 @@ def test_non_json_body_raises_upstream_error(settings):
 
     client.session = Html()  # type: ignore[assignment]
     with pytest.raises(UpstreamError, match="not JSON"):
-        client.fetch_dashboard("tok")
+        client.fetch_vehicles("tok")
 
 
 def test_ok_false_is_an_error(settings):
@@ -163,14 +163,14 @@ def test_ok_false_is_an_error(settings):
 
     client.session = Sad()  # type: ignore[assignment]
     with pytest.raises(UpstreamError, match="ok=false"):
-        client.fetch_dashboard("tok")
+        client.fetch_vehicles("tok")
 
 
 # ------------------------------------------------------------------ 401s
 def test_expired_token_raises_auth_expired(client, settings, mock_api):
     mock_api.reset()
     with pytest.raises(AuthExpiredError):
-        client.fetch_dashboard("0" * 128)  # never issued
+        client.fetch_vehicles("0" * 128)  # never issued
 
 
 def test_bad_credentials_raise_auth_rejected_not_expired(settings, mock_api):
@@ -220,7 +220,7 @@ def test_is_auth_required_matches_the_documented_shape():
 
 
 def test_data_endpoint_401_without_marker_is_still_an_expiry(settings):
-    """A 401 on /api/dashboard-parameters means the token, never the credentials:
+    """A 401 on /api/v1/vehicles means the token, never the credentials:
     the credentials were already accepted when the token was minted."""
     client = RecordingClient(settings)
 
@@ -237,7 +237,7 @@ def test_data_endpoint_401_without_marker_is_still_an_expiry(settings):
 
     client.session = Bare401()  # type: ignore[assignment]
     with pytest.raises(AuthExpiredError):
-        client.fetch_dashboard("tok")
+        client.fetch_vehicles("tok")
 
 
 # --------------------------------------------------------------- query params
@@ -247,11 +247,55 @@ def test_date_and_vehicle_filters_are_sent(settings, mock_api):
     settings.api_vehicle_filter = "AP39WG"
     client = UpstreamClient(settings)
     tok = token(settings, mock_api)
-    payload = client.fetch_dashboard(tok)
+    payload = client.fetch_vehicles(tok)
     assert payload["ok"] is True
     assert all("AP39WG" in vid for vid in payload["vehicles"])
 
 
-def test_credentials_never_appear_in_the_dashboard_query(settings, mock_api):
+def test_credentials_never_appear_in_the_vehicles_query(settings, mock_api):
     client = UpstreamClient(settings)
     assert client._query_params() == {}
+
+
+# ----------------------------------------------------- endpoint migration
+def test_data_endpoint_is_the_v1_vehicles_route(settings):
+    """The engine must address /api/v1/vehicles, never the retired route."""
+    assert settings.vehicles_path == "/api/v1/vehicles"
+    assert settings.vehicles_url().endswith("/api/v1/vehicles")
+    assert "dashboard-parameters" not in settings.vehicles_url()
+
+
+def test_vehicles_request_url_carries_the_filters_and_no_credentials(settings, mock_api):
+    settings.api_date = "2026-08-28"
+    settings.api_vehicle_filter = "AP39WG"
+    url = UpstreamClient(settings).vehicles_request_url()
+    assert url.endswith("/api/v1/vehicles?date=2026-08-28&vehicle=AP39WG")
+    assert settings.api_secret_key not in url
+    assert settings.api_passcode not in url
+
+
+def test_legacy_dashboard_endpoint_is_gone(client, mock_api, settings):
+    """/api/dashboard-parameters is retired: the mock answers 410, which the
+    transport classifies as a non-retryable client error rather than silently
+    falling back."""
+    mock_api.reset()
+    tok = token(settings, mock_api)
+    legacy = f"{settings.api_base_url}/api/dashboard-parameters"
+
+    with pytest.raises(UpstreamClientError) as exc:
+        client._request(
+            "GET", legacy, headers={"Authorization": f"Bearer {tok}"},
+            label="legacy", endpoint="vehicles",
+        )
+
+    assert exc.value.status_code == 410
+    assert not client.delays, "a 410 must never be retried"
+
+
+def test_default_base_url_is_the_blue_energy_upstream():
+    """Out of the box the engine targets the verified production host."""
+    from telemetry.config import Settings
+
+    defaults = Settings(_env_file=None)
+    assert defaults.api_base_url == "https://track.blueenergymotors.com"
+    assert defaults.vehicles_url() == "https://track.blueenergymotors.com/api/v1/vehicles"

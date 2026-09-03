@@ -18,7 +18,6 @@ import {
   REFERENCE_CITIES,
   buildClusters,
   geoPoints,
-  haversineKm,
   type Cluster,
   type GeoPoint,
   type TrustedVehicle,
@@ -29,6 +28,9 @@ export interface TruckHeatmapProps {
   cellDeg?: number;
   candidateThreshold?: number;
   onSelectVehicle?: (vehicleId: string) => void;
+  /** When provided, clicking a density bubble or a ranked candidate drills down
+   *  (global filter) -- the host typically routes to the live location view. */
+  onClusterClick?: (cluster: Cluster) => void;
   className?: string;
 }
 
@@ -102,6 +104,7 @@ export default function TruckHeatmap({
   cellDeg = 0.25,
   candidateThreshold = 2,
   onSelectVehicle,
+  onClusterClick,
   className = "",
 }: TruckHeatmapProps) {
   const [hover, setHover] = useState<Hover>(null);
@@ -295,6 +298,7 @@ export default function TruckHeatmap({
                     key={cluster.id}
                     onMouseEnter={() => setHover({ kind: "cluster", cluster, x, y })}
                     onMouseLeave={() => setHover(null)}
+                    onClick={() => onClusterClick?.(cluster)}
                     className="cursor-pointer"
                   >
                     <circle cx={x} cy={y} r={bubbleRadius(cluster.count)} fill={color} fillOpacity={active ? 0.3 : 0.12} stroke={color} strokeWidth={active ? 2.5 : 1.5} />
@@ -333,6 +337,7 @@ export default function TruckHeatmap({
                         .join(", ")}
                       {hover.cluster.members.length > 3 ? ` +${hover.cluster.members.length - 3}` : ""}
                     </p>
+                    {onClusterClick && <p className="mt-1 text-cyan-300">Click to open live location view</p>}
                   </>
                 ) : (
                   <>
@@ -387,7 +392,8 @@ export default function TruckHeatmap({
                       setHover({ kind: "cluster", cluster, x, y });
                     }}
                     onMouseLeave={() => setHover(null)}
-                    className="rounded-xl p-3 transition hover:bg-white/[0.03]"
+                    onClick={() => onClusterClick?.(cluster)}
+                    className={`rounded-xl p-3 transition hover:bg-white/[0.03] ${onClusterClick ? "cursor-pointer" : ""}`}
                   >
                     <div className="flex items-center justify-between gap-2">
                       <p className="font-mono text-sm text-white">

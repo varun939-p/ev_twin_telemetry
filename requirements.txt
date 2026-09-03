@@ -18,4 +18,5 @@ uvicorn[standard]==0.34.0   # ASGI server for the control plane
 
 # --- development / CI -------------------------------------------------------
 pytest==9.1.1               # test runner; tests/ needs nothing else
-python-multipart==0.0.20
+python-multipart==0.0.20    # FastAPI UploadFile parsing (/api/ingest/upload)
+httpx==0.28.1               # fastapi.testclient transport for the control plane

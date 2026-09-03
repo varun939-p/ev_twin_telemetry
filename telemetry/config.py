@@ -4,7 +4,11 @@ Everything is read from the environment (`.env` supported via python-dotenv,
 which pydantic-settings loads automatically).  No credential is ever hard-coded.
 
 Required in production:
-    API_BASE_URL, API_SECRET_KEY, API_PASSCODE, DATABASE_URL
+    API_SECRET_KEY, API_PASSCODE, DATABASE_URL
+
+`API_BASE_URL` defaults to the verified Blue Energy Motors upstream
+(`https://track.blueenergymotors.com`) and only needs setting when pointing the
+engine at a staging host or the local mock server.
 """
 
 from __future__ import annotations
@@ -26,11 +30,16 @@ class Settings(BaseSettings):
     )
 
     # ---------------------------------------------------------------- API
-    api_base_url: str = Field(default="http://localhost:8000", description="Base URL, no trailing slash")
+    api_base_url: str = Field(
+        default="https://track.blueenergymotors.com", description="Base URL, no trailing slash"
+    )
     api_secret_key: str = Field(default="", description="secret_key issued with the API client")
     api_passcode: str = Field(default="", description="passcode issued with the API client (shown once)")
     auth_path: str = "/api/auth/api-token"
-    dashboard_path: str = "/api/dashboard-parameters"
+    # Data endpoint.  `/api/dashboard-parameters` is retired and blocked; the
+    # engine reads the verified v1 vehicles feed.  Override with VEHICLES_PATH
+    # only for a staging upstream that mounts the same contract elsewhere.
+    vehicles_path: str = "/api/v1/vehicles"
     request_timeout: float = Field(default=20.0, gt=0)
 
     # Optional server-side filters (see guide sections 3 & 4)
@@ -71,8 +80,9 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------ behaviour
     require_all_fields: bool = Field(
         default=False,
-        description="True => reject a vehicle payload that is missing any of the 24 parameters "
-        "(use when the API client is NOT field-restricted and you want to fail loudly).",
+        description="True => reject a vehicle payload that is missing any of the 15 MEASURED "
+        "parameters.  The 9 unmeasured parameters (see telemetry.fields.UNMEASURED_NAMES) are "
+        "never part of this gate -- they are absent by contract and held as NULL.",
     )
     write_unchanged: bool = Field(
         default=False,
@@ -110,8 +120,8 @@ class Settings(BaseSettings):
     def auth_url(self) -> str:
         return f"{self.api_base_url}{self.auth_path}"
 
-    def dashboard_url(self) -> str:
-        return f"{self.api_base_url}{self.dashboard_path}"
+    def vehicles_url(self) -> str:
+        return f"{self.api_base_url}{self.vehicles_path}"
 
     def validate_required(self) -> None:
         """Fail fast at start-up instead of 30 minutes into a run."""

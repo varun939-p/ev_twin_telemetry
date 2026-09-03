@@ -22,7 +22,7 @@ from .config import Settings
 from .mapping import DriftReporter
 from .metrics import Metrics
 from .repository import TelemetryRepository, WriteResult
-from .schemas import DashboardPayload, ParsedVehicle, ValidatedPayload, parse_payload
+from .schemas import ParsedVehicle, ValidatedPayload, VehiclesPayload, parse_payload
 
 log = logging.getLogger(__name__)
 
@@ -103,18 +103,18 @@ class TelemetryExtractor:
 
     # -------------------------------------------------------------- private
     def _fetch(self) -> dict[str, Any]:
-        """GET the dashboard, re-authenticating once if the token died early."""
+        """GET the vehicles feed, re-authenticating once if the token died early."""
         return run_with_reauth(  # type: ignore[return-value]
             self.tokens,
-            self.client.fetch_dashboard,
-            label="dashboard",
+            self.client.fetch_vehicles,
+            label="vehicles",
         )
 
     @staticmethod
-    def _validate_envelope(raw: dict[str, Any]) -> DashboardPayload:
-        return DashboardPayload.model_validate(raw)
+    def _validate_envelope(raw: dict[str, Any]) -> VehiclesPayload:
+        return VehiclesPayload.model_validate(raw)
 
-    def _validate_vehicles(self, payload: DashboardPayload, ingested_at: datetime) -> ValidatedPayload:
+    def _validate_vehicles(self, payload: VehiclesPayload, ingested_at: datetime) -> ValidatedPayload:
         return parse_payload(
             payload,
             self.settings.tz,
@@ -196,6 +196,6 @@ class TelemetryExtractor:
         m.set_gauge("twin_token_seconds_until_refresh", self.tokens.seconds_until_refresh)
 
     # ------------------------------------------------------------- one-shot
-    def fetch_only(self) -> DashboardPayload:
+    def fetch_only(self) -> VehiclesPayload:
         """Fetch + validate without touching the database (used by `once --dry-run`)."""
         return self._validate_envelope(self._fetch())

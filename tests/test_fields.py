@@ -5,9 +5,12 @@ from __future__ import annotations
 from telemetry.fields import (
     ALIAS_TO_NAME,
     COLUMN_NAMES,
+    MEASURED_NAMES,
     MONOTONIC_NAMES,
     PARAM_SPECS,
     SPEC_BY_NAME,
+    UNMEASURED,
+    UNMEASURED_NAMES,
 )
 
 # Exactly what the product spec lists, in order.
@@ -72,3 +75,35 @@ def test_monotonic_counters_flagged():
 
 def test_work_status_is_text():
     assert SPEC_BY_NAME["work_status"].kind == "str"
+
+
+# ------------------------------------------------- unmeasured declaration
+# The 9 parameters confirmed absent on 100/100 frames of the verified
+# production capture (blue_energy_response.json, 2026-08-28).
+EXPECTED_UNMEASURED = {
+    "total_power_kwh",
+    "charging_status",
+    "battery_total_v",
+    "battery_current_a",
+    "max_cell_v_cell_no",
+    "min_cell_v_pack_no",
+    "min_cell_v_cell_no",
+    "max_temp_pack_no",
+    "work_status",
+}
+
+
+def test_exactly_9_parameters_are_declared_unmeasured():
+    assert set(UNMEASURED_NAMES) == EXPECTED_UNMEASURED
+    assert len(UNMEASURED_NAMES) == 9
+    assert UNMEASURED == frozenset(EXPECTED_UNMEASURED)
+
+
+def test_measured_and_unmeasured_partition_the_registry():
+    assert set(MEASURED_NAMES) | set(UNMEASURED_NAMES) == set(COLUMN_NAMES)
+    assert not (set(MEASURED_NAMES) & set(UNMEASURED_NAMES))
+    assert len(MEASURED_NAMES) == 15
+
+
+def test_unmeasured_flag_matches_the_spec_objects():
+    assert {p.name for p in PARAM_SPECS if p.unmeasured} == EXPECTED_UNMEASURED

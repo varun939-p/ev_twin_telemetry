@@ -148,6 +148,33 @@ export const PARAM_ORDER: readonly string[] = [
   "longitude",
 ] as const;
 
+/**
+ * The 9 parameters the upstream does not measure: the auxiliary thermal and
+ * secondary sub-pack diagnostics.  Mirrors `telemetry.fields.UNMEASURED_NAMES`,
+ * which pins them to NULL in the validator.
+ *
+ * Declaring them here too is deliberate: a tile's disabled state must not be
+ * inferable only from whatever a document happens to contain.  These render
+ * grayed out unconditionally, and are never substituted with a zero -- an
+ * absent measurement and a zero reading are opposite claims about the truck.
+ */
+export const UNMEASURED_FIELDS: ReadonlySet<string> = new Set([
+  "total_power_kwh",
+  "charging_status",
+  "battery_total_v",
+  "battery_current_a",
+  "max_cell_v_cell_no",
+  "min_cell_v_pack_no",
+  "min_cell_v_cell_no",
+  "max_temp_pack_no",
+  "work_status",
+]);
+
+/** True for the permanently-absent parameters, regardless of document content. */
+export function isUnmeasured(field: string): boolean {
+  return UNMEASURED_FIELDS.has(field);
+}
+
 /** Tile grouping for the Digital Twin panel. Every parameter appears exactly once. */
 export const FIELD_GROUPS: ReadonlyArray<{ id: string; title: string; fields: readonly string[] }> = [
   {
@@ -178,27 +205,34 @@ export function orderedParams(doc: TrustedTelemetryDocument): ParameterHealth[] 
   for (const p of [...doc.pipeline_health.available_parameters, ...doc.pipeline_health.unavailable_parameters]) {
     byField.set(p.field, p);
   }
-  return PARAM_ORDER.map(
-    (field) =>
-      byField.get(field) ?? {
-        field,
-        label: field,
-        unit: "",
-        logical_type: "float",
-        documented_upstream: false,
-        vehicles_with_value: 0,
-        coverage_pct: 0,
-        status: "unavailable_upstream",
-        status_breakdown: {},
-      },
-  );
+  return PARAM_ORDER.map((field) => {
+    const declared = byField.get(field) ?? {
+      field,
+      label: field,
+      unit: "",
+      logical_type: "float",
+      documented_upstream: false,
+      vehicles_with_value: 0,
+      coverage_pct: 0,
+      status: "unavailable_upstream" as const,
+      status_breakdown: {},
+    };
+    // The contract outranks the document: a field the upstream does not measure
+    // is unavailable even if this particular file failed to say so.
+    return isUnmeasured(field) ? { ...declared, status: "unavailable_upstream" as const } : declared;
+  });
 }
 
+/** The single gate every tile uses to decide "live" vs "disabled". */
 export function isMeasured(vehicle: TrustedVehicle, field: string): boolean {
+  if (isUnmeasured(field)) return false; // pinned disabled; the value is NULL by contract
   return vehicle.field_status[field] === "measured";
 }
 
+/** A number, or null.  Never coerces "" / undefined / NaN into 0, and never
+ *  returns a reading for one of the 9 unmeasured parameters. */
 export function numericValue(vehicle: TrustedVehicle, field: string): number | null {
+  if (isUnmeasured(field)) return null;
   const v = vehicle.values[field];
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }

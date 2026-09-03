@@ -77,7 +77,8 @@ type Hover = { kind: "cluster"; cluster: Cluster; x: number; y: number } | { kin
 export default function InteractiveGeoMap({ vehicles }: { vehicles: TrustedVehicle[] }) {
   const { focus, setFocus } = useFilters();
   const [hover, setHover] = useState<Hover>(null);
-  const [, setTick] = useState(0);
+  /** Frame timestamp published by the rAF loop; 0 until live-tracking starts. */
+  const [frameTime, setFrameTime] = useState(0);
 
   const { points } = useMemo(() => geoPoints(vehicles), [vehicles]);
   const inRegion = useMemo(
@@ -108,7 +109,7 @@ export default function InteractiveGeoMap({ vehicles }: { vehicles: TrustedVehic
     const loop = (ts: number) => {
       if (ts - last > 66) {
         last = ts;
-        setTick((t) => t + 1);
+        setFrameTime(ts);
       }
       raf = requestAnimationFrame(loop);
     };
@@ -124,7 +125,8 @@ export default function InteractiveGeoMap({ vehicles }: { vehicles: TrustedVehic
     );
   }
 
-  const now = Date.now();
+  /** Read from the rAF loop's own timestamp, not `Date.now()`: render stays pure. */
+  const now = frameTime;
   /** Emulated smooth motion around the last validated fix (live mode only). */
   const livePosition = (p: GeoPoint) => {
     if (!focus) return { lat: p.lat, lon: p.lon };

@@ -12,7 +12,7 @@ from telemetry.config import Settings
 from telemetry.db import build_engine, build_session_factory
 from telemetry.models import Base
 from telemetry.repository import TelemetryRepository
-from telemetry.schemas import DashboardPayload, parse_payload
+from telemetry.schemas import VehiclesPayload, parse_payload
 
 DATABASE_URL = os.getenv("TEST_DATABASE_URL", "postgresql+psycopg://postgres:postgres@127.0.0.1:5432/twin")
 
@@ -32,7 +32,7 @@ def main() -> None:
     factory = build_session_factory(engine)
     now = datetime.now(timezone.utc)
 
-    parsed = parse_payload(DashboardPayload(ok=True, vehicles={"AP39WG5383": FRAME}), settings.tz, ingest_time=now)
+    parsed = parse_payload(VehiclesPayload(ok=True, vehicles={"AP39WG5383": FRAME}), settings.tz, ingest_time=now)
     print("accepted:", parsed.accepted, "rejected:", len(parsed.rejected), "missing:", len(parsed.ok[0].missing))
     v = parsed.ok[0]
     print("observed_at:", v.observed_at, "| soc:", v.values["soc"], "| cycles:", v.values["charge_cycles"],
@@ -43,7 +43,7 @@ def main() -> None:
         s.commit()
 
     newer = dict(FRAME, last_updated="2026-08-27 10:15:52", soc=75, odo=41235, cycles=313)
-    p2 = parse_payload(DashboardPayload(ok=True, vehicles={"AP39WG5383": newer}), settings.tz, ingest_time=now)
+    p2 = parse_payload(VehiclesPayload(ok=True, vehicles={"AP39WG5383": newer}), settings.tz, ingest_time=now)
     with factory() as s:
         print("write2 (newer):", TelemetryRepository(s).write_cycle(p2.ok, ingested_at=now).as_log())
         s.commit()
@@ -52,7 +52,7 @@ def main() -> None:
         assert st.soc == 75 and st.odometer_km == 41235 and st.charge_cycles == 313
 
     older = dict(FRAME, last_updated="2026-08-27 10:10:00", soc=99, odo=41000, cycles=300)
-    p3 = parse_payload(DashboardPayload(ok=True, vehicles={"AP39WG5383": older}), settings.tz, ingest_time=now)
+    p3 = parse_payload(VehiclesPayload(ok=True, vehicles={"AP39WG5383": older}), settings.tz, ingest_time=now)
     with factory() as s:
         repo = TelemetryRepository(s)
         print("write3 (stale):", repo.write_cycle(p3.ok, ingested_at=now).as_log())

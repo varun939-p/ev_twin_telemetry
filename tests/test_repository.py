@@ -14,7 +14,7 @@ from sqlalchemy import func, select
 from telemetry.config import Settings
 from telemetry.models import Telemetry, Vehicle, VehicleState
 from telemetry.repository import TelemetryRepository
-from telemetry.schemas import DashboardPayload, parse_payload
+from telemetry.schemas import VehiclesPayload, parse_payload
 
 BASE_FRAME = {
     "last_updated": "2026-08-27 10:00:00",
@@ -37,7 +37,7 @@ def settings() -> Settings:
 
 def frames(*pairs) -> list:
     """[(vehicle_id, frame), ...] -> validated ParsedVehicle list."""
-    payload = DashboardPayload(ok=True, vehicles={vid: frame for vid, frame in pairs})
+    payload = VehiclesPayload(ok=True, vehicles={vid: frame for vid, frame in pairs})
     return parse_payload(payload, settings().tz, ingest_time=IST_NOW).ok
 
 
@@ -223,7 +223,7 @@ def test_write_with_no_vehicles_is_a_no_op(pg_session):
 def test_frame_without_timestamp_is_archived_under_ingest_time(pg_session):
     frame = {k: v for k, v in BASE_FRAME.items() if k != "last_updated"}
     parsed = parse_payload(
-        DashboardPayload(ok=True, vehicles={"AP39WG5383": frame}),
+        VehiclesPayload(ok=True, vehicles={"AP39WG5383": frame}),
         settings().tz,
         ingest_time=IST_NOW,
         fallback_observed_at="ingest",

@@ -31,11 +31,11 @@ from pydantic import (
     model_validator,
 )
 
-from .fields import COLUMN_NAMES, PARAM_SPECS, SPEC_BY_NAME
+from .fields import COLUMN_NAMES, PARAM_SPECS, SPEC_BY_NAME, UNMEASURED
 
 __all__ = [
     "AuthResponse",
-    "DashboardPayload",
+    "VehiclesPayload",
     "FieldError",
     "ParsedVehicle",
     "RejectedVehicle",
@@ -119,6 +119,15 @@ def parse_source_timestamp(raw: Any, tz: ZoneInfo) -> datetime | None:
 def _coerce_by_spec(value: Any, info: ValidationInfo) -> Any:
     """One before-validator for all 24 parameters; the spec is looked up by field name."""
     spec = SPEC_BY_NAME[info.field_name]
+
+    # The 9 unmeasured parameters are never read, so they must also never be
+    # *validated*: an out-of-range value on one of them would raise here, and a
+    # ValidationError quarantines the ENTIRE vehicle -- taking the 15 good
+    # readings down with it.  Short-circuit to None and let `parse_payload`
+    # record that the key was sent, so the frame survives.
+    if spec.unmeasured:
+        return None
+
     value = _clean_scalar(value)
     if value is None:
         return None
@@ -235,8 +244,8 @@ class AuthResponse(BaseModel):
         return v
 
 
-class DashboardPayload(BaseModel):
-    """GET /api/dashboard-parameters -- we only consume `.vehicles`."""
+class VehiclesPayload(BaseModel):
+    """GET /api/v1/vehicles -- we only consume `.vehicles`."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -245,7 +254,7 @@ class DashboardPayload(BaseModel):
     vehicles: dict[str, Any] | None = None
 
     @model_validator(mode="after")
-    def _normalise(self) -> "DashboardPayload":
+    def _normalise(self) -> "VehiclesPayload":
         if self.vehicles is None:
             self.vehicles = {}
         return self
@@ -305,7 +314,7 @@ _VEHICLE_ID_RE: Final = re.compile(r"^[A-Za-z0-9._-]{3,32}$")
 # entry point
 # ---------------------------------------------------------------------------
 def parse_payload(
-    payload: DashboardPayload,
+    payload: VehiclesPayload,
     tz: ZoneInfo,
     *,
     require_all_fields: bool = False,
@@ -315,6 +324,11 @@ def parse_payload(
     """Validate the whole `vehicles` object.
 
     Returns accepted frames plus a quarantine list; it never raises for bad data.
+
+    NULL contract: the 9 parameters flagged `unmeasured` in `telemetry.fields`
+    are stored as NULL on every accepted frame, regardless of what the upstream
+    sends.  `require_all_fields` is applied to the 15 measured parameters only,
+    so the permanently-absent 9 can never quarantine a fleet.
     """
     result = ValidatedPayload()
     vehicles = payload.vehicles or {}
@@ -356,10 +370,32 @@ def parse_payload(
             continue
 
         # Soft per-field handling: a poisoned sensor must not null the other 23.
+        #
+        # The 9 `unmeasured` parameters are handled FIRST and unconditionally:
+        # their value is pinned to NULL whatever the frame says.  That is the
+        # whole point of declaring them in `telemetry.fields` -- an absent
+        # measurement must reach the UI as a disabled tile, and must never be
+        # allowed to become `0` (a zero reading and no reading are opposite
+        # claims about the truck).  If the upstream does start sending one, we
+        # still hold NULL, but we record a FieldError so the change is visible
+        # in the logs and in the document instead of being silently discarded.
         values: dict[str, Any] = {}
         field_errors: list[FieldError] = []
         for spec in PARAM_SPECS:
             raw_value = next((raw_frame[alias] for alias in spec.aliases if alias in raw_frame), None)
+
+            if spec.unmeasured:
+                values[spec.name] = None  # pinned; never coerced, never defaulted
+                if raw_value is not None:
+                    field_errors.append(
+                        FieldError(
+                            field=spec.name,
+                            raw=raw_value,
+                            error="parameter is declared unmeasured upstream -- value ignored, stored NULL",
+                        )
+                    )
+                continue
+
             coerced = getattr(parsed, spec.name)
             if coerced is not None and spec.kind == "int":
                 # The field is annotated `float | None` (see _build_vehicle_params_model),
@@ -378,17 +414,27 @@ def parse_payload(
                     )
                 )
 
+        # `missing` drives the UI's "awaiting upstream" state, so a declared-
+        # unmeasured parameter is always reported missing -- even if a frame
+        # carried the key -- because we are contractually not reading it.
         missing = [
-            spec.name for spec in PARAM_SPECS if not any(alias in raw_frame for alias in spec.aliases)
+            spec.name
+            for spec in PARAM_SPECS
+            if spec.unmeasured or not any(alias in raw_frame for alias in spec.aliases)
         ]
-        if require_all_fields and missing:
-            result.rejected.append(
-                RejectedVehicle(
-                    vehicle_id=vehicle_id,
-                    reason=f"missing {len(missing)} required parameter(s): {', '.join(missing)}",
+        # The 9 unmeasured parameters are excluded from the completeness gate:
+        # they can never arrive, so requiring them would quarantine the whole
+        # fleet.  `require_all_fields` therefore means "all 15 measured ones".
+        if require_all_fields:
+            unmet = [name for name in missing if name not in UNMEASURED]
+            if unmet:
+                result.rejected.append(
+                    RejectedVehicle(
+                        vehicle_id=vehicle_id,
+                        reason=f"missing {len(unmet)} required parameter(s): {', '.join(unmet)}",
+                    )
                 )
-            )
-            continue
+                continue
 
         observed_at = localise_last_updated(parsed, tz)
         if observed_at is None:

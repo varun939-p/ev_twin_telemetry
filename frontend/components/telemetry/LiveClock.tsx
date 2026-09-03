@@ -1,21 +1,31 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
+
+/** One shared subscription for every clock on the page, created once. */
+const clockStore = {
+  subscribe(onChange: () => void) {
+    const id = setInterval(onChange, 1000);
+    return () => clearInterval(id);
+  },
+  /** Quantised to the second: a stable snapshot between ticks, so React never
+   *  sees a changed value without a store notification. */
+  getSnapshot: () => Math.floor(Date.now() / 1000) * 1000,
+  /** The prerendered HTML has no clock in it; 0 renders the placeholder. */
+  getServerSnapshot: () => 0,
+};
 
 /**
  * Prominent live system clock for the dashboard header.
  *
  * Renders IST (the operating timezone of the fleet) and ticks once a second.
- * Client-only state, so it never leaks into the static HTML / SSR output.
+ * `useSyncExternalStore` rather than an effect + setState: the clock is an
+ * external system, and this keeps the server render deterministic so the
+ * statically prerendered page cannot mismatch on hydration.
  */
 export default function LiveClock({ className = "" }: { className?: string }) {
-  const [now, setNow] = useState<Date | null>(null);
-
-  useEffect(() => {
-    setNow(new Date());
-    const id = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(id);
-  }, []);
+  const stamp = useSyncExternalStore(clockStore.subscribe, clockStore.getSnapshot, clockStore.getServerSnapshot);
+  const now = stamp === 0 ? null : new Date(stamp);
 
   const date = now?.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", weekday: "short", day: "2-digit", month: "short", year: "numeric" });
   const time = now?.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });

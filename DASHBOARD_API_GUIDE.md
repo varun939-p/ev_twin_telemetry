@@ -1,5 +1,18 @@
 # Dashboard Parameters API — Usage Guide
 
+> **Migration notice (2026-09-03).** `GET /api/dashboard-parameters`, described
+> throughout this document, is **retired and blocked**. The engine now reads
+> `GET https://track.blueenergymotors.com/api/v1/vehicles`, which returns the
+> same `{ ok, summary, vehicles }` envelope, so nothing downstream of the
+> transport changed. The route lives in one place:
+> `Settings.vehicles_path` (`telemetry/config.py`), overridable via
+> `VEHICLES_PATH`. The text below is the vendor's original guide and is kept
+> verbatim as the reference for authentication, the response envelope and the
+> error table — substitute the v1 path in any `curl` you copy from it.
+>
+> Nine of the 24 parameters are not measured upstream and are pinned to `NULL`
+> by `telemetry.schemas.parse_payload` — see `telemetry.fields.UNMEASURED_NAMES`.
+
 Machine/API access to fleet dashboard data, authenticated with a secret key + passcode (separate from the browser username/password login).
 
 ## 1. Get API credentials (admin step)
