@@ -330,10 +330,10 @@ export default function SiteCanvas({
           opacity={0.8}
         />
         <text x={72} y={196} className="fill-[var(--ink-3)] text-[12px]" style={{ fontSize: 11 }}>
-          ENTRY
+          Entry
         </text>
         <text x={1148} y={336} textAnchor="end" className="fill-[var(--ink-3)]" style={{ fontSize: 11 }}>
-          EXIT
+          Exit
         </text>
 
         {/* --------------------------------------------- energy flow bus */}
@@ -409,7 +409,7 @@ export default function SiteCanvas({
             style={{ fontSize: 13, fontWeight: 700, letterSpacing: 0.4 }}
             className="fill-[var(--ink)]"
           >
-            SWAP STATION
+            Swap station
           </text>
           <text x={stationBox.crown[0]} y={stationBox.crown[1] + 10} textAnchor="middle" style={{ fontSize: 10 }} className="fill-[var(--ink-3)]">
             {station?.name ?? "Unassigned hub"} · {site.totalDrawKw} kW draw
@@ -471,7 +471,7 @@ export default function SiteCanvas({
             style={{ fontSize: 10, fontWeight: 600 }}
             className="fill-[var(--ink-3)]"
           >
-            GANTRY CRANE
+            Gantry crane
           </text>
         </g>
 

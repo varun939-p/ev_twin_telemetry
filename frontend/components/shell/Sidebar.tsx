@@ -26,7 +26,6 @@ import { usePersistedBool } from "@/lib/persisted";
 export interface NavItem {
   href: string;
   label: string;
-  hint: string;
   icon: ReactNode;
 }
 
@@ -36,7 +35,6 @@ export const NAV_ITEMS: NavItem[] = [
   {
     href: "/digital-twin/central",
     label: "Central Dashboard",
-    hint: "Live site canvas",
     icon: (
       <svg viewBox="0 0 20 20" className="h-4 w-4" aria-hidden>
         <path d="M10 2.5L17 7v9.5H3V7l7-4.5z" {...stroke} />
@@ -47,7 +45,6 @@ export const NAV_ITEMS: NavItem[] = [
   {
     href: "/digital-twin/battery-tracking",
     label: "Battery Tracking",
-    hint: "Pack register, SOH, alerts",
     icon: (
       <svg viewBox="0 0 20 20" className="h-4 w-4" aria-hidden>
         <rect x="2.5" y="6" width="13" height="8" rx="2" {...stroke} />
@@ -59,7 +56,6 @@ export const NAV_ITEMS: NavItem[] = [
   {
     href: "/digital-twin/truck-telemetry",
     label: "Truck Telemetry",
-    hint: "Carriers on the map",
     icon: (
       <svg viewBox="0 0 20 20" className="h-4 w-4" aria-hidden>
         <path d="M2.5 13.5V5.5h9v8" {...stroke} />
@@ -147,10 +143,7 @@ export default function Sidebar({ open, onNavigate }: { open: boolean; onNavigat
                       <span className={`mt-[1px] shrink-0 ${active ? "text-accent" : "text-ink-3 group-hover:text-ink-2"}`}>
                         {item.icon}
                       </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="truncate text-[13px] font-medium">{item.label}</span>
-                        <span className="mt-0.5 block truncate text-[11px] text-ink-3">{item.hint}</span>
-                      </span>
+                      <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{item.label}</span>
                     </Link>
                   </li>
                 );
