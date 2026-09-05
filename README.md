@@ -269,11 +269,37 @@ lib/fleet.ts          filter model, buildGeoIndex (dataset-derived dropdowns), E
 lib/fleet-metrics.ts  status derivation, KPI coverage types, alerts, table projections
 lib/site-model.ts     the ONLY modelled data in the app — facility simulation
 lib/theme.ts(x)       dark/light controller (useSyncExternalStore, no FOUC)
+lib/telemetry-source.ts  server-only: live document fetch, token auth,
+                         validation, snapshot fallback  <-- the data boundary
+lib/document.ts       re-exports the loader + presentation helpers
 ```
 
-The carrier map is **Leaflet + CARTO raster tiles** (`components/map/`), loaded
+### Live telemetry
+
+`GET /api/telemetry/trusted` (added to `telemetry/main.py`) serves the
+validated document `main_parser.py` writes. The Next.js server fetches it via
+`lib/telemetry-source.ts`, which handles the `secret_key`/`passcode` token
+exchange, an abort budget, structural validation and a fallback to the
+committed snapshot. Credentials are server-side only — see
+`frontend/.env.example`. The header chip reports `Live` or `Snapshot` (with
+the reason) so nobody mistakes cached data for current data.
+
+Because every view iterates `PARAM_ORDER` and reads `field_status`, unlocking
+a channel upstream populates the dashboard with **no frontend change** — this
+was verified by serving a document with `battery_total_v` and
+`charging_status` provisioned: the coverage chip moved 8/24 -> 10/24 and the
+"Batteries charging right now" KPI went from *Awaiting upstream* to a live
+count.
+
+The carrier map is **Leaflet + OpenStreetMap raster tiles** (`components/map/`), loaded
 through `next/dynamic` with `ssr: false` because Leaflet touches `window` at
-import time. Tiles are themed with the dashboard. If the tile CDN is
+import time. OSM needs no API key or account (CARTO's basemap CDN now rejects
+unauthenticated traffic, which is what produced the "API KEY REQUIRED" tiles).
+OSM publishes only a light cartography, so the dark basemap is derived with a
+CSS filter rather than a second tile provider — one warm HTTP cache, and
+toggling the theme never re-downloads the viewport. **The OSM attribution
+control is required by their tile usage policy; do not remove it.**
+If the tile CDN is
 unreachable, the map falls back to a vector basemap drawn from
 `frontend/data/india_states.json` — a simplified extract (36 state/UT
 MultiPolygons, ~19k points) of the MIT-licensed `states_india.geojson`

@@ -18,70 +18,89 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* ---------------------------------------------------------------------------
+ * LIGHT — the same restrained system inverted. Paper-white cards, warm-neutral
+ * canvas, identical accent and status hues so a screenshot taken in either
+ * theme reads as the same product.
+ * ------------------------------------------------------------------------- */
 :root {
-  /* surfaces — pure white cards on a soft zinc canvas */
-  --canvas: #f4f4f5;
+  --canvas: #f2f2f0;
   --surface: #ffffff;
-  --surface-2: #fafafa;
-  --surface-3: #f4f4f5;
-  --line: #e4e4e7;
-  --line-strong: #d4d4d8;
+  --surface-2: #fafaf9;
+  --surface-3: #f2f2f0;
 
-  /* ink — zinc ramp, all three pass AA on --surface */
-  --ink: #18181b;
-  --ink-2: #52525b;
-  --ink-3: #71717a;
+  /* Hairlines, not shadows. */
+  --line: rgba(13, 15, 20, 0.10);
+  --line-strong: rgba(13, 15, 20, 0.18);
 
-  /* accent + status */
-  --accent: #0f766e;
-  --accent-soft: #0f766e14;
-  --accent-ink: #115e59;
-  --ok: #15803d;
-  --ok-soft: #15803d14;
-  --warn: #b45309;
-  --warn-soft: #b4530914;
-  --danger: #b91c1c;
-  --danger-soft: #b91c1c14;
-  --info: #1d4ed8;
-  --info-soft: #1d4ed814;
+  --ink: #16171b;
+  --ink-2: #55565c;
+  --ink-3: #83848b;
 
-  /* map / canvas graphics */
-  --grid: #ececee;
-  --plate: #f4f4f5;
-  --shadow: 0 1px 2px rgba(9, 9, 11, 0.04), 0 1px 3px rgba(9, 9, 11, 0.06);
+  /* Copper. Used ONLY for the active nav item and primary CTAs. */
+  --accent: #a8621d;
+  --accent-soft: rgba(217, 130, 43, 0.12);
+  --accent-ink: #8a4f16;
+
+  --ok: #3d8c5e;
+  --ok-soft: rgba(76, 167, 113, 0.14);
+  --warn: #a8701f;
+  --warn-soft: rgba(217, 154, 43, 0.14);
+  --danger: #c0413d;
+  --danger-soft: rgba(217, 83, 79, 0.13);
+  --info: #4a55b8;
+  --info-soft: rgba(91, 103, 216, 0.13);
+
+  --grid: rgba(13, 15, 20, 0.06);
+  --plate: #f2f2f0;
+  --shadow: none;
 }
 
+/* ---------------------------------------------------------------------------
+ * DARK — the primary theme.
+ *
+ * Navy-black canvas, warm-neutral charcoal cards. The two are only ~9 points
+ * apart in luminance, so the card is felt rather than announced; separation
+ * comes from a 1px hairline, NOT from a glow or a drop shadow. `--shadow` is
+ * literally `none` in this theme and that is deliberate: stacked blurred
+ * shadows are the single biggest tell of a generated dashboard.
+ *
+ * The accent is copper, not cyan. It appears on the active nav item and
+ * primary CTAs and nowhere else — roughly 1% of the pixels on screen. Status
+ * hues are desaturated so a red row reads as serious rather than as an alarm
+ * light.
+ * ------------------------------------------------------------------------- */
 .dark {
-  /* Crisp, not muddy: the canvas is near-black and every surface lifts off it
-   * by a clear, even step, so cards read as physical planes instead of one
-   * flat grey wash. Neutral zinc, zero hue — deliberately NOT the saturated
-   * blue-on-black "AI dashboard" look this refactor replaced. */
-  --canvas: #09090b;
-  --surface: #18181b;
-  --surface-2: #1f1f22;
-  --surface-3: #27272a;
-  --line: #2e2e32;
-  --line-strong: #3f3f46;
+  --canvas: #0d0f14;
+  --surface: #16171b;
+  --surface-2: #1b1c21;
+  --surface-3: #202127;
 
-  --ink: #fafafa;
-  --ink-2: #a1a1aa;
-  --ink-3: #7c7c85;
+  /* The card border from the brief, and one step up for dividers that must
+     survive being drawn over a lighter surface. */
+  --line: rgba(255, 255, 255, 0.06);
+  --line-strong: rgba(255, 255, 255, 0.12);
 
-  --accent: #2dd4bf;
-  --accent-soft: #2dd4bf1a;
-  --accent-ink: #99f6e4;
-  --ok: #4ade80;
-  --ok-soft: #4ade801a;
-  --warn: #fbbf24;
-  --warn-soft: #fbbf241a;
-  --danger: #f87171;
-  --danger-soft: #f871711a;
-  --info: #60a5fa;
-  --info-soft: #60a5fa1a;
+  --ink: #eceded;
+  --ink-2: #9b9da4;
+  --ink-3: #6e7077;
 
-  --grid: #232326;
-  --plate: #1f1f22;
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.35);
+  --accent: #d9822b;
+  --accent-soft: rgba(217, 130, 43, 0.14);
+  --accent-ink: #e9a463;
+
+  --ok: #4ca771;
+  --ok-soft: rgba(76, 167, 113, 0.14);
+  --warn: #d99a2b;
+  --warn-soft: rgba(217, 154, 43, 0.14);
+  --danger: #d9534f;
+  --danger-soft: rgba(217, 83, 79, 0.14);
+  --info: #5b67d8;
+  --info-soft: rgba(91, 103, 216, 0.16);
+
+  --grid: rgba(255, 255, 255, 0.045);
+  --plate: #1b1c21;
+  --shadow: none;
 }
 
 @theme inline {
@@ -110,10 +129,12 @@
   --color-grid: var(--grid);
   --color-plate: var(--plate);
 
-  /* Two technical faces: Inter for UI copy, JetBrains Mono for every number.
+  /* Three faces: Plex for UI copy and table text, Space Grotesk for display
+   * numerals and headings, JetBrains Mono for every telemetry value.
    * Telemetry is tabular by nature — a monospace with real tabular figures
    * stops columns of SOC / odometer values from dancing between renders. */
-  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-plex), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-grotesk), var(--font-plex), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-jetbrains), ui-monospace, "SF Mono", monospace;
 }
 
@@ -138,6 +159,16 @@ body {
 }
 
 /* Numbers never reflow: every metric uses .num */
+/**
+ * Display face — Space Grotesk. Headings and the large KPI numerals only.
+ * Body copy and table text stay on Plex: Grotesk's tight apertures are an
+ * asset at 20 px and a liability at 12 px in a 100-row register.
+ */
+.display {
+  font-family: var(--font-display);
+  letter-spacing: -0.015em;
+}
+
 .num {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
@@ -214,6 +245,26 @@ body {
   animation: emissive-pulse 2.4s ease-in-out infinite;
 }
 
+/**
+ * Row arrival highlight. Replaces `scrollIntoView` on the battery register:
+ * an incoming pointer tints the row and fades out over 1.4s, so the operator
+ * can find it without the page moving under them. Colour-independent of the
+ * row's own state (critical rows keep their red tint underneath).
+ */
+@keyframes row-pulse {
+  0% {
+    background-color: var(--accent-soft);
+    box-shadow: inset 3px 0 0 0 var(--accent);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: inset 3px 0 0 0 transparent;
+  }
+}
+.row-pulse {
+  animation: row-pulse 1.4s ease-out 1;
+}
+
 @keyframes rise-in {
   from {
     opacity: 0;
@@ -233,6 +284,7 @@ body {
   .energy-flow-slow,
   .pulse-soft,
   .pulse-emissive,
+  .row-pulse,
   .rise-in {
     animation: none !important;
   }
@@ -267,6 +319,14 @@ body {
 .leaflet-tooltip.twin-tip::before {
   display: none;
 }
+/**
+ * OSM publishes only a light cartography. Rather than pay for a second tile
+ * provider (or re-download the whole viewport on every theme toggle), the dark
+ * basemap is derived in CSS: invert + hue-rotate flips the paper white to
+ * near-black while keeping road/water hues roughly where the eye expects them,
+ * then the saturation and contrast are pulled back so the map recedes behind
+ * the markers instead of competing with them.
+ */
 .dark .leaflet-tile {
-  filter: brightness(0.94);
+  filter: invert(1) hue-rotate(180deg) brightness(0.92) contrast(0.92) saturate(0.72);
 }

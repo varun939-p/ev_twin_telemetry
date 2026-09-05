@@ -41,7 +41,7 @@ import type { GeoJsonObject } from "geojson";
 
 import { useIsHovered, useIsSelected, useTwin } from "@/lib/store";
 import { useTheme } from "@/lib/theme";
-import type { AssetStatus } from "@/lib/fleet-metrics";
+import { STATUS_SHORT, type AssetStatus } from "@/lib/fleet-metrics";
 import { ZOOM, type MapCluster, type MapPoint } from "@/lib/map-data";
 
 import "leaflet/dist/leaflet.css";
@@ -49,24 +49,36 @@ import "leaflet/dist/leaflet.css";
 /** Below this zoom the map shows city clusters; above it, individual trucks. */
 const CLUSTER_BREAK = 7;
 
+/** Desaturated status hues, matched to the design tokens. Markers sit on a
+ *  photographic basemap, so they carry a solid white hairline for separation
+ *  instead of a glow — a halo over map detail reads as a rendering artefact. */
 const STATUS_COLOR: Record<AssetStatus, string> = {
-  moving: "#1a9d55",
-  charging: "#0f9b8e",
-  idle: "#c07a17",
-  unknown: "#8b9098",
+  moving: "#4ca771",
+  charging: "#5b67d8",
+  idle: "#d9822b",
+  unknown: "#8b8d94",
 };
 
+/**
+ * BASEMAP: OpenStreetMap standard raster tiles.
+ *
+ * CARTO's basemaps.cartocdn.com now returns an API-key error for
+ * unauthenticated traffic, which is why the map surfaced "API KEY REQUIRED".
+ * OSM's standard layer needs no key and no account.
+ *
+ * One URL serves both themes. OSM only publishes a light cartography, so the
+ * dark variant is produced in CSS (`.dark .leaflet-tile` in globals.css)
+ * rather than by swapping tile servers — that keeps a single warm HTTP cache
+ * and means toggling the theme never re-downloads 20 tiles.
+ *
+ * Attribution is REQUIRED by the OSM tile usage policy and is rendered by the
+ * control in the corner; do not remove it.
+ */
 const TILES = {
-  light: {
-    url: "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
-    attribution:
-      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
-  },
-  dark: {
-    url: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
-    attribution:
-      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
-  },
+  url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+  attribution:
+    '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+  maxNativeZoom: 19,
 } as const;
 
 /* ------------------------------------------------------------ camera glue */
@@ -209,7 +221,7 @@ function VehicleMarker({ point }: { point: MapPoint }) {
           {point.chassis} · {point.city ?? "unmapped"}
         </span>
         <span className="mt-1 block text-[11px]" style={{ color }}>
-          {point.status.toUpperCase()} · SOC {point.soc === null ? "—" : `${point.soc}%`}
+          {STATUS_SHORT[point.status]} · SOC {point.soc === null ? "—" : `${point.soc}%`}
         </span>
         <span className="block text-[10px] text-ink-3">{point.ageLabel}</span>
       </Tooltip>
@@ -225,9 +237,12 @@ function ClusterMarker({ cluster, onDrill }: { cluster: MapCluster; onDrill: (c:
       className: "",
       iconSize: [size, size],
       iconAnchor: [size / 2, size / 2],
-      html: `<div style="width:${size}px;height:${size}px" class="grid place-items-center rounded-full border-2 border-accent bg-accent-soft backdrop-blur-sm cursor-pointer transition hover:scale-105">
-               <span class="num text-[13px] font-bold leading-none text-accent">${cluster.count}</span>
-               <span class="text-[10px] font-semibold uppercase tracking-wide text-accent/80 leading-none mt-0.5">${cluster.city}</span>
+      // Neutral, not accent. A city aggregate is a navigational affordance,
+      // not a call to action, and 10 copper bubbles over a basemap was the
+      // single loudest thing on the page.
+      html: `<div style="width:${size}px;height:${size}px" class="grid place-items-center rounded-full border border-line-strong bg-surface/85 backdrop-blur-sm cursor-pointer transition hover:border-accent hover:bg-surface">
+               <span class="num text-[13px] font-bold leading-none text-ink">${cluster.count}</span>
+               <span class="text-[10px] font-medium text-ink-2 leading-none mt-0.5">${cluster.city}</span>
              </div>`,
     });
   }, [cluster.count, cluster.city]);
@@ -265,7 +280,6 @@ export default function LeafletFleetMap({
   heightClass?: string;
 }) {
   const { resolved } = useTheme();
-  const tiles = resolved === "dark" ? TILES.dark : TILES.light;
 
   const setGeo = useTwin((s) => s.setGeo);
   const setFocus = useTwin((s) => s.setFocus);
@@ -352,12 +366,14 @@ export default function LeafletFleetMap({
         className="h-full w-full"
         style={{ background: "var(--surface-3)" }}
       >
-        {/* keyed on the theme so the raster set swaps cleanly on toggle */}
+        {/* NOT keyed on the theme: one OSM layer serves both, and the dark
+            variant is a CSS filter. Re-keying here would throw away the tile
+            cache on every toggle. */}
         <TileLayer
-          key={resolved}
-          url={tiles.url}
-          attribution={tiles.attribution}
+          url={TILES.url}
+          attribution={TILES.attribution}
           maxZoom={ZOOM.max}
+          maxNativeZoom={TILES.maxNativeZoom}
           eventHandlers={{ tileerror: onTileError }}
         />
 
@@ -367,9 +383,8 @@ export default function LeafletFleetMap({
             tokens are therefore resolved to concrete colours in JS first. */}
         {fallbackGeo && (
           <GeoJSON
-            // Namespaced: the sibling <TileLayer> is also keyed on `resolved`,
-            // and two children of <MapContainer> sharing a key is a React
-            // duplicate-key error.
+            // Re-keyed on the theme so the vector fill/stroke are re-resolved
+            // from the tokens when the palette flips.
             key={`fallback-${resolved}`}
             data={fallbackGeo}
             style={{
@@ -430,7 +445,7 @@ export default function LeafletFleetMap({
         </button>
 
         {/* zoom read-out + layer state */}
-        <div className="pointer-events-none absolute bottom-3 right-3 rounded-md border border-line bg-surface/90 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.1em] text-ink-3 backdrop-blur-sm">
+        <div className="pointer-events-none absolute bottom-3 right-3 rounded-md border border-line bg-surface/90 px-2 py-1 text-[10px] font-semibold tracking-[0.1em] text-ink-3 backdrop-blur-sm">
           z<span className="num">{zoom}</span> · {showClusters ? "city clusters" : "assets"}
           {fallbackGeo && <span className="ml-1 text-warn">· offline basemap</span>}
         </div>

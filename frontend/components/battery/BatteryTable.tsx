@@ -32,20 +32,47 @@ const Row = memo(function Row({ row }: { row: BatteryRow }) {
   const select = useTwin((s) => s.select);
   const ref = useRef<HTMLTableRowElement>(null);
 
-  const pointerOrigin = useTwin((s) =>
-    s.hovered?.vehicleId === row.vehicleId
-      ? s.hovered.origin
-      : s.selected?.vehicleId === row.vehicleId
-        ? s.selected.origin
+  /**
+   * Monotonic sequence of the pointer AIMED AT THIS ROW, or null.
+   *
+   * Keyed on `seq` rather than on origin so that re-selecting the same row
+   * (arriving twice from the same alert) still registers as a new event.
+   */
+  const pointerSeq = useTwin((s) =>
+    s.selected?.vehicleId === row.vehicleId
+      ? s.selected.seq
+      : s.hovered?.vehicleId === row.vehicleId
+        ? s.hovered.seq
         : null,
   );
 
-  // A pointer arriving from the alert banner or a deep link scrolls the row
-  // into view inside this container only — never the whole window.
+  /**
+   * NO SCROLLING. An incoming pointer — a deep link, an alert-banner click, a
+   * carrier arriving on the map — announces itself with a brief background
+   * pulse on the row and nothing else.
+   *
+   * `scrollIntoView({block:"nearest"})` was hijacking the page: because the
+   * table is not its own scroll container, "nearest" resolves up to the
+   * document scroller, so the viewport lurched every time a pointer changed.
+   * Yanking someone's screen while they are reading a different row is the
+   * kind of thing that gets a dashboard closed. The operator decides where to
+   * look; the UI's job is to make the row findable, not to force it on them.
+   *
+   * `pulseKey` is bumped per pointer arrival so re-selecting the SAME row
+   * restarts the animation (React would otherwise diff the class as unchanged
+   * and nothing would happen).
+   */
   useEffect(() => {
-    if (pointerOrigin === null) return;
-    ref.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-  }, [pointerOrigin]);
+    if (pointerSeq === null) return;
+    const el = ref.current;
+    if (!el) return;
+    // Remove -> force reflow -> re-add. Without the reflow the browser
+    // coalesces the class churn into no change and the animation never
+    // replays for a repeat hit on the same row.
+    el.classList.remove("row-pulse");
+    void el.offsetWidth;
+    el.classList.add("row-pulse");
+  }, [pointerSeq]);
 
   const critical = row.soc !== null && row.soc < SOC_CRITICAL;
   const socTone = row.soc === null ? "bg-ink-3" : critical ? "bg-danger" : row.soc < 50 ? "bg-warn" : "bg-ok";
@@ -155,7 +182,7 @@ export default function BatteryTable({ rows }: { rows: BatteryRow[] }) {
       <button
         type="button"
         onClick={() => setSort((p) => ({ key, dir: p.key === key && p.dir === "asc" ? "desc" : "asc" }))}
-        className={`inline-flex cursor-pointer items-center gap-1 text-[11px] font-semibold uppercase tracking-[0.12em] transition ${
+        className={`inline-flex cursor-pointer items-center gap-1 text-[11px] font-semibold transition ${
           sort.key === key ? "text-accent" : "text-ink-3 hover:text-ink-2"
         }`}
       >
@@ -184,16 +211,16 @@ export default function BatteryTable({ rows }: { rows: BatteryRow[] }) {
         <thead className="sticky top-0 z-10 bg-surface-2/95 backdrop-blur">
           <tr className="border-b border-line">
             {header("battery", "Battery")}
-            <th scope="col" className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-3">
+            <th scope="col" className="px-3 py-2 text-left text-[11px] font-semibold text-ink-3">
               Carrier / Truck ID
             </th>
             {header("soc", "SOC", "right")}
             {header("soh", "SOH", "right")}
             {header("cycles", "Cycles", "right")}
-            <th scope="col" className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-3">
+            <th scope="col" className="px-3 py-2 text-left text-[11px] font-semibold text-ink-3">
               Status
             </th>
-            <th scope="col" className="px-3 py-2 text-right text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-3">
+            <th scope="col" className="px-3 py-2 text-right text-[11px] font-semibold text-ink-3">
               Nearest hub
             </th>
           </tr>

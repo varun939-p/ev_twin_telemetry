@@ -46,7 +46,7 @@ export default function BatteryKpiStrip({
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <KpiCard
-        label="Total Battery Assets"
+        label="Total battery assets"
         value={packs.length}
         hint={
           packs.length === totalPacks
@@ -59,15 +59,15 @@ export default function BatteryKpiStrip({
       {/* The old click-through target (/digital-twin/swap-station) was removed
           with the draft routes, so this card no longer pretends to navigate. */}
       <KpiCard
-        label="Batteries Charging Right Now"
+        label="Batteries charging right now"
         value={charging.value}
-        tone="accent"
+        tone="info"
         hint={charging.note}
         unavailableReason={charging.note}
       />
 
       <KpiCard
-        label="Deployed / In Service"
+        label="Deployed / in service"
         value={deployed.value}
         tone="ok"
         hint={deployed.note}
@@ -82,7 +82,7 @@ export default function BatteryKpiStrip({
       />
 
       <KpiCard
-        label="Current Running Load"
+        label="Current running load"
         value={load.value}
         unit="kW"
         tone="info"

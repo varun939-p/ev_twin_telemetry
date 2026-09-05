@@ -39,10 +39,10 @@ export const STATUS_LABEL: Record<AssetStatus, string> = {
 };
 
 export const STATUS_SHORT: Record<AssetStatus, string> = {
-  moving: "MOVING",
-  charging: "CHARGING",
-  idle: "IDLE",
-  unknown: "UNKNOWN",
+  moving: "Moving",
+  charging: "Charging",
+  idle: "Idle",
+  unknown: "Unknown",
 };
 
 /** Token names, not hex: the map, tables and canvas all read the same set so

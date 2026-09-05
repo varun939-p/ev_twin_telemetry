@@ -48,11 +48,11 @@ export function KpiCard({
   const body = (
     <>
       <div className="flex items-start justify-between gap-3">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-3">{label}</p>
+        <p className="text-[11px] font-semibold text-ink-3">{label}</p>
         {icon}
       </div>
 
-      <p className={`num mt-2 text-[26px] font-semibold leading-none ${value === null ? "text-ink-3" : accentText[tone]}`}>
+      <p className={`display mt-2 text-[28px] font-bold leading-none tabular-nums ${value === null ? "text-ink-3" : accentText[tone]}`}>
         {value === null ? "—" : value}
         {unit && value !== null && <span className="ml-1 text-sm font-medium text-ink-3">{unit}</span>}
       </p>
@@ -119,7 +119,7 @@ export function Metric({
   };
   return (
     <div className="rounded-lg border border-line bg-surface-2 px-3 py-2.5">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-3">{label}</p>
+      <p className="text-[10px] font-semibold text-ink-3">{label}</p>
       <p
         className={`num mt-1 text-[15px] font-semibold ${value === null ? "cursor-help text-ink-3" : accentText[tone]}`}
         title={value === null ? (reason ?? "Not measured upstream — stored NULL, not zero.") : undefined}

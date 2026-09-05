@@ -101,7 +101,7 @@ export default function Modal({
       >
         <header className="flex items-start justify-between gap-4 border-b border-line bg-surface-2 px-5 py-4">
           <div className="min-w-0">
-            <h2 className="truncate text-[15px] font-semibold tracking-tight text-ink">{title}</h2>
+            <h2 className="display truncate text-[17px] font-bold text-ink">{title}</h2>
             {subtitle && <div className="mt-0.5 text-xs text-ink-2">{subtitle}</div>}
           </div>
           <button

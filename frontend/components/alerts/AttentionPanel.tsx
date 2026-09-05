@@ -153,7 +153,7 @@ export default function AttentionPanel({
             <button
               type="button"
               onClick={() => setCollapsed((v) => !v)}
-              className="cursor-pointer rounded-md border border-line bg-surface px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.1em] text-ink-2 transition hover:text-ink"
+              className="cursor-pointer rounded-md border border-line bg-surface px-2 py-1 text-[11px] font-semibold tracking-[0.1em] text-ink-2 transition hover:text-ink"
             >
               {collapsed ? "Show" : "Hide"}
             </button>
@@ -177,7 +177,7 @@ export default function AttentionPanel({
                     }`}
                     aria-hidden
                   />
-                  <h3 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-2">
+                  <h3 className="text-[11px] font-semibold text-ink-2">
                     {ALERT_KIND_LABEL[group.kind]}
                   </h3>
                   <span className="num text-[11px] font-semibold text-ink-3">{group.items.length}</span>
@@ -186,7 +186,7 @@ export default function AttentionPanel({
                       type="button"
                       onClick={() => toggleKind(group.kind)}
                       aria-expanded={expanded}
-                      className="ml-auto cursor-pointer text-[11px] font-semibold uppercase tracking-[0.1em] text-accent transition hover:underline"
+                      className="ml-auto cursor-pointer text-[11px] font-semibold tracking-[0.1em] text-accent transition hover:underline"
                     >
                       {expanded ? "Collapse" : `Show all ${group.items.length}`}
                     </button>

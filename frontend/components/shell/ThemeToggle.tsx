@@ -51,7 +51,7 @@ export default function ThemeToggle() {
           type="button"
           onClick={() => setPreference("system")}
           title="Follow the operating system theme"
-          className="hidden cursor-pointer rounded-md border border-line px-1.5 py-1 text-[10px] font-semibold uppercase tracking-[0.1em] text-ink-3 transition hover:border-line-strong hover:text-ink-2 sm:block"
+          className="hidden cursor-pointer rounded-md border border-line px-1.5 py-1 text-[10px] font-semibold tracking-[0.1em] text-ink-3 transition hover:border-line-strong hover:text-ink-2 sm:block"
         >
           Auto
         </button>

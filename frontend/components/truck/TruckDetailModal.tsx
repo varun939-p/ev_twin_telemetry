@@ -98,7 +98,7 @@ export default function TruckDetailModal({
       <div className="grid grid-cols-1 gap-4 p-5 md:grid-cols-2 xl:grid-cols-3">
         {FIELD_GROUPS.map((group) => (
           <section key={group.id} className="rounded-lg border border-line bg-surface-2 p-3">
-            <h3 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-3">{group.title}</h3>
+            <h3 className="text-[11px] font-semibold text-ink-3">{group.title}</h3>
             <dl className="mt-2 space-y-1.5">
               {group.fields.map((field) => {
                 const info = meta.get(field);
@@ -143,21 +143,6 @@ export default function TruckDetailModal({
         ))}
       </div>
 
-      <div className="border-t border-line bg-surface-2 px-5 py-3">
-        <p className="text-[12px] leading-relaxed text-ink-2">
-          <span className="font-semibold text-ink">Payload integrity:</span> all 24 keys are rendered in
-          product-spec order straight from <span className="num">values</span>, with the data layer&apos;s own
-          <span className="num"> field_status</span> verdict beside each one. Nothing on this panel is derived,
-          rounded into existence, or defaulted to zero.
-          {vehicle.missing_fields.length > 0 && (
-            <>
-              {" "}
-              <span className="font-semibold text-ink">{vehicle.missing_fields.length}</span> channel
-              {vehicle.missing_fields.length === 1 ? " is" : "s are"} absent upstream on this frame.
-            </>
-          )}
-        </p>
-      </div>
     </Modal>
   );
 }

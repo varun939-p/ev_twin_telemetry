@@ -50,7 +50,7 @@ export function Pill({
   return (
     <span
       title={title}
-      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-[3px] text-[11px] font-semibold uppercase tracking-[0.08em] ${TONE_CLASS[tone]} ${className}`}
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-[3px] text-[11px] font-semibold ${TONE_CLASS[tone]} ${className}`}
     >
       {dot && <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${DOT_CLASS[tone]} ${pulse ? "pulse-soft" : ""}`} />}
       {children}
@@ -58,9 +58,17 @@ export function Pill({
   );
 }
 
+/**
+ * Status hues, matched 1:1 to the map's marker colours so a green dot in the
+ * table and a green pin on the map are the same fact.
+ *
+ * `charging` is INFO (steel indigo), not accent: copper is reserved for the
+ * active nav item and primary CTAs. If a routine fleet state also wore the
+ * accent, the accent would stop meaning "this is where you act".
+ */
 const STATUS_TONE: Record<AssetStatus, Tone> = {
   moving: "ok",
-  charging: "accent",
+  charging: "info",
   idle: "warn",
   unknown: "neutral",
 };

@@ -7,6 +7,7 @@ import LiveClock from "@/components/shell/LiveClock";
 import Sidebar, { NAV_ITEMS } from "@/components/shell/Sidebar";
 import ThemeToggle from "@/components/shell/ThemeToggle";
 import { Pill } from "@/components/ui/Pill";
+import type { TelemetrySource } from "@/lib/trusted-telemetry";
 
 /**
  * Application shell: rail + top bar + content column.
@@ -23,10 +24,19 @@ export default function AppShell({
   children,
   feedAgeLabel,
   frameCount,
+  measuredChannels,
+  source,
+  sourceNote,
 }: {
   children: ReactNode;
   feedAgeLabel: string;
   frameCount: number;
+  /** How many of the 24 channels the upstream is currently measuring. */
+  measuredChannels: number;
+  /** Whether this render is live control-plane data or the committed snapshot. */
+  source: TelemetrySource;
+  /** Why we fell back, when we did. Never hidden from the operator. */
+  sourceNote: string | null;
 }) {
   const pathname = usePathname();
   // The drawer closes from `onNavigate` (fired by every nav Link and by the
@@ -62,13 +72,24 @@ export default function AppShell({
           </nav>
 
           <div className="ml-auto flex items-center gap-2">
+            {/* Provenance, stated plainly. "Live" means this render came from
+                the control plane inside the revalidate window; "Snapshot"
+                means the upstream could not be reached and carries the reason
+                in its tooltip. An operator must never have to guess whether
+                what they are looking at is current. */}
             <Pill
-              tone="neutral"
+              tone={source === "live" ? "ok" : "warn"}
               dot
+              pulse={source === "live"}
               className="hidden md:inline-flex"
-              title={`${frameCount} validated frames in the loaded document. Freshest observation: ${feedAgeLabel}.`}
+              title={
+                source === "live"
+                  ? `Live from the control plane. ${frameCount} validated frames, ${measuredChannels} of 24 channels measured. Freshest observation: ${feedAgeLabel}.`
+                  : `Showing the committed snapshot — ${sourceNote ?? "upstream unavailable"} ${frameCount} validated frames, ${measuredChannels} of 24 channels measured.`
+              }
             >
-              <span className="num">{frameCount}</span> frames · {feedAgeLabel}
+              {source === "live" ? "Live" : "Snapshot"} · <span className="num">{frameCount}</span> frames ·{" "}
+              <span className="num">{measuredChannels}</span>/24 · {feedAgeLabel}
             </Pill>
             <LiveClock />
             <ThemeToggle />

@@ -15,6 +15,16 @@
 
 /* ------------------------------------------------------------------ types */
 
+/**
+ * Where a rendered document came from.
+ *
+ * Declared HERE rather than in `lib/telemetry-source.ts` because the shell (a
+ * client component) needs the type, and that module is `server-only` — a
+ * type-only import across that boundary erases at compile time but is exactly
+ * the kind of thing that breaks the day someone makes it a value import.
+ */
+export type TelemetrySource = "live" | "snapshot";
+
 /** Per-parameter verdict written by the data layer. Anything != "measured" is
  *  rendered disabled.  Values are exhaustive -- see `field_status_legend`. */
 export type FieldStatus = "measured" | "absent_upstream" | "null_upstream" | "field_error";
@@ -319,10 +329,10 @@ export function normalizeDocument(doc: TrustedTelemetryDocument): TrustedTelemet
 
 /** Human copy for each non-measured verdict, mirrored from `field_status_legend`. */
 export const STATUS_COPY: Record<FieldStatus, { short: string; detail: string }> = {
-  measured: { short: "LIVE", detail: "Value present and passed schema validation." },
-  absent_upstream: { short: "AWAITING UPSTREAM", detail: "The upstream API never sent this key. Quarantined as NULL by the data layer -- not a zero." },
-  null_upstream: { short: "NO READING", detail: "The key arrived with a null/empty value. Stored NULL by the data layer -- not a zero." },
-  field_error: { short: "REJECTED", detail: "The value failed a range/type gate and was stored NULL. See the field error detail." },
+  measured: { short: "Live", detail: "Value present and passed schema validation." },
+  absent_upstream: { short: "Awaiting upstream", detail: "The upstream API never sent this key. Quarantined as NULL by the data layer -- not a zero." },
+  null_upstream: { short: "No reading", detail: "The key arrived with a null/empty value. Stored NULL by the data layer -- not a zero." },
+  field_error: { short: "Rejected", detail: "The value failed a range/type gate and was stored NULL. See the field error detail." },
 };
 
 /* --------------------------------------------------------------- selectors */

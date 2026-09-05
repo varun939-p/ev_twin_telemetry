@@ -29,7 +29,7 @@ export function Select<T extends string>({
 }) {
   return (
     <label className={`flex min-w-0 flex-col gap-1 ${className}`}>
-      <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-3">{label}</span>
+      <span className="text-[10px] font-semibold text-ink-3">{label}</span>
       <span className="relative block">
         <select
           aria-label={label}
@@ -69,7 +69,7 @@ export function SegmentedControl<T extends string>({
 }) {
   return (
     <div className={`flex min-w-0 flex-col gap-1 ${className}`}>
-      <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-3">{label}</span>
+      <span className="text-[10px] font-semibold text-ink-3">{label}</span>
       <div role="group" aria-label={label} className="flex overflow-hidden rounded-lg border border-line bg-surface">
         {options.map((o, i) => {
           const active = o.value === value;

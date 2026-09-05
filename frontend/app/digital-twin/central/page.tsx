@@ -1,10 +1,15 @@
-import { TRUSTED_DOC } from "@/lib/document";
+import { loadTelemetry } from "@/lib/document";
 
 import CentralView from "./central-view";
 
 export const metadata = { title: "Central Dashboard" };
 
-/** Server component — the validated document is read here and passed down. */
-export default function CentralPage() {
-  return <CentralView data={TRUSTED_DOC} />;
+/**
+ * Server component. Awaits the live document (see `lib/telemetry-source.ts`)
+ * and streams it down as props, so the payload never ships as a client import
+ * and the credentials never leave the server.
+ */
+export default async function CentralPage() {
+  const { doc } = await loadTelemetry();
+  return <CentralView data={doc} />;
 }

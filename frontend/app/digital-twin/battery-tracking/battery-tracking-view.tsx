@@ -101,7 +101,6 @@ export default function BatteryTrackingView({ data }: { data: TrustedTelemetryDo
 
       <PageHeading
         title="Battery Tracking"
-        subtitle="Packs are the tracked asset — carriers are where they happen to be mounted."
         actions={
           <div className="flex flex-wrap items-center gap-1.5">
             {criticalCount > 0 ? (
@@ -131,16 +130,7 @@ export default function BatteryTrackingView({ data }: { data: TrustedTelemetryDo
 
       {/* 4 — register ---------------------------------------------------- */}
       <Card>
-        <CardHeader
-          eyebrow="Asset register"
-          title="Battery packs"
-          description="Six vital fields per pack. Carrier IDs link back to Truck Telemetry, where the map flies to that truck at a readable zoom."
-          actions={
-            <span className="text-[12px] text-ink-3">
-              Rows tinted red are under the {SOC_CRITICAL}% dispatch reserve.
-            </span>
-          }
-        />
+        <CardHeader eyebrow="Asset register" title="Battery packs" />
         <Hairline />
         <BatteryTable rows={rows} />
       </Card>

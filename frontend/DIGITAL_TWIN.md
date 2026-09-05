@@ -206,7 +206,42 @@ offers North·42 / West·41 / East·15 / South·2 and the State select offers th
 were empty. Counts are computed on the **unfiltered** fleet so options never
 vanish mid-drill-down.
 
-### 4.7 The 24-parameter contract
+### 4.7 Live telemetry pipeline
+
+```
+vendor v1 API  ──►  main_parser.py  ──►  FastAPI            ──►  Next server        ──►  browser
+(secret_key +       validates every     GET /api/telemetry/     lib/telemetry-          props only
+ passcode)          frame, writes       trusted                 source.ts
+                    the document
+```
+
+`lib/telemetry-source.ts` is the ONLY module that knows where telemetry comes
+from. It is marked `server-only`, so importing it from a client component is a
+build error rather than a leaked fleet credential — no telemetry variable is
+`NEXT_PUBLIC_*` and the browser never talks to the vendor.
+
+What it does per render (see `.env.example` for every variable):
+
+1. exchanges `secret_key` + `passcode` for a 59-minute bearer token, cached
+   in-process and retired 120s early, with concurrent exchanges de-duplicated;
+2. fetches the validated document with an explicit abort budget;
+3. structurally gates the payload, so a proxy error page or an HTML login
+   redirect can never render as a fleet of zero trucks;
+4. runs it through the same `normalizeDocument` the snapshot goes through;
+5. on **any** failure returns the committed snapshot tagged
+   `source: "snapshot"` with the reason.
+
+The header chip states which of the two you are looking at — `Live · 100
+frames · 10/24 · 42 h old` or `Snapshot`, with the failure reason in its
+tooltip. An operator never has to guess whether the screen is current.
+
+The segment is `force-dynamic`. Without it the rendering mode would depend on
+whether credentials happen to be set (the uncached token POST opts into
+dynamic rendering), which is the classic "works in staging, differs in prod"
+trap. Data freshness still comes from the fetch-level `revalidate`, so every
+concurrent viewer shares one upstream request.
+
+### 4.8 The 24-parameter contract
 
 `TelemetryParam` is derived from the `PARAM_ORDER` tuple, and `TelemetryValues`
 is `Record<TelemetryParam, ParamValue>` — all 24 keys, required. A typo is a
@@ -282,7 +317,12 @@ Two decisions worth flagging at review:
 
 ## 8. Known gaps
 
-* Interaction is now verified in a real headless Chromium, not just by SSR
+* Verified end to end against a stand-in control plane: unlocking
+  `battery_total_v` and `charging_status` upstream moved the header chip from
+  8/24 to 10/24 and flipped "Batteries charging right now" from *Awaiting
+  upstream* to **20**, with no frontend change. "Current running load"
+  correctly stayed `—`, because it also needs `battery_current_a`.
+* Interaction is verified in a real headless Chromium, not just by SSR
   output: sidebar route set, Know More modal (24/24 parameters + close), the
   Battery-ID and canvas deep links, dataset-derived dropdown contents, and the
   camera ladder (fleet z5 → cluster z9 → asset z11 → Exit Live View z5).

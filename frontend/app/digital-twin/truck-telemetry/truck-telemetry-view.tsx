@@ -96,13 +96,12 @@ export default function TruckTelemetryView({ data }: { data: TrustedTelemetryDoc
     <div className="space-y-4">
       <PageHeading
         title="Truck Telemetry"
-        subtitle="Carriers on the live network — position, motion state and the pack each one is carrying."
         actions={
           <div className="flex flex-wrap items-center gap-1.5">
             <Pill tone="ok" dot pulse>
               {statusCounts.moving} moving
             </Pill>
-            <Pill tone="accent" dot>
+            <Pill tone="info" dot>
               {statusCounts.charging} charging
             </Pill>
             <Pill tone="warn" dot>
@@ -115,17 +114,6 @@ export default function TruckTelemetryView({ data }: { data: TrustedTelemetryDoc
 
       {/* 1 — MAP, absolute top, full width ------------------------------- */}
       <Card>
-        <CardHeader
-          eyebrow="Live geography"
-          title="Real-time carrier map"
-          description="Every pin is a measured GPS fix coloured by live motion state. Hover a pin to highlight its row below; click a city cluster to filter the table to that state and city. Wheel, +/− and drag all zoom — no camera move goes past a readable radius."
-          actions={
-            <Pill tone="neutral" title="Zoom ceiling applied to every programmatic camera move">
-              max drill-in z{ZOOM.asset}
-            </Pill>
-          }
-        />
-        <Hairline />
         <div className="p-3">
           <FleetMap points={points} clusters={clusters} heightClass="h-[440px]" />
           <p className="mt-2 px-1 text-[12px] text-ink-3">
@@ -163,7 +151,6 @@ export default function TruckTelemetryView({ data }: { data: TrustedTelemetryDoc
           <CardHeader
             eyebrow="Deployment candidates"
             title="Carrier fleet"
-            description="Six vital fields per row. The full 24-parameter payload for any carrier is one click away in [Know More]."
             actions={
               <span className="text-[12px] text-ink-3">
                 Sorted rows keep unmeasured values at the bottom — a null is unknown, not zero.
@@ -178,7 +165,7 @@ export default function TruckTelemetryView({ data }: { data: TrustedTelemetryDoc
       {/* 5 — carriers with no fix ---------------------------------------- */}
       {unlocatable.length > 0 && (
         <Card padded>
-          <h3 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-3">
+          <h3 className="text-[11px] font-semibold text-ink-3">
             Unlocatable carriers ({unlocatable.length})
           </h3>
           <p className="mt-1 text-[12px] text-ink-2">

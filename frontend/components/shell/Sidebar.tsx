@@ -105,7 +105,7 @@ export default function Sidebar({ open, onNavigate }: { open: boolean; onNavigat
           </span>
           <div className="leading-tight">
             <p className="text-[13px] font-semibold tracking-tight text-ink">Twin Ops</p>
-            <p className="text-[10px] uppercase tracking-[0.14em] text-ink-3">Proprietary EMS</p>
+            <p className="text-[10px] text-ink-3">Proprietary EMS</p>
           </div>
         </div>
 
@@ -118,7 +118,7 @@ export default function Sidebar({ open, onNavigate }: { open: boolean; onNavigat
               groupActive ? "text-ink" : "text-ink-2"
             }`}
           >
-            <span className="text-[12px] font-semibold uppercase tracking-[0.14em]">Digital Twin</span>
+            <span className="text-[12px] font-semibold">Digital Twin</span>
             <svg
               viewBox="0 0 12 12"
               className={`h-3 w-3 text-ink-3 transition-transform ${expanded ? "" : "-rotate-90"}`}

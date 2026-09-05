@@ -54,7 +54,7 @@ function SortHeader({
       <button
         type="button"
         onClick={onClick}
-        className={`inline-flex cursor-pointer items-center gap-1 text-[11px] font-semibold uppercase tracking-[0.12em] transition ${
+        className={`inline-flex cursor-pointer items-center gap-1 text-[11px] font-semibold transition ${
           active ? "text-accent" : "text-ink-3 hover:text-ink-2"
         }`}
       >
@@ -246,10 +246,10 @@ export default function TruckTable({
             <SortHeader label="SOC" align="right" active={sort.key === "soc"} dir={sort.dir} onClick={() => toggle("soc")} />
             <SortHeader label="Residual" align="right" active={sort.key === "residual"} dir={sort.dir} onClick={() => toggle("residual")} />
             <SortHeader label="Odometer" align="right" active={sort.key === "odometer"} dir={sort.dir} onClick={() => toggle("odometer")} />
-            <th scope="col" className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-3">
+            <th scope="col" className="px-3 py-2 text-left text-[11px] font-semibold text-ink-3">
               Battery
             </th>
-            <th scope="col" className="px-3 py-2 text-right text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-3">
+            <th scope="col" className="px-3 py-2 text-right text-[11px] font-semibold text-ink-3">
               Detail
             </th>
           </tr>

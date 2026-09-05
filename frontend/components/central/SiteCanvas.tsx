@@ -35,7 +35,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
-import { Pill } from "@/components/ui/Pill";
+import { ModelBadge, Pill } from "@/components/ui/Pill";
 import type { SwapStation } from "@/lib/fleet";
 import { ROAD_DOCK_T, SITE_ASSETS, simulateSite, type InboundSeed, type PackSeed } from "@/lib/site-model";
 
@@ -270,12 +270,18 @@ export default function SiteCanvas({
   const stationBox = isoBox(ANCHOR.station, 150, 92, 104);
   const dgBox = isoBox(ANCHOR.dg, 62, 46, 52);
 
+  /**
+   * Bay roof tint. Uses the SAME hues as the status pills and the map markers
+   * (`charging` = steel indigo, `full` = desaturated green), so one colour
+   * means one thing everywhere in the product. Copper is deliberately absent:
+   * it is reserved for the active nav item and primary CTAs.
+   */
   const bayGlow = (i: number) => {
     const bay = site.bays[i];
     if (!bay) return "var(--ink-3)";
     if (bay.status === "vacant") return "var(--ink-3)";
     if (bay.status === "full") return "var(--ok)";
-    return "var(--accent)";
+    return "var(--info)";
   };
 
   return (
@@ -377,7 +383,7 @@ export default function SiteCanvas({
             strokeLinecap="round"
           />
           <text x={ANCHOR.pylon[0]} y={ANCHOR.pylon[1] - 52} textAnchor="middle" style={{ fontSize: 11, fontWeight: 600 }} className="fill-[var(--ink-2)]">
-            GRID {site.grid.importKw} kW
+            Grid {site.grid.importKw} kW
           </text>
         </g>
 
@@ -511,7 +517,7 @@ export default function SiteCanvas({
                 </>
               )}
               <text x={c[0]} y={c[1] + 26} textAnchor="middle" style={{ fontSize: 10, fontWeight: 600 }} className="fill-[var(--ink-3)]">
-                BAY {bay.index}
+                Bay {bay.index}
               </text>
               {hovered && (
                 <text x={c[0]} y={c[1] - 58} textAnchor="middle" style={{ fontSize: 10, fontWeight: 600 }} className="fill-[var(--accent)]">
@@ -556,7 +562,7 @@ export default function SiteCanvas({
                 );
               })}
               <text x={c[0]} y={c[1] + 28} textAnchor="middle" style={{ fontSize: 10, fontWeight: 600 }} className="fill-[var(--ink-3)]">
-                {charger.label.toUpperCase().replace("DUAL-GUN ", "")}
+                {charger.label.replace("Dual-gun ", "")}
               </text>
             </g>
           );
@@ -579,7 +585,7 @@ export default function SiteCanvas({
             </>
           )}
           <text x={ANCHOR.dg[0]} y={ANCHOR.dg[1] + 44} textAnchor="middle" style={{ fontSize: 10, fontWeight: 600 }} className="fill-[var(--ink-3)]">
-            DG {site.dg.running ? `${site.dg.loadKw} kW` : "STANDBY"}
+            DG {site.dg.running ? `${site.dg.loadKw} kW` : "Standby"}
           </text>
         </g>
 
@@ -632,6 +638,13 @@ export default function SiteCanvas({
       {/* ----------------------------------------------------- overlays */}
       <div className="pointer-events-none absolute inset-0">
         <div className="absolute left-3 top-3 flex flex-wrap items-center gap-2">
+          {/* The card header that used to carry this was removed with the
+              explanatory copy. The badge stays: bay charge progression, gun
+              power, crane motion and DG state are MODELLED by lib/site-model.ts
+              (the vehicle feed publishes no facility channels), and a surface
+              that mixes modelled and measured data has to say so. It is a
+              4-word pill with the detail in its tooltip, not a paragraph. */}
+          <ModelBadge />
           <Pill tone={site.dock.phase === "clear" ? "neutral" : "accent"} dot pulse={site.dock.phase !== "clear"}>
             {site.dock.caption}
           </Pill>
@@ -649,7 +662,7 @@ export default function SiteCanvas({
 
         <div className="absolute bottom-3 left-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-line bg-surface/90 px-2.5 py-1.5 backdrop-blur-sm">
           {[
-            ["var(--accent)", "charging"],
+            ["var(--info)", "charging"],
             ["var(--ok)", "full / delivering"],
             ["var(--warn)", "DG running"],
             ["var(--ink-3)", "vacant / idle"],

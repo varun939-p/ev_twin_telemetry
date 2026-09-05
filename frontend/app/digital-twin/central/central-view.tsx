@@ -24,7 +24,7 @@ import { useMemo, useState } from "react";
 
 import SiteCanvas from "@/components/central/SiteCanvas";
 import { KpiCard } from "@/components/ui/Metric";
-import { ModelBadge, Pill } from "@/components/ui/Pill";
+import { Pill } from "@/components/ui/Pill";
 import { Card, CardHeader, Hairline, PageHeading } from "@/components/ui/Surface";
 import { SegmentedControl } from "@/components/ui/Field";
 import {
@@ -97,7 +97,6 @@ export default function CentralView({ data }: { data: TrustedTelemetryDocument }
     <div className="space-y-4">
       <PageHeading
         title="Central Dashboard"
-        subtitle="One site, end to end — road, swap station, chargers and backup generation, wired to the live fleet."
         actions={
           <SegmentedControl
             label="Site"
@@ -113,7 +112,7 @@ export default function CentralView({ data }: { data: TrustedTelemetryDocument }
         <KpiCard
           label="Carriers inbound to this hub"
           value={inbound.length}
-          tone="accent"
+          tone="info"
           hint={
             inbound[0]?.etaMinutes != null
               ? `Next arrival ${formatEta(inbound[0].etaMinutes)} · ${inbound[0].distanceKm} km out`
@@ -143,7 +142,7 @@ export default function CentralView({ data }: { data: TrustedTelemetryDocument }
             so it lands here on the fleet-wide overview rather than being lost
             with the page that used to host it. */}
         <KpiCard
-          label="Median Frame Age"
+          label="Median frame age"
           value={medianAgeHours === null ? null : Number(medianAgeHours.toFixed(1))}
           unit=" h"
           tone={medianAgeHours !== null && medianAgeHours > 24 ? "warn" : "ok"}
@@ -154,23 +153,8 @@ export default function CentralView({ data }: { data: TrustedTelemetryDocument }
 
       {/* 2 — the site canvas -------------------------------------------- */}
       <Card>
-        <CardHeader
-          eyebrow="Live site canvas"
-          title={`${station?.name ?? "Facility"} — interactive twin`}
-          description="Click any asset to open its telemetry page. Energy flow lines animate with the modelled load; bays glow green as wattage flows, and a carrier docks whenever a swap transaction is active."
-          actions={<ModelBadge />}
-        />
-        <Hairline />
         <div className="p-2 sm:p-3">
           <SiteCanvas packs={sitePacks} inbound={inbound} station={station} />
-        </div>
-        <div className="border-t border-line bg-surface-2 px-4 py-2.5">
-          <p className="text-[12px] leading-relaxed text-ink-2">
-            <span className="font-semibold text-ink">Provenance:</span> bay occupants, their SOC floor and every
-            inbound ETA come from validated vehicle telemetry. Charge progression, gun power, crane motion and DG
-            state come from <span className="num">lib/site-model.ts</span> — the vehicle feed publishes no facility
-            channels. Point that module at a site controller and this canvas becomes fully live without a UI change.
-          </p>
         </div>
       </Card>
 
@@ -201,7 +185,7 @@ export default function CentralView({ data }: { data: TrustedTelemetryDocument }
                       {truck.soc === null ? "SOC —" : `SOC ${truck.soc}%`}
                     </span>
                     <span className="num text-[12px] text-ink-3">{truck.distanceKm ?? "—"} km</span>
-                    <Pill tone="accent">{formatEta(truck.etaMinutes) ?? "ETA —"}</Pill>
+                    <Pill tone="info">{formatEta(truck.etaMinutes) ?? "ETA —"}</Pill>
                   </Link>
                 </li>
               ))}
