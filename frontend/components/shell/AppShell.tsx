@@ -75,24 +75,27 @@ export default function AppShell({
           </nav>
 
           <div className="ml-auto flex items-center gap-2">
-            {/* Provenance, stated plainly. "Live" means this render came from
-                the control plane inside the revalidate window; "Snapshot"
-                means the upstream could not be reached and carries the reason
-                in its tooltip. An operator must never have to guess whether
-                what they are looking at is current. */}
+            {/* Provenance, stated plainly — three states, never a guess.
+                "Live" means the control plane answered THIS render (proved by
+                an uncached health probe, because the document itself may have
+                come from the stale-while-revalidate cache). "Cached" means the
+                feed is down but the last good document is still on screen.
+                "Snapshot" means we are on the committed file. An operator must
+                never have to wonder which of the three they are looking at. */}
             <Pill
-              tone={source === "live" ? "ok" : "warn"}
+              tone={source === "live" ? "ok" : source === "cached" ? "warn" : "neutral"}
               dot
               pulse={source === "live"}
               className="hidden md:inline-flex"
               title={
                 source === "live"
                   ? `Live from the control plane. ${frameCount} validated frames, ${measuredChannels} of 24 channels measured. Freshest observation: ${feedAgeLabel}.`
-                  : `Showing the committed snapshot — ${sourceNote ?? "upstream unavailable"} ${frameCount} validated frames, ${measuredChannels} of 24 channels measured.`
+                  : `${sourceNote ?? "Upstream unavailable."} ${frameCount} validated frames, ${measuredChannels} of 24 channels measured. Freshest observation: ${feedAgeLabel}.`
               }
             >
-              {source === "live" ? "Live" : "Snapshot"} · <span className="num">{frameCount}</span> frames ·{" "}
-              <span className="num">{measuredChannels}</span>/24 · {feedAgeLabel}
+              {source === "live" ? "Live" : source === "cached" ? "Cached" : "Snapshot"} ·{" "}
+              <span className="num">{frameCount}</span> frames · <span className="num">{measuredChannels}</span>/24 ·{" "}
+              {feedAgeLabel}
             </Pill>
             <LiveClock />
           </div>

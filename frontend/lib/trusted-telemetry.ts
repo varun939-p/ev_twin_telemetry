@@ -23,7 +23,7 @@
  * type-only import across that boundary erases at compile time but is exactly
  * the kind of thing that breaks the day someone makes it a value import.
  */
-export type TelemetrySource = "live" | "snapshot";
+export type TelemetrySource = "live" | "cached" | "snapshot";
 
 /** Per-parameter verdict written by the data layer. Anything != "measured" is
  *  rendered disabled.  Values are exhaustive -- see `field_status_legend`. */

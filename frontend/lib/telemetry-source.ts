@@ -44,6 +44,7 @@ interface SourceConfig {
   baseUrl: string;
   docPath: string;
   authPath: string;
+  healthPath: string;
   secretKey: string;
   passcode: string;
   revalidateSeconds: number;
@@ -59,6 +60,7 @@ function readConfig(): SourceConfig {
     baseUrl: (env.TELEMETRY_API_URL ?? env.BACKEND_URL ?? "http://127.0.0.1:8000").replace(/\/+$/, ""),
     docPath: env.TELEMETRY_DOC_PATH ?? "/api/telemetry/trusted",
     authPath: env.TELEMETRY_AUTH_PATH ?? "/api/auth/api-token",
+    healthPath: env.TELEMETRY_HEALTH_PATH ?? "/health",
     secretKey: env.TELEMETRY_API_SECRET_KEY ?? "",
     passcode: env.TELEMETRY_API_PASSCODE ?? "",
     // How long a rendered page may serve a cached document. 30s is well
@@ -176,6 +178,43 @@ function assertDocumentShape(payload: unknown): asserts payload is TrustedTeleme
   }
 }
 
+/* --------------------------------------------------------- liveness probe */
+
+/**
+ * Is the control plane answering RIGHT NOW?
+ *
+ * This exists because the document fetch cannot answer that question. It
+ * carries `next: { revalidate }`, and Next's data cache is
+ * stale-while-revalidate: when a revalidation fails it replays the last good
+ * response, so `res.ok` is true and the code path is indistinguishable from a
+ * successful network call. Measured: with the control plane hard down for 65
+ * seconds the dashboard still reported "Live from the control plane".
+ *
+ * Resilience was never the problem — serving the last good document through a
+ * blip is exactly right. The problem was the LABEL. An operations dashboard
+ * that says "Live" while the feed is dead is worse than one that says nothing,
+ * because someone will make a dispatch decision on it.
+ *
+ * So liveness is probed separately and explicitly:
+ *   * `cache: "no-store"` — never satisfied from the data cache, by design;
+ *   * a tight timeout, because this must not add latency to a good render;
+ *   * it hits `/health`, a few bytes, not the 260 KB document;
+ *   * it runs INSIDE the same serverless invocation, so it adds no extra
+ *     function calls — only one small round trip we already have a socket for.
+ */
+async function probeLiveness(cfg: SourceConfig): Promise<boolean> {
+  try {
+    const res = await fetchWithTimeout(
+      `${cfg.baseUrl}${cfg.healthPath}`,
+      { cache: "no-store", headers: { Accept: "application/json" } },
+      Math.min(cfg.timeoutMs, 2_500),
+    );
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 /* ------------------------------------------------------------------ result */
 
 export type { TelemetrySource };
@@ -184,7 +223,7 @@ export interface TelemetrySnapshot {
   doc: TrustedTelemetryDocument;
   /** Where this document came from — surfaced in the shell, never hidden. */
   source: TelemetrySource;
-  /** Operator-readable reason, non-null whenever `source === "snapshot"`. */
+  /** Operator-readable reason. Non-null unless `source === "live"`. */
   note: string | null;
   /** Epoch ms the document entered this process. */
   fetchedAt: number;
@@ -255,10 +294,21 @@ export async function loadTelemetry(): Promise<TelemetrySnapshot> {
     const payload: unknown = await res.json();
     assertDocumentShape(payload);
 
+    // The document may have come from the data cache rather than the wire, so
+    // ask the control plane directly whether it is up before claiming "Live".
+    const alive = await probeLiveness(cfg);
+
     // The same normaliser the snapshot goes through, so a live document and a
     // committed one are indistinguishable to every component downstream and
     // all 24 keys are guaranteed present whatever the vendor sent.
-    return { doc: normalizeDocument(payload), source: "live", note: null, fetchedAt: Date.now() };
+    return {
+      doc: normalizeDocument(payload),
+      source: alive ? "live" : "cached",
+      note: alive
+        ? null
+        : "Control plane is not responding. Showing the last document it served — these readings are as old as the outage.",
+      fetchedAt: Date.now(),
+    };
   } catch (err) {
     const reason =
       err instanceof Error && err.name === "AbortError"
