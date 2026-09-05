@@ -243,20 +243,49 @@ docs/               ARCHITECTURE.md — read this
 
 ### Frontend layout
 
-All dashboard components live under `frontend/components/telemetry/`; pages and
-their client views live under `frontend/app/`. The `@/` alias resolves to
-`frontend/` (see `frontend/tsconfig.json`), so an import of
-`@/components/telemetry/ViewNav` must find
-`frontend/components/telemetry/ViewNav.tsx`.
+The dashboard is the six-route **Digital Twin** product. The `@/` alias
+resolves to `frontend/` (see `frontend/tsconfig.json`).
 
-The Trucks / Batteries geo map renders **real surveyed geography**:
-`frontend/data/india_states.json` is a simplified extract (36 state/UT
+```
+app/digital-twin/central/            isometric site canvas (road, swap station, chargers, DG)
+app/digital-twin/truck-telemetry/    live carrier map + filter bar + 6-field table + 24-param modal
+app/digital-twin/battery-tracking/   pack register, 4 KPIs, SOH/SOC/cycle analytics
+app/digital-twin/swap-station/       DRAFT — bay board, ETA queue, catchment radar
+app/digital-twin/chargers/           DRAFT — dual-gun placeholder
+app/digital-twin/dg/                 DRAFT — backup generator placeholder
+
+components/shell/     AppShell, Sidebar, ThemeToggle, LiveClock
+components/map/       FleetMap (SSR-safe wrapper) -> LeafletFleetMap (client only)
+components/truck/     TruckFilterBar, TruckTable, TruckDetailModal
+components/battery/   BatteryKpiStrip, BatteryFilterBar, BatteryTable, BatteryAnalytics
+components/central/   SiteCanvas (pure SVG isometric scene)
+components/alerts/    AttentionPanel (grouped "Need Attention" banner)
+components/ui/        Surface, Pill, Modal, Field, InfoTip, Metric, DraftNotice
+
+lib/store.ts          Zustand store: filters + bi-directional hover/selection pointer
+lib/fleet.ts          filter model, regions, SOC brackets, swap stations, ETA maths
+lib/fleet-metrics.ts  status derivation, KPI coverage types, alerts, table projections
+lib/analytics.ts      chart series builders (Recharts)
+lib/site-model.ts     the ONLY modelled data in the app — facility simulation
+lib/theme.ts(x)       dark/light controller (useSyncExternalStore, no FOUC)
+```
+
+The carrier map is **Leaflet + CARTO raster tiles** (`components/map/`), loaded
+through `next/dynamic` with `ssr: false` because Leaflet touches `window` at
+import time. Tiles are themed with the dashboard. If the tile CDN is
+unreachable, the map falls back to a vector basemap drawn from
+`frontend/data/india_states.json` — a simplified extract (36 state/UT
 MultiPolygons, ~19k points) of the MIT-licensed `states_india.geojson`
 (© 2024 Mr Akshay Shinde, https://github.com/mraxays/india-states.geojson —
-license text in `frontend/data/india_states.LICENSE`). `lib/india-geo.ts`
-compiles it once into degree-space SVG paths; the camera rides a single group
-transform. Fleet markers are measured GPS fixes only, coloured by live motion
-state, and clicking one selects the asset in the list (and vice-versa) through
-the global `FilterContext`.
+license text in `frontend/data/india_states.LICENSE`). That file is imported
+lazily, only on the tile-error path.
+
+Markers are measured GPS fixes only, coloured by live motion state. Hovering a
+pin highlights its table row and vice-versa; both directions publish to the
+same pointer channel in `lib/store.ts`, which also carries the cross-page
+filter state and the `?vehicle_id=` / `?battery_id=` deep links.
+
+Legacy `/trucks` and `/batteries` are 308-redirected to their `/digital-twin/*`
+successors in `next.config.mjs`.
 
 Module-by-module explanation in `docs/ARCHITECTURE.md` §2.

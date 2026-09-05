@@ -24,7 +24,19 @@ import {
 
 export type EvFilter = "all" | "ev" | "non-ev";
 
+/** SOC brackets exposed on the Battery Tracking filter bar. */
+export type SocBracket = "all" | "gt20" | "gt50" | "gt80";
+
+export const SOC_BRACKETS: ReadonlyArray<{ id: SocBracket; label: string; min: number }> = [
+  { id: "all", label: "All SOC", min: -1 },
+  { id: "gt20", label: "SOC > 20%", min: 20 },
+  { id: "gt50", label: "SOC > 50%", min: 50 },
+  { id: "gt80", label: "SOC > 80%", min: 80 },
+];
+
 export interface GeoSelection {
+  /** Level 0 -- macro region ("West", "South", ...), or null for all. */
+  region: string | null;
   /** Level 1 -- any of `INDIA_STATES`, or null for "All states". */
   state: string | null;
   /** Level 2 -- a city within the chosen state, or null for "All cities". */
@@ -60,6 +72,35 @@ export interface FilterState {
   ev: EvFilter;
   geo: GeoSelection;
   focus: FocusSelection | null;
+  /** Battery Tracking only -- narrows packs by charge bracket. */
+  soc: SocBracket;
+  /** Battery Tracking only -- packs whose nearest hub is this station. */
+  stationId: string | null;
+}
+
+/** Macro regions for the Level-0 filter.  A state maps to exactly one. */
+export const REGIONS: readonly string[] = ["North", "West", "Central", "South", "East", "North-East"];
+
+const REGION_OF_STATE: Readonly<Record<string, string>> = {
+  "Delhi": "North", "Haryana": "North", "Punjab": "North", "Himachal Pradesh": "North",
+  "Uttarakhand": "North", "Uttar Pradesh": "North", "Rajasthan": "North",
+  "Maharashtra": "West", "Gujarat": "West", "Goa": "West",
+  "Madhya Pradesh": "Central", "Chhattisgarh": "Central",
+  "Karnataka": "South", "Kerala": "South", "Tamil Nadu": "South", "Telangana": "South",
+  "Andhra Pradesh": "South",
+  "Odisha": "East", "West Bengal": "East", "Bihar": "East", "Jharkhand": "East", "Sikkim": "East",
+  "Assam": "North-East", "Arunachal Pradesh": "North-East", "Manipur": "North-East",
+  "Meghalaya": "North-East", "Mizoram": "North-East", "Nagaland": "North-East", "Tripura": "North-East",
+};
+
+export function regionOfState(state: string | null): string | null {
+  return state ? (REGION_OF_STATE[state] ?? null) : null;
+}
+
+/** States inside a macro region, for the cascading Region -> State dropdown. */
+export function statesInRegion(region: string | null): readonly string[] {
+  if (!region) return INDIA_STATES;
+  return INDIA_STATES.filter((s) => REGION_OF_STATE[s] === region);
 }
 
 /** The 28 Indian states + NCT Delhi = 29, for the Level-1 cascade. */
@@ -179,16 +220,37 @@ export function applyVehicleFilters(vehicles: TrustedVehicle[], filters: FilterS
     if (filters.ev === "ev" && !isEvVehicle(v)) return false;
     if (filters.ev === "non-ev" && isEvVehicle(v)) return false;
 
-    if (filters.geo.state) {
+    if (filters.geo.region || filters.geo.state) {
       const place = vehicleCity(v);
-      if (!place || place.state !== filters.geo.state) return false;
+      if (!place) return false;
+      if (filters.geo.region && regionOfState(place.state) !== filters.geo.region) return false;
+      if (filters.geo.state && place.state !== filters.geo.state) return false;
       if (filters.geo.city && place.name !== filters.geo.city) return false;
     }
+
+    if (filters.soc && filters.soc !== "all") {
+      const soc = numericValue(v, "soc");
+      const min = SOC_BRACKETS.find((b) => b.id === filters.soc)?.min ?? -1;
+      // An unmeasured SOC is not "> 20%" -- it is unknown, so it drops out of
+      // a bracket filter rather than being silently treated as 0.
+      if (soc === null || soc <= min) return false;
+    }
+
+    if (filters.stationId && nearestStation(v)?.id !== filters.stationId) return false;
 
     if (filters.focus && !filters.focus.vehicleIds.includes(v.vehicle_id)) return false;
     return true;
   });
 }
+
+/** The neutral filter -- exported so callers can build partial scopes safely. */
+export const EMPTY_FILTERS: FilterState = {
+  ev: "all",
+  geo: { region: null, state: null, city: null },
+  focus: null,
+  soc: "all",
+  stationId: null,
+};
 
 /** Per-state asset counts so the cascade can badge real coverage. */
 export function stateCounts(vehicles: TrustedVehicle[]): Record<string, number> {
@@ -207,15 +269,42 @@ export const PACK_CAPACITY_KWH = 282;
 export const CONSUMPTION_KWH_PER_KM = 1.2;
 export const AVG_CRUISE_KMH = 40;
 
-/** The two live swap hubs; destination is the nearer one to the truck. */
-export const SWAP_STATIONS: ReadonlyArray<{ name: string; state: string; lat: number; lon: number }> = [
-  { name: "Pune Swap Hub", state: "Maharashtra", lat: 18.5204, lon: 73.8567 },
-  { name: "Raurkela Swap Hub", state: "Odisha", lat: 22.2601, lon: 84.83 },
+/** The live swap hubs.  `id` is the stable key used by the station filter and
+ *  by the Swap Station route; destination is the nearest hub to the truck. */
+export interface SwapStation {
+  id: string;
+  name: string;
+  state: string;
+  lat: number;
+  lon: number;
+  /** Physical bays at the site -- drives the Swap Station bay scaffold. */
+  bays: number;
+}
+
+export const SWAP_STATIONS: ReadonlyArray<SwapStation> = [
+  { id: "pune-hub", name: "Pune Swap Hub", state: "Maharashtra", lat: 18.5204, lon: 73.8567, bays: 4 },
+  { id: "raurkela-hub", name: "Raurkela Swap Hub", state: "Odisha", lat: 22.2601, lon: 84.83, bays: 4 },
 ];
+
+/** Nearest hub to a vehicle's measured fix, or null when it has no fix. */
+export function nearestStation(vehicle: TrustedVehicle): (SwapStation & { distanceKm: number }) | null {
+  const geo = vehicleGeo(vehicle);
+  if (!geo) return null;
+  let best = SWAP_STATIONS[0];
+  let bestKm = Number.POSITIVE_INFINITY;
+  for (const s of SWAP_STATIONS) {
+    const km = haversineKm(geo.lat, geo.lon, s.lat, s.lon);
+    if (km < bestKm) {
+      bestKm = km;
+      best = s;
+    }
+  }
+  return { ...best, distanceKm: Math.round(bestKm) };
+}
 
 export interface ArrivalEstimate {
   rangeKm: number | null;
-  station: { name: string; state: string } | null;
+  station: { id: string; name: string; state: string } | null;
   distanceKm: number | null;
   etaMinutes: number | null;
   /** true when remaining range covers the distance to the destination. */
@@ -224,32 +313,19 @@ export interface ArrivalEstimate {
 
 export function predictArrival(vehicle: TrustedVehicle): ArrivalEstimate {
   const soc = numericValue(vehicle, "soc");
-  const geo = vehicleGeo(vehicle);
+  const rangeKm = soc === null ? null : ((soc / 100) * PACK_CAPACITY_KWH) / CONSUMPTION_KWH_PER_KM;
+  const station = nearestStation(vehicle);
 
-  const rangeKm = soc === null ? null : (soc / 100) * PACK_CAPACITY_KWH / CONSUMPTION_KWH_PER_KM;
-
-  if (!geo) {
+  if (!station) {
     return { rangeKm, station: null, distanceKm: null, etaMinutes: null, feasible: false };
   }
 
-  let station = SWAP_STATIONS[0];
-  let distanceKm = Number.POSITIVE_INFINITY;
-  for (const s of SWAP_STATIONS) {
-    const d = haversineKm(geo.lat, geo.lon, s.lat, s.lon);
-    if (d < distanceKm) {
-      distanceKm = d;
-      station = s;
-    }
-  }
-  const rounded = Math.round(distanceKm);
-  const etaMinutes = Math.round((distanceKm / AVG_CRUISE_KMH) * 60);
-
   return {
     rangeKm: rangeKm === null ? null : Math.round(rangeKm),
-    station: { name: station.name, state: station.state },
-    distanceKm: rounded,
-    etaMinutes,
-    feasible: rangeKm !== null && rangeKm >= distanceKm,
+    station: { id: station.id, name: station.name, state: station.state },
+    distanceKm: station.distanceKm,
+    etaMinutes: Math.round((station.distanceKm / AVG_CRUISE_KMH) * 60),
+    feasible: rangeKm !== null && rangeKm >= station.distanceKm,
   };
 }
 

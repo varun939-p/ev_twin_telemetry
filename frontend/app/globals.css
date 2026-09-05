@@ -1,26 +1,244 @@
 @import "tailwindcss";
 
+/* ---------------------------------------------------------------------------
+ * Design system — Digital Twin (2026 refactor)
+ *
+ * The previous shell was a saturated cyan-on-#05070d "AI dashboard".  That is
+ * gone.  The palette below is a NEUTRAL, high-contrast technical surface set
+ * (warm greys in light, true neutral near-black in dark) with a single teal
+ * accent reserved for interaction, and semantic status hues (ok / warn /
+ * danger / info) that carry meaning rather than decoration.
+ *
+ * Theming is class-based (`.dark` on <html>) rather than media-query based so
+ * the user's explicit toggle always wins.  Every token is declared twice —
+ * once on :root (light) and once on .dark — and surfaced to Tailwind through
+ * `@theme inline`, so `bg-surface`, `text-ink-2`, `border-line` etc. resolve
+ * correctly in both variants with no `dark:` duplication in components.
+ * ------------------------------------------------------------------------- */
+
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* surfaces */
+  --canvas: #f4f4f2;
+  --surface: #ffffff;
+  --surface-2: #fafaf9;
+  --surface-3: #f0efec;
+  --line: #e3e2de;
+  --line-strong: #cfcec9;
+
+  /* ink */
+  --ink: #16181c;
+  --ink-2: #565b63;
+  --ink-3: #8b9098;
+
+  /* accent + status */
+  --accent: #0d7d72;
+  --accent-soft: #0d7d7215;
+  --accent-ink: #0b5f57;
+  --ok: #1a7f45;
+  --ok-soft: #1a7f4514;
+  --warn: #a45d08;
+  --warn-soft: #a45d0814;
+  --danger: #b4271f;
+  --danger-soft: #b4271f14;
+  --info: #3f4c99;
+  --info-soft: #3f4c9914;
+
+  /* map / canvas graphics */
+  --grid: #e7e6e2;
+  --plate: #eceae5;
+  --shadow: 0 1px 2px rgba(20, 22, 26, 0.05), 0 8px 24px -12px rgba(20, 22, 26, 0.12);
+}
+
+.dark {
+  --canvas: #111213;
+  --surface: #191a1c;
+  --surface-2: #1f2123;
+  --surface-3: #26282b;
+  --line: #2c2f33;
+  --line-strong: #3b3f45;
+
+  --ink: #f1f1ef;
+  --ink-2: #a7acb3;
+  --ink-3: #71767d;
+
+  --accent: #2fbfae;
+  --accent-soft: #2fbfae1a;
+  --accent-ink: #7fded2;
+  --ok: #3fbb6d;
+  --ok-soft: #3fbb6d1a;
+  --warn: #e0993a;
+  --warn-soft: #e0993a1a;
+  --danger: #f0685e;
+  --danger-soft: #f0685e1a;
+  --info: #8b96e8;
+  --info-soft: #8b96e81a;
+
+  --grid: #232629;
+  --plate: #202325;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 12px 32px -16px rgba(0, 0, 0, 0.7);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-ink: var(--accent-ink);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-grid: var(--grid);
+  --color-plate: var(--plate);
+
+  /* Two technical faces: Inter for UI copy, JetBrains Mono for every number.
+   * Telemetry is tabular by nature — a monospace with real tabular figures
+   * stops columns of SOC / odometer values from dancing between renders. */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, "SF Mono", monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  border-color: var(--line);
+}
+
+html {
+  color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Numbers never reflow: every metric uses .num */
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "zero" 1;
+}
+
+/* Scrollbars that match the surface instead of the OS default */
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+.scroll-thin::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 999px;
+}
+.scroll-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* --------------------------------------------------------------- animation */
+
+@keyframes flow-dash {
+  to {
+    stroke-dashoffset: -32;
+  }
+}
+/* Energy flow along an SVG path on the site canvas. */
+.energy-flow {
+  stroke-dasharray: 6 10;
+  animation: flow-dash 1.2s linear infinite;
+}
+.energy-flow-slow {
+  stroke-dasharray: 4 12;
+  animation: flow-dash 2.4s linear infinite;
+}
+
+@keyframes soft-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.pulse-soft {
+  animation: soft-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.rise-in {
+  animation: rise-in 0.24s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .energy-flow,
+  .energy-flow-slow,
+  .pulse-soft,
+  .rise-in {
+    animation: none !important;
+  }
+}
+
+/* ------------------------------------------------------------------ leaflet
+ * The tile map is themed from the same tokens so it never reverts to
+ * Leaflet's stock blue/white chrome. */
+.leaflet-container {
+  background: var(--surface-3) !important;
+  font-family: var(--font-sans) !important;
+  outline: none;
+}
+.leaflet-control-attribution {
+  background: color-mix(in srgb, var(--surface) 85%, transparent) !important;
+  color: var(--ink-3) !important;
+  font-size: 9px !important;
+  padding: 1px 6px !important;
+}
+.leaflet-control-attribution a {
+  color: var(--ink-2) !important;
+}
+.leaflet-tooltip.twin-tip {
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 11px;
+}
+.leaflet-tooltip.twin-tip::before {
+  display: none;
+}
+.dark .leaflet-tile {
+  filter: brightness(0.94);
 }
