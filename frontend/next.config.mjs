@@ -1,14 +1,21 @@
 /** @type {import('next').NextConfig} */
 
 /**
- * The dashboard POSTs to *relative* paths under `/api/...`.  Rewriting them to
- * the Python control plane keeps the browser on a same-origin request — the
- * proxy hop is server-to-server, so a sandboxed preview (or a locked-down
- * corporate browser) never needs to reach `127.0.0.1` or pass CORS.
+ * NO `/api/*` PROXY REWRITES — deliberately.
  *
- * Point `BACKEND_URL` at wherever `uvicorn telemetry.main:app` runs.
+ * This config used to rewrite `/api/provision-site` and
+ * `/api/provisioned-sites` to `BACKEND_URL`, defaulting to
+ * `http://127.0.0.1:8000`. Nothing in the app has called either since the
+ * legacy provisioning UI was removed, and on Vercel they are a live hazard: a
+ * serverless function cannot reach localhost, so those routes could only ever
+ * return 502 in production — a deployment blocker that no local test would
+ * ever surface.
+ *
+ * The dashboard reaches the control plane through `lib/telemetry-source.ts`
+ * (server-side, `TELEMETRY_API_URL`, credentials never in the browser). If a
+ * provisioning UI returns, it should use that same documented path rather
+ * than a rewrite pinned to a loopback address.
  */
-const BACKEND_URL = process.env.BACKEND_URL ?? "http://127.0.0.1:8000";
 
 const nextConfig = {
   reactStrictMode: true,
@@ -36,13 +43,6 @@ const nextConfig = {
     "*.e2b.app", // sandboxed preview hosts
     "*.local",
   ],
-
-  async rewrites() {
-    return [
-      { source: "/api/provision-site", destination: `${BACKEND_URL}/api/provision-site` },
-      { source: "/api/provisioned-sites", destination: `${BACKEND_URL}/api/provisioned-sites` },
-    ];
-  },
 
   /**
    * The 2026 refactor collapsed the old two-tab product (`/trucks`,

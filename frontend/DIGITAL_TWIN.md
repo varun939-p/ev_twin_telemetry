@@ -310,6 +310,8 @@ papers over the other 16.
 | Observed SOC trend | `lib/soc-history.ts` samples SOC per document keyed on `observed_at`, bounded to 12 samples/vehicle. Tooltips quote a measured delta ("dropped 1% in 30 min") or say a baseline is still forming — never a rate invented from one frame. |
 | Table stability | `.table-scroll` sets `overflow-anchor: none` + `min-height`. Sorting preserved scrollTop 2401 -> 2401; previously it reset to 0. |
 | Viewport | No horizontal overflow measured at 1024/1280/1440/1600/1920/2560. Content capped at 1920px so ultrawide does not stretch prose. |
+| Vercel pre-flight | Audited against the PRODUCTION build (`next build && next start`), not just dev: 29/29. Builds with zero env vars set. With the control plane unreachable, all three routes still return 200 in ~0.1s from the committed snapshot, chip reading "Snapshot" with the reason. |
+| Removed hazard | The `/api/provision-site` and `/api/provisioned-sites` rewrites pointed at `BACKEND_URL` (default `127.0.0.1:8000`). Nothing had called them since the provisioning UI was deleted, and a serverless function cannot reach loopback — they could only ever 502 in production. Deleted. |
 
 ## 6. Alerting
 
