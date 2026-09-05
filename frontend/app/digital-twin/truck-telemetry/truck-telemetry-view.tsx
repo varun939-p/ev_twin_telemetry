@@ -1,0 +1,204 @@
+"use client";
+
+/**
+ * Truck Telemetry — the carrier lens.
+ *
+ * PAGE HIERARCHY (spec order, top to bottom)
+ *   1. Geographic map, FULL WIDTH, at the absolute top
+ *   2. Truck-scoped "Need Attention" alerts (moved off the old fleet page)
+ *   3. Global filter bar — immediately above the table, never over the map
+ *   4. Carrier table, 6 vital fields + [Know More]
+ *   5. Unlocatable carriers (no GPS fix) — listed, never plotted at (0, 0)
+ *
+ * DATA FLOW
+ *   document (server)
+ *     -> batteryRegistry over the FULL fleet   (stable "Battery N" labels)
+ *     -> applyVehicleFilters(store filters)    (the scope)
+ *     -> truckRows()          -> table
+ *     -> buildMapPoints()     -> map markers
+ *     -> buildCityClusters()  -> map bubbles -> setGeo() -> back to the scope
+ *   The map and the table are siblings reading one derived scope; neither
+ *   owns the other, which is what keeps the hover link cycle-free.
+ */
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
+
+import AttentionPanel from "@/components/alerts/AttentionPanel";
+import FleetMap from "@/components/map/FleetMap";
+import TruckDetailModal from "@/components/truck/TruckDetailModal";
+import TruckFilterBar from "@/components/truck/TruckFilterBar";
+import TruckTable from "@/components/truck/TruckTable";
+import { Card, CardHeader, Hairline, PageHeading } from "@/components/ui/Surface";
+import PanelErrorBoundary from "@/components/ui/PanelErrorBoundary";
+import { Pill } from "@/components/ui/Pill";
+import { applyVehicleFilters, batteryRegistry, buildGeoIndex, deriveSites, isEvVehicle } from "@/lib/fleet";
+import { truckAlerts, truckRows, type TruckRow } from "@/lib/fleet-metrics";
+import { buildCityClusters, buildMapPoints, ZOOM } from "@/lib/map-data";
+import { useFilterState, useTwin } from "@/lib/store";
+import { orderedParams, type TrustedTelemetryDocument } from "@/lib/trusted-telemetry";
+
+export default function TruckTelemetryView({ data }: { data: TrustedTelemetryDocument }) {
+  const filters = useFilterState();
+  const select = useTwin((s) => s.select);
+  const requestFly = useTwin((s) => s.requestFly);
+  const searchParams = useSearchParams();
+
+  const [detail, setDetail] = useState<TruckRow | null>(null);
+
+  /* --------------------------------------------------------- derivations */
+
+  const vehicles = data.vehicles;
+  const registry = useMemo(() => batteryRegistry(vehicles), [vehicles]);
+  const params = useMemo(() => orderedParams(data), [data]);
+  // Built from the FULL fleet so options never disappear mid-drill-down.
+  const geoIndex = useMemo(() => buildGeoIndex(vehicles), [vehicles]);
+  const evCounts = useMemo(() => {
+    const ev = vehicles.filter(isEvVehicle).length;
+    return { ev, nonEv: vehicles.length - ev };
+  }, [vehicles]);
+
+  /** Operating sites derived from the payload — never a hardcoded hub list. */
+  const sites = useMemo(() => deriveSites(vehicles), [vehicles]);
+
+  const scoped = useMemo(() => applyVehicleFilters(vehicles, filters, sites), [vehicles, filters, sites]);
+  const rows = useMemo(() => truckRows(scoped, registry), [scoped, registry]);
+  const alerts = useMemo(() => truckAlerts(scoped, sites), [scoped, sites]);
+
+  const { points, unlocatable } = useMemo(() => buildMapPoints(rows), [rows]);
+  const clusters = useMemo(() => buildCityClusters(points), [points]);
+
+  const statusCounts = useMemo(() => {
+    const c = { moving: 0, charging: 0, idle: 0, unknown: 0 };
+    for (const r of rows) c[r.status] += 1;
+    return c;
+  }, [rows]);
+
+  /* --------------------------------------------------------- deep links */
+
+  /** `?vehicle_id=<id>` from Battery Tracking: select it and fly to it once. */
+  const handledLink = useRef<string | null>(null);
+  const deepLink = searchParams.get("vehicle_id");
+
+  useEffect(() => {
+    if (!deepLink || handledLink.current === deepLink) return;
+    const match = vehicles.find(
+      (v) => v.vehicle_id === deepLink || v.vehicle_id.replace(/_EV\d+$/i, "") === deepLink,
+    );
+    if (!match) return;
+    handledLink.current = deepLink;
+    select(match.vehicle_id, "link");
+    const lat = match.values["latitude"];
+    const lon = match.values["longitude"];
+    if (typeof lat === "number" && typeof lon === "number") requestFly(lat, lon, ZOOM.asset);
+    // No scrollIntoView. `select(..., "link")` above pulses the arriving row
+    // and flies the map to it; that is enough to locate the asset without
+    // seizing the scroll position the operator chose.
+  }, [deepLink, vehicles, select, requestFly]);
+
+  /* ------------------------------------------------------------- render */
+
+  return (
+    <div className="space-y-4">
+      <PageHeading
+        title="Truck Telemetry"
+        actions={
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Pill tone="ok" dot pulse>
+              {statusCounts.moving} moving
+            </Pill>
+            <Pill tone="info" dot>
+              {statusCounts.charging} charging
+            </Pill>
+            <Pill tone="warn" dot>
+              {statusCounts.idle} idle
+            </Pill>
+            {statusCounts.unknown > 0 && <Pill tone="neutral">{statusCounts.unknown} no reading</Pill>}
+          </div>
+        }
+      />
+
+      {/* 1 — MAP, absolute top, full width ------------------------------- */}
+      <Card>
+        <div className="p-3">
+          <PanelErrorBoundary name="Carrier map" resetKey={data.generated_at}>
+            <FleetMap points={points} clusters={clusters} heightClass="h-[440px]" />
+          </PanelErrorBoundary>
+          <p className="mt-2 px-1 text-[12px] text-ink-3">
+            <span className="num">{points.length}</span> of <span className="num">{rows.length}</span> carriers in
+            scope carry a measured fix
+            {unlocatable.length > 0 && (
+              <>
+                {" "}
+                · <span className="num">{unlocatable.length}</span> have no GPS channel and are listed below rather
+                than plotted at (0, 0)
+              </>
+            )}
+            .
+          </p>
+        </div>
+      </Card>
+
+      {/* 2 — truck-scoped alerts ---------------------------------------- */}
+      <PanelErrorBoundary name="Carrier alerts" resetKey={data.generated_at}>
+        <AttentionPanel
+          alerts={alerts}
+          title="Need Attention — Carriers"
+          emptyMessage="No carrier anomalies in the current scope. Battery chemistry alerts live on Battery Tracking."
+        />
+      </PanelErrorBoundary>
+
+      {/* 3 + 4 — filters directly above the table ------------------------ */}
+      <div id="carrier-table" className="space-y-3">
+        <TruckFilterBar
+          geoIndex={geoIndex}
+          evCounts={evCounts}
+          scopedCount={rows.length}
+          totalCount={vehicles.length}
+        />
+
+        <Card>
+          <CardHeader title="Carrier fleet" />
+          <Hairline />
+          <PanelErrorBoundary name="Carrier fleet table" resetKey={data.generated_at}>
+            <TruckTable rows={rows} onKnowMore={setDetail} />
+          </PanelErrorBoundary>
+        </Card>
+      </div>
+
+      {/* 5 — carriers with no fix ---------------------------------------- */}
+      {unlocatable.length > 0 && (
+        <Card padded>
+          <h3 className="text-[11px] font-semibold text-ink-3">
+            Unlocatable carriers ({unlocatable.length})
+          </h3>
+          <p className="mt-1 text-[12px] text-ink-2">
+            latitude/longitude are not measured on these frames, so they cannot be plotted honestly.
+          </p>
+          <ul className="mt-2 flex flex-wrap gap-1.5">
+            {unlocatable.map((row) => (
+              <li key={row.vehicleId}>
+                <button
+                  type="button"
+                  onClick={() => setDetail(row)}
+                  className="num cursor-pointer rounded-md border border-line bg-surface-2 px-2 py-1 text-[12px] text-ink-2 transition hover:border-accent/40 hover:text-accent"
+                >
+                  {row.chassis}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+
+      <TruckDetailModal
+        sites={sites}
+        open={detail !== null}
+        vehicle={detail?.vehicle ?? null}
+        params={params}
+        batteryLabel={detail?.batteryLabel ?? null}
+        onClose={() => setDetail(null)}
+      />
+    </div>
+  );
+}

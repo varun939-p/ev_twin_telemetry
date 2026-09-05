@@ -22,6 +22,7 @@ from typing import Any, Final
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from .schemas import (
     SiteProvisionRecord,
@@ -48,6 +49,15 @@ STORE_PATH: Final[Path] = Path(os.getenv("PROVISIONED_SITES_PATH", str(Path(__fi
 # pipeline; automated API agents will write to the same place later.
 INGEST_DIR: Final[Path] = Path(os.getenv("INGEST_DIR", str(Path(__file__).resolve().parent.parent / "uploads" / "ingest")))
 _INGEST_LOCK = threading.Lock()
+
+# The validated document written by `main_parser.py`. This is what the
+# dashboard reads; override for a staging layout or a shared volume.
+TRUSTED_DOC_PATH: Final[Path] = Path(
+    os.getenv(
+        "TRUSTED_DOC_PATH",
+        str(Path(__file__).resolve().parent.parent / "trusted_vehicle_telemetry.json"),
+    )
+)
 
 # Origins allowed to call us directly from a browser.  The Next.js dev server
 # is the primary one; the proxy path does not rely on CORS at all.
@@ -132,6 +142,52 @@ def provision_site(payload: SiteProvisionRequest) -> SiteProvisionResponse:
 def list_sites() -> dict[str, Any]:
     rows = _read_store()
     return {"ok": True, "count": len(rows), "sites": rows}
+
+
+@app.get(
+    "/api/telemetry/trusted",
+    summary="Serve the latest validated telemetry document to the dashboard.",
+)
+def trusted_telemetry() -> Any:
+    """The dashboard's single read endpoint.
+
+    ``main_parser.py`` polls the vendor's two-tier v1 contract (authenticating
+    with ``API_SECRET_KEY`` / ``API_PASSCODE`` from ``.env``), validates every
+    frame and writes ``trusted_vehicle_telemetry.json``.  This hands that
+    document to the Next.js server verbatim.
+
+    The credentials deliberately stop HERE.  The browser never sees them and
+    never talks to the vendor: browser -> Next server -> this service -> vendor.
+    Anything else would put a fleet-wide API key in a client bundle.
+
+    ``no-store`` because the whole point is that a poll five seconds ago is
+    already stale; the Next.js layer applies its own short revalidate window.
+    """
+    if not TRUSTED_DOC_PATH.exists():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"No validated document at {TRUSTED_DOC_PATH.name}. "
+                "Run `python main_parser.py` to poll the upstream and produce one."
+            ),
+        )
+
+    try:
+        payload = json.loads(TRUSTED_DOC_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        # A half-written file during a parser run must not 200 with junk.
+        raise HTTPException(status_code=503, detail=f"Document unreadable: {exc}") from exc
+
+    stat = TRUSTED_DOC_PATH.stat()
+    return JSONResponse(
+        content=payload,
+        headers={
+            "Cache-Control": "no-store",
+            # Lets the caller log ingest lag without parsing the body.
+            "X-Document-Mtime": str(int(stat.st_mtime)),
+            "X-Document-Vehicles": str(len(payload.get("vehicles", []))),
+        },
+    )
 
 
 @app.post("/api/ingest/upload", summary="Manual Data Ingestion: drop a raw telemetry file into the Data Layer.")

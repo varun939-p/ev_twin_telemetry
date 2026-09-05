@@ -15,6 +15,16 @@
 
 /* ------------------------------------------------------------------ types */
 
+/**
+ * Where a rendered document came from.
+ *
+ * Declared HERE rather than in `lib/telemetry-source.ts` because the shell (a
+ * client component) needs the type, and that module is `server-only` — a
+ * type-only import across that boundary erases at compile time but is exactly
+ * the kind of thing that breaks the day someone makes it a value import.
+ */
+export type TelemetrySource = "live" | "cached" | "snapshot";
+
 /** Per-parameter verdict written by the data layer. Anything != "measured" is
  *  rendered disabled.  Values are exhaustive -- see `field_status_legend`. */
 export type FieldStatus = "measured" | "absent_upstream" | "null_upstream" | "field_error";
@@ -41,9 +51,10 @@ export interface TrustedVehicle {
   /** Parameter keys sent with a null/empty value. */
   null_fields: string[];
   field_errors: FieldError[];
-  field_status: Record<string, FieldStatus>;
+  /** Per-parameter verdict. Normalised to all 24 keys by `normalizeVehicle`. */
+  field_status: TelemetryFieldStatus;
   /** Always all 24 keys, product-spec order, explicit nulls. */
-  values: Record<string, ParamValue>;
+  values: TelemetryValues;
 }
 
 export interface ParameterHealth {
@@ -121,7 +132,7 @@ export interface SiteConfig {
 /* ------------------------------------------------------- canonical layout */
 
 /** Product-spec order of the 24 parameters (source of truth: telemetry/fields.py). */
-export const PARAM_ORDER: readonly string[] = [
+export const PARAM_ORDER = [
   "soc",
   "soh",
   "odometer_km",
@@ -149,6 +160,41 @@ export const PARAM_ORDER: readonly string[] = [
 ] as const;
 
 /**
+ * THE 24-PARAMETER CONTRACT.
+ *
+ * `TelemetryParam` is derived from `PARAM_ORDER`, so the tuple above is the
+ * single place a parameter is declared. Everything downstream — the values
+ * map, the per-field verdicts, `numericValue`, the [Know More] modal — is
+ * keyed by this union, which means:
+ *
+ *   * a typo (`"soc_pct"`) is a COMPILE error, not a silent `undefined`
+ *   * adding a 25th channel upstream is a one-line change here, and every
+ *     consumer that iterates `PARAM_ORDER` picks it up automatically
+ *   * `TelemetryValues` requires ALL 24 keys, so no code path can forget one
+ *
+ * The backend currently measures 8 of the 24. That is a RUNTIME fact carried
+ * in `field_status`, not a type-level one: the interfaces below accept all 24
+ * today, so the moment the API starts sending the other 16 they render with
+ * no frontend change. See `normalizeVehicle` for the runtime half of this.
+ */
+export type TelemetryParam = (typeof PARAM_ORDER)[number];
+
+/** Every one of the 24 keys, always present, explicitly nullable. */
+export type TelemetryValues = Record<TelemetryParam, ParamValue>;
+
+/** Every one of the 24 keys mapped to the data layer's verdict. */
+export type TelemetryFieldStatus = Record<TelemetryParam, FieldStatus>;
+
+/** Compile-time guard: the product spec says 24 parameters, so the tuple must
+ *  be exactly 24 long. Adding or removing a channel without updating the spec
+ *  turns this into a type error rather than a silent contract drift. */
+type Expect24 = (typeof PARAM_ORDER)["length"] extends 24
+  ? true
+  : "PARAM_ORDER must list exactly 24 telemetry parameters";
+const _PARAM_COUNT_IS_24: Expect24 = true;
+void _PARAM_COUNT_IS_24;
+
+/**
  * Parameters the upstream does not measure, pinned disabled regardless of
  * document content.
  *
@@ -174,8 +220,10 @@ export function isUnmeasured(field: string): boolean {
   return UNMEASURED_FIELDS.has(field);
 }
 
-/** Tile grouping for the Digital Twin panel. Every parameter appears exactly once. */
-export const FIELD_GROUPS: ReadonlyArray<{ id: string; title: string; fields: readonly string[] }> = [
+/** Tile grouping for the [Know More] modal. Every parameter appears exactly
+ *  once — asserted at module load by `assertGroupsCoverEveryParam` below, so
+ *  a newly added channel cannot silently go unrendered. */
+export const FIELD_GROUPS: ReadonlyArray<{ id: string; title: string; fields: readonly TelemetryParam[] }> = [
   {
     id: "energy",
     title: "Energy & Range",
@@ -188,12 +236,103 @@ export const FIELD_GROUPS: ReadonlyArray<{ id: string; title: string; fields: re
   { id: "position", title: "Position", fields: ["latitude", "longitude"] },
 ];
 
+/**
+ * Runtime exhaustiveness check on FIELD_GROUPS. Cheap (24 string compares,
+ * once per process) and it converts "we shipped a parameter nobody can see"
+ * into a loud failure during development.
+ */
+function assertGroupsCoverEveryParam(): void {
+  const grouped = FIELD_GROUPS.flatMap((g) => g.fields);
+  const missing = PARAM_ORDER.filter((p) => !grouped.includes(p));
+  const duplicated = grouped.filter((p, i) => grouped.indexOf(p) !== i);
+  if (missing.length || duplicated.length) {
+    throw new Error(
+      `FIELD_GROUPS must cover all ${PARAM_ORDER.length} parameters exactly once. ` +
+        `Missing: [${missing.join(", ")}]. Duplicated: [${duplicated.join(", ")}].`,
+    );
+  }
+}
+assertGroupsCoverEveryParam();
+
+/* ------------------------------------------------- 24-parameter normaliser */
+
+/**
+ * Guarantees the 24-key contract at RUNTIME.
+ *
+ * The type system says a `TrustedVehicle` has all 24 keys; this is what makes
+ * that true for any JSON the backend actually sends. For every parameter in
+ * `PARAM_ORDER` it ensures:
+ *
+ *   values[param]        exists — missing becomes `null` (never `0`)
+ *   field_status[param]  exists — inferred when the backend omits a verdict
+ *
+ * Why this matters for the upstream rollout: when the API unlocks the 16
+ * currently-absent channels, the new keys arrive inside `values` and
+ * `field_status` with verdict `"measured"`. Every consumer iterates
+ * `PARAM_ORDER` and reads `field_status`, so those channels light up with NO
+ * frontend change. Equally, if a future payload drops a key, this normaliser
+ * turns it into an honest "awaiting upstream" cell instead of `undefined`
+ * leaking into a `.toFixed()` and blanking a page.
+ *
+ * Verdict inference, when `field_status` is silent:
+ *   key absent from `values`      -> absent_upstream
+ *   key present but null          -> null_upstream  (or field_error if the
+ *                                    data layer listed it in `field_errors`)
+ *   key present with a value      -> measured
+ */
+export function normalizeVehicle(raw: TrustedVehicle): TrustedVehicle {
+  const rawValues = (raw.values ?? {}) as Partial<TelemetryValues>;
+  const rawStatus = (raw.field_status ?? {}) as Partial<TelemetryFieldStatus>;
+  const errored = new Set((raw.field_errors ?? []).map((e) => e.field));
+
+  const values = {} as TelemetryValues;
+  const fieldStatus = {} as TelemetryFieldStatus;
+  let measured = 0;
+
+  for (const param of PARAM_ORDER) {
+    const present = Object.prototype.hasOwnProperty.call(rawValues, param);
+    const value = present ? (rawValues[param] ?? null) : null;
+    values[param] = value;
+
+    const declared = rawStatus[param];
+    const status: FieldStatus =
+      declared ??
+      (!present
+        ? "absent_upstream"
+        : errored.has(param)
+          ? "field_error"
+          : value === null || value === ""
+            ? "null_upstream"
+            : "measured");
+
+    fieldStatus[param] = status;
+    if (status === "measured") measured += 1;
+  }
+
+  return {
+    ...raw,
+    values,
+    field_status: fieldStatus,
+    // Recomputed so the counters can never disagree with the verdicts above.
+    measured_count: measured,
+    completeness_pct: Math.round((measured / PARAM_ORDER.length) * 1000) / 10,
+    missing_fields: PARAM_ORDER.filter((p) => fieldStatus[p] === "absent_upstream"),
+    null_fields: PARAM_ORDER.filter((p) => fieldStatus[p] === "null_upstream"),
+    field_errors: raw.field_errors ?? [],
+  };
+}
+
+/** Applies `normalizeVehicle` across a document. Call once, at the boundary. */
+export function normalizeDocument(doc: TrustedTelemetryDocument): TrustedTelemetryDocument {
+  return { ...doc, vehicles: doc.vehicles.map(normalizeVehicle) };
+}
+
 /** Human copy for each non-measured verdict, mirrored from `field_status_legend`. */
 export const STATUS_COPY: Record<FieldStatus, { short: string; detail: string }> = {
-  measured: { short: "LIVE", detail: "Value present and passed schema validation." },
-  absent_upstream: { short: "AWAITING UPSTREAM", detail: "The upstream API never sent this key. Quarantined as NULL by the data layer -- not a zero." },
-  null_upstream: { short: "NO READING", detail: "The key arrived with a null/empty value. Stored NULL by the data layer -- not a zero." },
-  field_error: { short: "REJECTED", detail: "The value failed a range/type gate and was stored NULL. See the field error detail." },
+  measured: { short: "Live", detail: "Value present and passed schema validation." },
+  absent_upstream: { short: "Awaiting upstream", detail: "The upstream API never sent this key. Quarantined as NULL by the data layer -- not a zero." },
+  null_upstream: { short: "No reading", detail: "The key arrived with a null/empty value. Stored NULL by the data layer -- not a zero." },
+  field_error: { short: "Rejected", detail: "The value failed a range/type gate and was stored NULL. See the field error detail." },
 };
 
 /* --------------------------------------------------------------- selectors */
@@ -223,14 +362,14 @@ export function orderedParams(doc: TrustedTelemetryDocument): ParameterHealth[] 
 }
 
 /** The single gate every tile uses to decide "live" vs "disabled". */
-export function isMeasured(vehicle: TrustedVehicle, field: string): boolean {
+export function isMeasured(vehicle: TrustedVehicle, field: TelemetryParam): boolean {
   if (isUnmeasured(field)) return false; // pinned disabled; the value is NULL by contract
   return vehicle.field_status[field] === "measured";
 }
 
 /** A number, or null.  Never coerces "" / undefined / NaN into 0, and never
  *  returns a reading for one of the 9 unmeasured parameters. */
-export function numericValue(vehicle: TrustedVehicle, field: string): number | null {
+export function numericValue(vehicle: TrustedVehicle, field: TelemetryParam): number | null {
   if (isUnmeasured(field)) return null;
   const v = vehicle.values[field];
   return typeof v === "number" && Number.isFinite(v) ? v : null;
@@ -261,7 +400,7 @@ export interface FleetSummary {
 
 export function fleetSummary(doc: TrustedTelemetryDocument, now: Date = new Date()): FleetSummary {
   const vehicles = doc.vehicles;
-  const nums = (field: string) =>
+  const nums = (field: TelemetryParam) =>
     vehicles.map((v) => numericValue(v, field)).filter((v): v is number => v !== null);
 
   const soc = nums("soc").sort((a, b) => a - b);

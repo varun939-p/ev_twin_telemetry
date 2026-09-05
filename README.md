@@ -241,22 +241,87 @@ deploy/schema.sql   the DDL
 docs/               ARCHITECTURE.md — read this
 ```
 
+### Deploying to Vercel
+
+**The Next.js app is in `frontend/`, not at the repository root.** Vercel's
+Root Directory must be set to `frontend` in the project settings or the build
+fails with `No Next.js version detected` — that setting cannot be supplied
+from `vercel.json`. Full instructions, environment variables and the
+health-check checklist are in **[`DEPLOYMENT.md`](DEPLOYMENT.md)**.
+
 ### Frontend layout
 
-All dashboard components live under `frontend/components/telemetry/`; pages and
-their client views live under `frontend/app/`. The `@/` alias resolves to
-`frontend/` (see `frontend/tsconfig.json`), so an import of
-`@/components/telemetry/ViewNav` must find
-`frontend/components/telemetry/ViewNav.tsx`.
+The dashboard is the three-route **Digital Twin** product. The `@/` alias
+resolves to `frontend/` (see `frontend/tsconfig.json`).
 
-The Trucks / Batteries geo map renders **real surveyed geography**:
-`frontend/data/india_states.json` is a simplified extract (36 state/UT
+Swap Station, Chargers and DG were removed from this app (routes deleted,
+sidebar entries deleted) and are being built as a separate workstream;
+`next.config.mjs` keeps **temporary 307 redirects** for those paths so old
+bookmarks land on the Central Dashboard rather than a 404.
+
+```
+app/digital-twin/central/            isometric site canvas (road, swap station, chargers, DG)
+app/digital-twin/truck-telemetry/    live carrier map + filter bar + 6-field table + 24-param modal
+app/digital-twin/battery-tracking/   pack register, 4 KPIs, alerts — live tracking only
+
+components/shell/     AppShell, Sidebar, ThemeToggle, LiveClock
+components/map/       FleetMap (SSR-safe wrapper) -> LeafletFleetMap (client only)
+components/truck/     TruckFilterBar, TruckTable, TruckDetailModal
+components/battery/   BatteryKpiStrip, BatteryFilterBar, BatteryTable
+components/central/   SiteCanvas (pure SVG isometric scene)
+components/alerts/    AttentionPanel (grouped "Need Attention" banner)
+components/ui/        Surface, Pill, Modal, Field, InfoTip, Metric
+                      (single light theme; map + site canvas opt into .canvas-dark)
+
+lib/store.ts          Zustand store: filters + bi-directional hover/selection pointer
+lib/fleet.ts          filter model, deriveSites + buildGeoIndex (both payload-derived), ETA maths
+lib/fleet-metrics.ts  status derivation, KPI coverage types, alerts, table projections
+lib/site-model.ts     the ONLY modelled data in the app — facility simulation
+lib/theme.ts(x)       dark/light controller (useSyncExternalStore, no FOUC)
+lib/telemetry-source.ts  server-only: live document fetch, token auth,
+                         validation, snapshot fallback  <-- the data boundary
+lib/document.ts       re-exports the loader + presentation helpers
+```
+
+### Live telemetry
+
+`GET /api/telemetry/trusted` (added to `telemetry/main.py`) serves the
+validated document `main_parser.py` writes. The Next.js server fetches it via
+`lib/telemetry-source.ts`, which handles the `secret_key`/`passcode` token
+exchange, an abort budget, structural validation and a fallback to the
+committed snapshot. Credentials are server-side only — see
+`frontend/.env.example`. The header chip reports `Live` or `Snapshot` (with
+the reason) so nobody mistakes cached data for current data.
+
+Because every view iterates `PARAM_ORDER` and reads `field_status`, unlocking
+a channel upstream populates the dashboard with **no frontend change** — this
+was verified by serving a document with `battery_total_v` and
+`charging_status` provisioned: the coverage chip moved 8/24 -> 10/24 and the
+"Batteries charging right now" KPI went from *Awaiting upstream* to a live
+count.
+
+The carrier map is **Leaflet + OpenStreetMap raster tiles** (`components/map/`), loaded
+through `next/dynamic` with `ssr: false` because Leaflet touches `window` at
+import time. OSM needs no API key or account (CARTO's basemap CDN now rejects
+unauthenticated traffic, which is what produced the "API KEY REQUIRED" tiles).
+OSM publishes only a light cartography, so the dark basemap is derived with a
+CSS filter rather than a second tile provider — one warm HTTP cache, and
+toggling the theme never re-downloads the viewport. **The OSM attribution
+control is required by their tile usage policy; do not remove it.**
+If the tile CDN is
+unreachable, the map falls back to a vector basemap drawn from
+`frontend/data/india_states.json` — a simplified extract (36 state/UT
 MultiPolygons, ~19k points) of the MIT-licensed `states_india.geojson`
 (© 2024 Mr Akshay Shinde, https://github.com/mraxays/india-states.geojson —
-license text in `frontend/data/india_states.LICENSE`). `lib/india-geo.ts`
-compiles it once into degree-space SVG paths; the camera rides a single group
-transform. Fleet markers are measured GPS fixes only, coloured by live motion
-state, and clicking one selects the asset in the list (and vice-versa) through
-the global `FilterContext`.
+license text in `frontend/data/india_states.LICENSE`). That file is imported
+lazily, only on the tile-error path.
+
+Markers are measured GPS fixes only, coloured by live motion state. Hovering a
+pin highlights its table row and vice-versa; both directions publish to the
+same pointer channel in `lib/store.ts`, which also carries the cross-page
+filter state and the `?vehicle_id=` / `?battery_id=` deep links.
+
+Legacy `/trucks` and `/batteries` are 308-redirected to their `/digital-twin/*`
+successors in `next.config.mjs`.
 
 Module-by-module explanation in `docs/ARCHITECTURE.md` §2.

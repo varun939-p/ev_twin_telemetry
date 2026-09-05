@@ -1,26 +1,387 @@
 @import "tailwindcss";
 
+/* ---------------------------------------------------------------------------
+ * Design system — Digital Twin (2026 refactor)
+ *
+ * The previous shell was a saturated cyan-on-#05070d "AI dashboard".  That is
+ * gone.  The palette below is a NEUTRAL, high-contrast technical surface set
+ * (warm greys in light, true neutral near-black in dark) with a single teal
+ * accent reserved for interaction, and semantic status hues (ok / warn /
+ * danger / info) that carry meaning rather than decoration.
+ *
+ * Theming is class-based (`.dark` on <html>) rather than media-query based so
+ * the user's explicit toggle always wins.  Every token is declared twice —
+ * once on :root (light) and once on .dark — and surfaced to Tailwind through
+ * `@theme inline`, so `bg-surface`, `text-ink-2`, `border-line` etc. resolve
+ * correctly in both variants with no `dark:` duplication in components.
+ * ------------------------------------------------------------------------- */
+
+/* ---------------------------------------------------------------------------
+ * ONE THEME, TWO SURFACES.
+ *
+ * The product is a LIGHT enterprise interface. The dark/light toggle is gone:
+ * a client-facing dashboard should have one deliberate, art-directed
+ * appearance, not two half-tuned ones.
+ *
+ * The exception is the two DATA CANVASES — the fleet map and the isometric
+ * facility model. Those stay dark, because a dark ground is what makes status
+ * colour read as luminous signal rather than as ink on paper. They opt in via
+ * `.canvas-dark`, which re-declares the same token names locally, so every
+ * component inside them keeps using `bg-surface` / `text-ink` and simply
+ * resolves to the dark values. No component knows which surface it is on.
+ * ------------------------------------------------------------------------- */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* surfaces */
+  --canvas: #f7f8fa;
+  --surface: #ffffff;
+  --surface-2: #fbfbfc;
+  --surface-3: #f1f2f4;
+
+  --line: #e6e7ea;
+  --line-strong: #d3d5da;
+
+  /* ink */
+  --ink: #1b1e24;
+  --ink-2: #6b7280;
+  --ink-3: #98a0ac;
+
+  /* Deep petrol-blue. Active nav and primary CTAs ONLY. */
+  --accent: #1d4e89;
+  --accent-soft: #eaf0f7;
+  --accent-ink: #163c69;
+
+  /* Status: tinted ground + darker text of the same hue. Never a solid
+     saturated pill — `--ok` is the TEXT colour, `--ok-soft` the ground. */
+  --ok: #1f9254;
+  --ok-soft: #e7f6ed;
+  --warn: #b7791f;
+  --warn-soft: #fdf3e3;
+  --danger: #c4423b;
+  --danger-soft: #fbeae9;
+  --info: #1d4e89;
+  --info-soft: #eaf0f7;
+  --neutral-ink: #6b7280;
+  --neutral-soft: #f1f2f4;
+
+  /* map / canvas graphics */
+  --grid: #eceef1;
+  --plate: #f1f2f4;
+
+  /* Barely-there. One 1px hairline of shadow, no glow, no stacked blurs. */
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+}
+
+/* ---------------------------------------------------------------------------
+ * Dark data canvas. Scoped token override — NOT a theme.
+ * ------------------------------------------------------------------------- */
+.canvas-dark {
+  --canvas: #14161a;
+  --surface: #191b20;
+  --surface-2: #1e2027;
+  --surface-3: #23262d;
+
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.16);
+
+  --ink: #eceded;
+  --ink-2: #a8abb2;
+  --ink-3: #7b7e86;
+
+  --accent: #6f9fd8;
+  --accent-soft: rgba(111, 159, 216, 0.16);
+  --accent-ink: #a8c6e8;
+
+  --ok: #4ca771;
+  --ok-soft: rgba(76, 167, 113, 0.16);
+  --warn: #d9a441;
+  --warn-soft: rgba(217, 164, 65, 0.16);
+  --danger: #e0645f;
+  --danger-soft: rgba(224, 100, 95, 0.16);
+  --info: #6f9fd8;
+  --info-soft: rgba(111, 159, 216, 0.16);
+  --neutral-ink: #a8abb2;
+  --neutral-soft: rgba(255, 255, 255, 0.06);
+
+  --grid: rgba(255, 255, 255, 0.05);
+  --plate: #1e2027;
+  --shadow: none;
+
+  background-color: var(--canvas);
+  color: var(--ink);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-ink: var(--accent-ink);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-grid: var(--grid);
+  --color-plate: var(--plate);
+  --color-neutral-ink: var(--neutral-ink);
+  --color-neutral-soft: var(--neutral-soft);
+
+  /* Geist for everything typographic, Geist Mono for every telemetry value.
+   * Telemetry is tabular by nature — a monospace with real tabular figures
+   * stops columns of SOC / odometer values from dancing between renders. */
+  --font-sans: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  border-color: var(--line);
+}
+
+html,
+body {
+  height: 100%;
+  /* A stray wide child must never produce a horizontal scrollbar on the
+     document; every scrollable region in this app owns its own overflow. */
+  overflow-x: clip;
+}
+
+html {
+  color-scheme: light;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Numbers never reflow: every metric uses .num */
+/**
+ * Display treatment — headings and large KPI numerals. Same family as body
+ * (Geist covers both), differentiated by weight and optical tightening rather
+ * than by a second typeface.
+ */
+.display {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.018em;
+}
+
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "zero" 1;
+}
+
+/**
+ * TABLE SCROLL STABILITY.
+ *
+ * Sorting a register reorders every row. Chrome's scroll anchoring then tries
+ * to keep "the same content" in view, and because the anchor node has moved
+ * hundreds of pixels it gives up and resets the container to the top —
+ * measured at scrollTop 2401 -> 0 on a sort click. From the operator's seat
+ * that is the table lurching back to row 1 for no reason.
+ *
+ * `overflow-anchor: none` opts the container out of anchoring, so the scroll
+ * offset is simply preserved. `min-height` stops the container collapsing
+ * when a filter narrows the register to a couple of rows, which is the other
+ * way this area used to shift the page under the cursor.
+ */
+.table-scroll {
+  overflow-anchor: none;
+  min-height: 240px;
+}
+
+/* Scrollbars that match the surface instead of the OS default */
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+.scroll-thin::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 999px;
+}
+.scroll-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* --------------------------------------------------------------- animation */
+
+@keyframes flow-dash {
+  to {
+    stroke-dashoffset: -32;
+  }
+}
+/* Energy flow along an SVG path on the site canvas. */
+.energy-flow {
+  stroke-dasharray: 6 10;
+  animation: flow-dash 1.2s linear infinite;
+}
+.energy-flow-slow {
+  stroke-dasharray: 4 12;
+  animation: flow-dash 2.4s linear infinite;
+}
+
+@keyframes soft-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.pulse-soft {
+  animation: soft-pulse 1.8s ease-in-out infinite;
+}
+
+/**
+ * Emissive pulse for LARGE filled areas (the isometric bay/charger/DG roofs).
+ *
+ * `.pulse-soft` peaks at opacity 1, which is right for a 4 px status dot and
+ * catastrophic for a 60 px slab: a CSS animation overrides the SVG `opacity`
+ * attribute, so a face set to 0.14 was being driven to full saturation every
+ * 1.8 s and the whole canvas read as neon. This keeps the swing inside a
+ * narrow, low band so "energy is flowing here" stays legible without the
+ * surface ever becoming a solid block of colour.
+ */
+@keyframes emissive-pulse {
+  0%,
+  100% {
+    opacity: 0.08;
+  }
+  50% {
+    opacity: 0.22;
+  }
+}
+.pulse-emissive {
+  animation: emissive-pulse 2.4s ease-in-out infinite;
+}
+
+/**
+ * ROW ARRIVAL HIGHLIGHT — replaces `scrollIntoView` on both registers.
+ *
+ * A soft light-blue wash that fades over 1.6s: enough to catch the eye when a
+ * carrier docks, a deep link lands, or a map pin is hovered, without moving
+ * the page under the operator. Blue is used here rather than the petrol-blue
+ * brand accent so the highlight cannot be confused with a selected/active
+ * control, and it is distinct from every status hue (green/amber/red), so it
+ * never reads as a state change on the pack itself.
+ *
+ * The row's own background (a red tint on a below-reserve pack) shows through
+ * as the wash fades, so nothing is masked.
+ */
+:root {
+  --row-pulse: rgba(191, 219, 254, 0.85); /* light blue, ~blue-200 */
+  --row-pulse-edge: #60a5fa;
+}
+.canvas-dark {
+  --row-pulse: rgba(96, 165, 250, 0.22);
+  --row-pulse-edge: #60a5fa;
+}
+
+@keyframes row-pulse {
+  0% {
+    background-color: var(--row-pulse);
+    box-shadow: inset 3px 0 0 0 var(--row-pulse-edge);
+  }
+  70% {
+    background-color: var(--row-pulse);
+    box-shadow: inset 3px 0 0 0 var(--row-pulse-edge);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: inset 3px 0 0 0 transparent;
+  }
+}
+.row-pulse {
+  animation: row-pulse 1.6s ease-out 1;
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.rise-in {
+  animation: rise-in 0.24s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .energy-flow,
+  .energy-flow-slow,
+  .pulse-soft,
+  .pulse-emissive,
+  .row-pulse,
+  .rise-in {
+    animation: none !important;
+  }
+}
+
+/* ------------------------------------------------------------------ leaflet
+ * The tile map is themed from the same tokens so it never reverts to
+ * Leaflet's stock blue/white chrome. */
+.leaflet-container {
+  background: var(--surface-3) !important;
+  font-family: var(--font-sans) !important;
+  outline: none;
+}
+.leaflet-control-attribution {
+  background: color-mix(in srgb, var(--surface) 85%, transparent) !important;
+  color: var(--ink-3) !important;
+  font-size: 9px !important;
+  padding: 1px 6px !important;
+}
+.leaflet-control-attribution a {
+  color: var(--ink-2) !important;
+}
+.leaflet-tooltip.twin-tip {
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 11px;
+}
+.leaflet-tooltip.twin-tip::before {
+  display: none;
+}
+/**
+ * OSM publishes only a light cartography. Rather than pay for a second tile
+ * provider (or re-download the viewport when the palette changes), the dark
+ * basemap is derived in CSS: invert + hue-rotate flips the paper white to
+ * near-black while keeping road/water hues roughly where the eye expects them,
+ * then the saturation and contrast are pulled back so the map recedes behind
+ * the markers instead of competing with them.
+ */
+.canvas-dark .leaflet-tile {
+  filter: invert(1) hue-rotate(180deg) brightness(0.92) contrast(0.92) saturate(0.72);
 }
