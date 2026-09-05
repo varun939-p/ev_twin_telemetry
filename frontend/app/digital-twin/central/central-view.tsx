@@ -36,16 +36,13 @@ import {
   predictArrival,
   truckChassis,
 } from "@/lib/fleet";
-import { SOC_CRITICAL, assetStatus } from "@/lib/fleet-metrics";
+import { SOC_CRITICAL, assetStatus, medianFrameAgeHours } from "@/lib/fleet-metrics";
 import type { InboundSeed, PackSeed } from "@/lib/site-model";
 import { numericValue, type TrustedTelemetryDocument } from "@/lib/trusted-telemetry";
 
 const DRILL_DOWNS = [
   { href: "/digital-twin/truck-telemetry", label: "Truck Telemetry", hint: "Carrier map, alerts, 24-param detail" },
-  { href: "/digital-twin/battery-tracking", label: "Battery Tracking", hint: "Pack register, SOH analytics" },
-  { href: "/digital-twin/swap-station", label: "Swap Station", hint: "Bays, ETA, density radar" },
-  { href: "/digital-twin/chargers", label: "Chargers", hint: "Dual-gun units" },
-  { href: "/digital-twin/dg", label: "DG", hint: "Backup generator" },
+  { href: "/digital-twin/battery-tracking", label: "Battery Tracking", hint: "Pack register, SOH, live SOC" },
 ];
 
 export default function CentralView({ data }: { data: TrustedTelemetryDocument }) {
@@ -54,6 +51,8 @@ export default function CentralView({ data }: { data: TrustedTelemetryDocument }
 
   const vehicles = data.vehicles;
   const registry = useMemo(() => batteryRegistry(vehicles), [vehicles]);
+
+  const medianAgeHours = useMemo(() => medianFrameAgeHours(vehicles), [vehicles]);
 
   /** Packs whose nearest hub is the selected site — real identities + SOC. */
   const sitePacks = useMemo<PackSeed[]>(
@@ -110,7 +109,7 @@ export default function CentralView({ data }: { data: TrustedTelemetryDocument }
       />
 
       {/* 1 — live strip, all validated telemetry ------------------------- */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <KpiCard
           label="Carriers inbound to this hub"
           value={inbound.length}
@@ -139,6 +138,18 @@ export default function CentralView({ data }: { data: TrustedTelemetryDocument }
           tone={belowReserve > 0 ? "danger" : "ok"}
           hint={`Under the ${SOC_CRITICAL}% dispatch reserve, fleet-wide`}
         />
+        {/* Median Frame Age was homed on the Swap Station draft. That route is
+            gone, but the metric is the single best read on ingest-loop health,
+            so it lands here on the fleet-wide overview rather than being lost
+            with the page that used to host it. */}
+        <KpiCard
+          label="Median Frame Age"
+          value={medianAgeHours === null ? null : Number(medianAgeHours.toFixed(1))}
+          unit=" h"
+          tone={medianAgeHours !== null && medianAgeHours > 24 ? "warn" : "ok"}
+          hint="Freshness of the median asset's last validated frame — ingest-loop health"
+          unavailableReason="No frame carries an observation timestamp in this document."
+        />
       </div>
 
       {/* 2 — the site canvas -------------------------------------------- */}
@@ -154,7 +165,7 @@ export default function CentralView({ data }: { data: TrustedTelemetryDocument }
           <SiteCanvas packs={sitePacks} inbound={inbound} station={station} />
         </div>
         <div className="border-t border-line bg-surface-2 px-4 py-2.5">
-          <p className="text-[11px] leading-relaxed text-ink-2">
+          <p className="text-[12px] leading-relaxed text-ink-2">
             <span className="font-semibold text-ink">Provenance:</span> bay occupants, their SOC floor and every
             inbound ETA come from validated vehicle telemetry. Charge progression, gun power, crane motion and DG
             state come from <span className="num">lib/site-model.ts</span> — the vehicle feed publishes no facility
@@ -186,10 +197,10 @@ export default function CentralView({ data }: { data: TrustedTelemetryDocument }
                     className="flex items-center gap-3 px-5 py-2.5 transition hover:bg-surface-2"
                   >
                     <span className="num min-w-0 flex-1 truncate text-xs font-medium text-ink">{truck.carrierLabel}</span>
-                    <span className="num text-[11px] text-ink-2">
+                    <span className="num text-[12px] text-ink-2">
                       {truck.soc === null ? "SOC —" : `SOC ${truck.soc}%`}
                     </span>
-                    <span className="num text-[11px] text-ink-3">{truck.distanceKm ?? "—"} km</span>
+                    <span className="num text-[12px] text-ink-3">{truck.distanceKm ?? "—"} km</span>
                     <Pill tone="accent">{formatEta(truck.etaMinutes) ?? "ETA —"}</Pill>
                   </Link>
                 </li>
@@ -208,7 +219,7 @@ export default function CentralView({ data }: { data: TrustedTelemetryDocument }
                 <Link href={item.href} className="flex items-center gap-3 px-5 py-2.5 transition hover:bg-surface-2">
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-xs font-medium text-ink">{item.label}</span>
-                    <span className="block truncate text-[10px] text-ink-3">{item.hint}</span>
+                    <span className="block truncate text-[11px] text-ink-3">{item.hint}</span>
                   </span>
                   <span aria-hidden className="text-accent">
                     →

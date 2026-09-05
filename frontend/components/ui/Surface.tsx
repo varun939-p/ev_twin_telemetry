@@ -46,7 +46,7 @@ export function CardHeader({
   return (
     <header className={`flex flex-wrap items-start justify-between gap-3 px-5 pb-4 pt-5 ${className}`}>
       <div className="min-w-0">
-        {eyebrow && <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-3">{eyebrow}</p>}
+        {eyebrow && <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-ink-3">{eyebrow}</p>}
         <h2 className="mt-1 text-[15px] font-semibold tracking-tight text-ink">{title}</h2>
         {description && <p className="mt-1 max-w-2xl text-xs leading-relaxed text-ink-2">{description}</p>}
       </div>
@@ -61,7 +61,7 @@ export function Hairline({ className = "" }: { className?: string }) {
 
 export function Eyebrow({ children, className = "" }: { children: ReactNode; className?: string }) {
   return (
-    <p className={`text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-3 ${className}`}>{children}</p>
+    <p className={`text-[11px] font-semibold uppercase tracking-[0.16em] text-ink-3 ${className}`}>{children}</p>
   );
 }
 

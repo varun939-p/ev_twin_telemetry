@@ -243,29 +243,30 @@ docs/               ARCHITECTURE.md — read this
 
 ### Frontend layout
 
-The dashboard is the six-route **Digital Twin** product. The `@/` alias
+The dashboard is the three-route **Digital Twin** product. The `@/` alias
 resolves to `frontend/` (see `frontend/tsconfig.json`).
+
+Swap Station, Chargers and DG were removed from this app (routes deleted,
+sidebar entries deleted) and are being built as a separate workstream;
+`next.config.mjs` keeps **temporary 307 redirects** for those paths so old
+bookmarks land on the Central Dashboard rather than a 404.
 
 ```
 app/digital-twin/central/            isometric site canvas (road, swap station, chargers, DG)
 app/digital-twin/truck-telemetry/    live carrier map + filter bar + 6-field table + 24-param modal
-app/digital-twin/battery-tracking/   pack register, 4 KPIs, SOH/SOC/cycle analytics
-app/digital-twin/swap-station/       DRAFT — bay board, ETA queue, catchment radar
-app/digital-twin/chargers/           DRAFT — dual-gun placeholder
-app/digital-twin/dg/                 DRAFT — backup generator placeholder
+app/digital-twin/battery-tracking/   pack register, 4 KPIs, alerts — live tracking only
 
 components/shell/     AppShell, Sidebar, ThemeToggle, LiveClock
 components/map/       FleetMap (SSR-safe wrapper) -> LeafletFleetMap (client only)
 components/truck/     TruckFilterBar, TruckTable, TruckDetailModal
-components/battery/   BatteryKpiStrip, BatteryFilterBar, BatteryTable, BatteryAnalytics
+components/battery/   BatteryKpiStrip, BatteryFilterBar, BatteryTable
 components/central/   SiteCanvas (pure SVG isometric scene)
 components/alerts/    AttentionPanel (grouped "Need Attention" banner)
-components/ui/        Surface, Pill, Modal, Field, InfoTip, Metric, DraftNotice
+components/ui/        Surface, Pill, Modal, Field, InfoTip, Metric
 
 lib/store.ts          Zustand store: filters + bi-directional hover/selection pointer
-lib/fleet.ts          filter model, regions, SOC brackets, swap stations, ETA maths
+lib/fleet.ts          filter model, buildGeoIndex (dataset-derived dropdowns), ETA maths
 lib/fleet-metrics.ts  status derivation, KPI coverage types, alerts, table projections
-lib/analytics.ts      chart series builders (Recharts)
 lib/site-model.ts     the ONLY modelled data in the app — facility simulation
 lib/theme.ts(x)       dark/light controller (useSyncExternalStore, no FOUC)
 ```

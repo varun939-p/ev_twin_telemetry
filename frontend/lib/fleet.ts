@@ -253,6 +253,96 @@ export const EMPTY_FILTERS: FilterState = {
 };
 
 /** Per-state asset counts so the cascade can badge real coverage. */
+/**
+ * DATASET-DERIVED GEOGRAPHY INDEX.
+ *
+ * The dropdowns used to be fed from the static `INDIA_STATES` list, so an
+ * operator scrolled past 25 states with no assets to reach the 4 that had
+ * any. That is a browsing UI, not an operations one.
+ *
+ * This walks the fleet ONCE and returns only the regions, states and cities
+ * that actually have carriers in the loaded document, each with its live
+ * count. Nothing is hardcoded: when the backend starts returning vehicles in
+ * Karnataka, "South / Karnataka / Bengaluru" appears in the filters by
+ * itself. `REGION_OF_STATE` stays as the classification lookup — that is
+ * reference data (which region a state belongs to), not a list of options.
+ *
+ * Counts are computed on the UNFILTERED fleet so the options do not vanish
+ * as the operator narrows the scope — a dropdown whose contents disappear
+ * while you use it is impossible to navigate back out of.
+ */
+export interface GeoOption {
+  value: string;
+  count: number;
+}
+
+export interface GeoIndex {
+  /** Regions with at least one asset, in canonical REGIONS order. */
+  regions: GeoOption[];
+  /** All states with assets, in canonical order. */
+  states: GeoOption[];
+  /** States with assets, keyed by region. */
+  statesByRegion: Record<string, GeoOption[]>;
+  /** Cities with assets, keyed by state. */
+  citiesByState: Record<string, GeoOption[]>;
+  /** Assets carrying no usable GPS fix, so they land in no bucket. */
+  unplaced: number;
+}
+
+export function buildGeoIndex(vehicles: TrustedVehicle[]): GeoIndex {
+  const stateCount = new Map<string, number>();
+  const regionCount = new Map<string, number>();
+  const cityCount = new Map<string, Map<string, number>>();
+  let unplaced = 0;
+
+  for (const v of vehicles) {
+    const place = vehicleCity(v);
+    if (!place) {
+      unplaced += 1;
+      continue;
+    }
+    stateCount.set(place.state, (stateCount.get(place.state) ?? 0) + 1);
+
+    const region = regionOfState(place.state);
+    if (region) regionCount.set(region, (regionCount.get(region) ?? 0) + 1);
+
+    let cities = cityCount.get(place.state);
+    if (!cities) {
+      cities = new Map();
+      cityCount.set(place.state, cities);
+    }
+    cities.set(place.name, (cities.get(place.name) ?? 0) + 1);
+  }
+
+  const states: GeoOption[] = [...stateCount.entries()]
+    .map(([value, count]) => ({ value, count }))
+    .sort((a, b) => a.value.localeCompare(b.value));
+
+  const statesByRegion: Record<string, GeoOption[]> = {};
+  for (const option of states) {
+    const region = regionOfState(option.value);
+    if (region) (statesByRegion[region] ??= []).push(option);
+  }
+
+  const citiesByState: Record<string, GeoOption[]> = {};
+  for (const [state, cities] of cityCount) {
+    citiesByState[state] = [...cities.entries()]
+      .map(([value, count]) => ({ value, count }))
+      .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value));
+  }
+
+  return {
+    regions: REGIONS.filter((r) => regionCount.has(r)).map((value) => ({
+      value,
+      count: regionCount.get(value) ?? 0,
+    })),
+    states,
+    statesByRegion,
+    citiesByState,
+    unplaced,
+  };
+}
+
 export function stateCounts(vehicles: TrustedVehicle[]): Record<string, number> {
   const counts: Record<string, number> = {};
   for (const v of vehicles) {

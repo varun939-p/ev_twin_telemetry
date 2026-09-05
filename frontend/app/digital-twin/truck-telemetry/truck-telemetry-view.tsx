@@ -31,7 +31,7 @@ import TruckFilterBar from "@/components/truck/TruckFilterBar";
 import TruckTable from "@/components/truck/TruckTable";
 import { Card, CardHeader, Hairline, PageHeading } from "@/components/ui/Surface";
 import { Pill } from "@/components/ui/Pill";
-import { applyVehicleFilters, batteryRegistry, isEvVehicle, stateCounts } from "@/lib/fleet";
+import { applyVehicleFilters, batteryRegistry, buildGeoIndex, isEvVehicle } from "@/lib/fleet";
 import { truckAlerts, truckRows, type TruckRow } from "@/lib/fleet-metrics";
 import { buildCityClusters, buildMapPoints, ZOOM } from "@/lib/map-data";
 import { useFilterState, useTwin } from "@/lib/store";
@@ -50,7 +50,8 @@ export default function TruckTelemetryView({ data }: { data: TrustedTelemetryDoc
   const vehicles = data.vehicles;
   const registry = useMemo(() => batteryRegistry(vehicles), [vehicles]);
   const params = useMemo(() => orderedParams(data), [data]);
-  const counts = useMemo(() => stateCounts(vehicles), [vehicles]);
+  // Built from the FULL fleet so options never disappear mid-drill-down.
+  const geoIndex = useMemo(() => buildGeoIndex(vehicles), [vehicles]);
   const evCounts = useMemo(() => {
     const ev = vehicles.filter(isEvVehicle).length;
     return { ev, nonEv: vehicles.length - ev };
@@ -127,7 +128,7 @@ export default function TruckTelemetryView({ data }: { data: TrustedTelemetryDoc
         <Hairline />
         <div className="p-3">
           <FleetMap points={points} clusters={clusters} heightClass="h-[440px]" />
-          <p className="mt-2 px-1 text-[11px] text-ink-3">
+          <p className="mt-2 px-1 text-[12px] text-ink-3">
             <span className="num">{points.length}</span> of <span className="num">{rows.length}</span> carriers in
             scope carry a measured fix
             {unlocatable.length > 0 && (
@@ -152,7 +153,7 @@ export default function TruckTelemetryView({ data }: { data: TrustedTelemetryDoc
       {/* 3 + 4 — filters directly above the table ------------------------ */}
       <div id="carrier-table" className="space-y-3">
         <TruckFilterBar
-          stateCounts={counts}
+          geoIndex={geoIndex}
           evCounts={evCounts}
           scopedCount={rows.length}
           totalCount={vehicles.length}
@@ -164,7 +165,7 @@ export default function TruckTelemetryView({ data }: { data: TrustedTelemetryDoc
             title="Carrier fleet"
             description="Six vital fields per row. The full 24-parameter payload for any carrier is one click away in [Know More]."
             actions={
-              <span className="text-[11px] text-ink-3">
+              <span className="text-[12px] text-ink-3">
                 Sorted rows keep unmeasured values at the bottom — a null is unknown, not zero.
               </span>
             }
@@ -177,10 +178,10 @@ export default function TruckTelemetryView({ data }: { data: TrustedTelemetryDoc
       {/* 5 — carriers with no fix ---------------------------------------- */}
       {unlocatable.length > 0 && (
         <Card padded>
-          <h3 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-3">
+          <h3 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-3">
             Unlocatable carriers ({unlocatable.length})
           </h3>
-          <p className="mt-1 text-[11px] text-ink-2">
+          <p className="mt-1 text-[12px] text-ink-2">
             latitude/longitude are not measured on these frames, so they cannot be plotted honestly.
           </p>
           <ul className="mt-2 flex flex-wrap gap-1.5">
@@ -189,7 +190,7 @@ export default function TruckTelemetryView({ data }: { data: TrustedTelemetryDoc
                 <button
                   type="button"
                   onClick={() => setDetail(row)}
-                  className="num cursor-pointer rounded-md border border-line bg-surface-2 px-2 py-1 text-[11px] text-ink-2 transition hover:border-accent/40 hover:text-accent"
+                  className="num cursor-pointer rounded-md border border-line bg-surface-2 px-2 py-1 text-[12px] text-ink-2 transition hover:border-accent/40 hover:text-accent"
                 >
                   {row.chassis}
                 </button>

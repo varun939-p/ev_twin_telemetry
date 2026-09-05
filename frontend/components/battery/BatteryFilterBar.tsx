@@ -1,7 +1,7 @@
 "use client";
 
 import { FilterChip, GhostButton, SegmentedControl, Select } from "@/components/ui/Field";
-import { REGIONS, SOC_BRACKETS, SWAP_STATIONS, type SocBracket } from "@/lib/fleet";
+import { SOC_BRACKETS, SWAP_STATIONS, type GeoIndex, type SocBracket } from "@/lib/fleet";
 import { useIsFiltered, useTwin } from "@/lib/store";
 
 /**
@@ -18,10 +18,13 @@ import { useIsFiltered, useTwin } from "@/lib/store";
  */
 export default function BatteryFilterBar({
   stationCounts,
+  geoIndex,
   scopedCount,
   totalCount,
 }: {
   stationCounts: Record<string, number>;
+  /** Regions present in the DATA, with live counts — never a hardcoded list. */
+  geoIndex: GeoIndex;
   scopedCount: number;
   totalCount: number;
 }) {
@@ -53,8 +56,8 @@ export default function BatteryFilterBar({
           value={geo.region}
           placeholder="All regions"
           onChange={(region) => setGeo({ region })}
-          options={REGIONS.map((r) => ({ value: r, label: r }))}
-          className="w-[140px]"
+          options={geoIndex.regions.map((r) => ({ value: r.value, label: r.value, badge: r.count }))}
+          className="w-[158px]"
         />
 
         <SegmentedControl<SocBracket>
@@ -65,7 +68,7 @@ export default function BatteryFilterBar({
         />
 
         <div className="ml-auto flex items-end gap-2">
-          <p className="text-[11px] text-ink-2">
+          <p className="text-[12px] text-ink-2">
             <span className="num font-semibold text-ink">{scopedCount}</span>
             <span className="text-ink-3"> / {totalCount} packs in scope</span>
           </p>

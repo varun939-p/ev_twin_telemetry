@@ -46,7 +46,7 @@ export default function LiveClock({ compact = false }: { compact?: boolean }) {
         <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-ok" />
       </span>
       <span className="num text-xs font-semibold text-ink">{time ?? "--:--:--"}</span>
-      {!compact && <span className="hidden text-[10px] text-ink-3 sm:inline">{date ?? "—"} IST</span>}
+      {!compact && <span className="hidden text-[11px] text-ink-3 sm:inline">{date ?? "—"} IST</span>}
     </div>
   );
 }

@@ -48,7 +48,7 @@ export function KpiCard({
   const body = (
     <>
       <div className="flex items-start justify-between gap-3">
-        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-3">{label}</p>
+        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-3">{label}</p>
         {icon}
       </div>
 
@@ -62,10 +62,10 @@ export function KpiCard({
           <Pill tone="warn" title={unavailableReason}>
             Awaiting upstream
           </Pill>
-          <span className="text-[10px] leading-snug text-ink-3">{unavailableReason}</span>
+          <span className="text-[11px] leading-snug text-ink-3">{unavailableReason}</span>
         </div>
       ) : (
-        hint && <p className="mt-1.5 text-[11px] leading-snug text-ink-2">{hint}</p>
+        hint && <p className="mt-1.5 text-[12px] leading-snug text-ink-2">{hint}</p>
       )}
 
       {footer && <div className="mt-2">{footer}</div>}
@@ -82,7 +82,7 @@ export function KpiCard({
         className={`${shell} group cursor-pointer hover:border-accent/50 hover:bg-accent-soft focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40`}
       >
         {body}
-        <span className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-accent opacity-80 transition group-hover:opacity-100">
+        <span className="mt-2 inline-flex items-center gap-1 text-[12px] font-medium text-accent opacity-80 transition group-hover:opacity-100">
           Open swap station
           <svg viewBox="0 0 12 12" className="h-2.5 w-2.5" aria-hidden>
             <path d="M3 2l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
@@ -119,13 +119,13 @@ export function Metric({
   };
   return (
     <div className="rounded-lg border border-line bg-surface-2 px-3 py-2.5">
-      <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-ink-3">{label}</p>
+      <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-3">{label}</p>
       <p
         className={`num mt-1 text-[15px] font-semibold ${value === null ? "cursor-help text-ink-3" : accentText[tone]}`}
         title={value === null ? (reason ?? "Not measured upstream — stored NULL, not zero.") : undefined}
       >
         {value === null ? "—" : value}
-        {unit && value !== null && <span className="ml-0.5 text-[11px] font-normal text-ink-3">{unit}</span>}
+        {unit && value !== null && <span className="ml-0.5 text-[12px] font-normal text-ink-3">{unit}</span>}
       </p>
     </div>
   );

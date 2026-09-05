@@ -50,7 +50,7 @@ export function Pill({
   return (
     <span
       title={title}
-      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-[3px] text-[10px] font-semibold uppercase tracking-[0.08em] ${TONE_CLASS[tone]} ${className}`}
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-[3px] text-[11px] font-semibold uppercase tracking-[0.08em] ${TONE_CLASS[tone]} ${className}`}
     >
       {dot && <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${DOT_CLASS[tone]} ${pulse ? "pulse-soft" : ""}`} />}
       {children}
@@ -118,10 +118,3 @@ export function ModelBadge({ className = "" }: { className?: string }) {
   );
 }
 
-export function DraftBadge({ className = "" }: { className?: string }) {
-  return (
-    <Pill tone="warn" className={className} title="Scaffold for the 3:00 PM review — structure only, no deep logic.">
-      Draft
-    </Pill>
-  );
-}

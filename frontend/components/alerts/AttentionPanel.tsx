@@ -29,7 +29,7 @@ import { ALERT_KIND_LABEL, type AlertKind, type AlertSeverity, type TwinAlert } 
  */
 
 /** Rows rendered per kind before the group collapses behind "Show all". */
-const PREVIEW_ROWS = 3;
+const PREVIEW_ROWS = 2;
 
 const SEVERITY_TONE: Record<AlertSeverity, Tone> = {
   critical: "danger",
@@ -101,16 +101,17 @@ export default function AttentionPanel({
 
   const worst: AlertSeverity | null = counts.critical > 0 ? "critical" : counts.warning > 0 ? "warning" : counts.info > 0 ? "info" : null;
 
+  // The severity tint lives on the HEADER only. Tinting the whole panel made
+  // a 350 px block of pink that buried the page heading and made every row
+  // look equally urgent — the opposite of triage.
   const frame =
-    worst === "critical"
-      ? "border-danger/40 bg-danger-soft"
-      : worst === "warning"
-        ? "border-warn/40 bg-warn-soft"
-        : "border-line bg-surface";
+    worst === "critical" ? "border-danger/40" : worst === "warning" ? "border-warn/40" : "border-line";
+  const headerTint =
+    worst === "critical" ? "bg-danger-soft" : worst === "warning" ? "bg-warn-soft" : "bg-surface-2";
 
   return (
-    <section className={`rounded-xl border ${frame} shadow-[var(--shadow)]`} aria-label={title}>
-      <header className="flex flex-wrap items-center gap-3 px-4 py-3">
+    <section className={`overflow-hidden rounded-xl border bg-surface ${frame} shadow-[var(--shadow)]`} aria-label={title}>
+      <header className={`flex flex-wrap items-center gap-3 px-4 py-3 ${headerTint}`}>
         <span
           className={`grid h-7 w-7 shrink-0 place-items-center rounded-full ${
             worst === "critical" ? "bg-danger text-white" : worst === "warning" ? "bg-warn text-white" : "bg-surface-3 text-ink-3"
@@ -125,7 +126,7 @@ export default function AttentionPanel({
 
         <div className="min-w-0">
           <h2 className="text-[13px] font-semibold tracking-tight text-ink">{title}</h2>
-          <p className="text-[11px] text-ink-2">
+          <p className="text-[12px] text-ink-2">
             {alerts.length === 0
               ? emptyMessage
               : `${alerts.length} open item${alerts.length === 1 ? "" : "s"} in the current scope`}
@@ -152,7 +153,7 @@ export default function AttentionPanel({
             <button
               type="button"
               onClick={() => setCollapsed((v) => !v)}
-              className="cursor-pointer rounded-md border border-line bg-surface px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.1em] text-ink-2 transition hover:text-ink"
+              className="cursor-pointer rounded-md border border-line bg-surface px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.1em] text-ink-2 transition hover:text-ink"
             >
               {collapsed ? "Show" : "Hide"}
             </button>
@@ -161,7 +162,7 @@ export default function AttentionPanel({
       </header>
 
       {alerts.length > 0 && !collapsed && (
-        <div className="scroll-thin max-h-[22rem] overflow-y-auto border-t border-line/70">
+        <div className="scroll-thin max-h-[17rem] overflow-y-auto border-t border-line/70">
           {groups.map((group) => {
             const expanded = expandedKinds.has(group.kind);
             const shown = expanded ? group.items : group.items.slice(0, PREVIEW_ROWS);
@@ -176,16 +177,16 @@ export default function AttentionPanel({
                     }`}
                     aria-hidden
                   />
-                  <h3 className="text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-2">
+                  <h3 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-2">
                     {ALERT_KIND_LABEL[group.kind]}
                   </h3>
-                  <span className="num text-[10px] font-semibold text-ink-3">{group.items.length}</span>
+                  <span className="num text-[11px] font-semibold text-ink-3">{group.items.length}</span>
                   {group.items.length > PREVIEW_ROWS && (
                     <button
                       type="button"
                       onClick={() => toggleKind(group.kind)}
                       aria-expanded={expanded}
-                      className="ml-auto cursor-pointer text-[10px] font-semibold uppercase tracking-[0.1em] text-accent transition hover:underline"
+                      className="ml-auto cursor-pointer text-[11px] font-semibold uppercase tracking-[0.1em] text-accent transition hover:underline"
                     >
                       {expanded ? "Collapse" : `Show all ${group.items.length}`}
                     </button>
@@ -217,10 +218,10 @@ export default function AttentionPanel({
                         />
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-xs font-medium text-ink">{alert.title}</span>
-                          <span className="num block truncate text-[10px] text-ink-3">{alert.vehicleId}</span>
+                          <span className="num block truncate text-[11px] text-ink-3">{alert.vehicleId}</span>
                         </span>
                         {alert.metric && (
-                          <span className="num shrink-0 text-[11px] font-semibold text-ink-2">{alert.metric}</span>
+                          <span className="num shrink-0 text-[12px] font-semibold text-ink-2">{alert.metric}</span>
                         )}
                         <span onClick={(e) => e.stopPropagation()} className="shrink-0">
                           <InfoTip label={`Why ${alert.label} needs attention`}>
@@ -237,7 +238,7 @@ export default function AttentionPanel({
                       <button
                         type="button"
                         onClick={() => toggleKind(group.kind)}
-                        className="w-full cursor-pointer px-4 py-1.5 text-left text-[10px] font-medium text-ink-3 transition hover:bg-surface-3/70 hover:text-ink-2"
+                        className="w-full cursor-pointer px-4 py-1.5 text-left text-[11px] font-medium text-ink-3 transition hover:bg-surface-3/70 hover:text-ink-2"
                       >
                         + {hidden} more with the same signature
                       </button>

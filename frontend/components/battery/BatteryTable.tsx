@@ -75,10 +75,10 @@ const Row = memo(function Row({ row }: { row: BatteryRow }) {
             aria-hidden
           />
           <div className="min-w-0">
-            <p className={`truncate text-[12px] font-semibold ${critical ? "text-danger" : "text-ink"}`}>
+            <p className={`truncate text-[13px] font-semibold ${critical ? "text-danger" : "text-ink"}`}>
               {row.batteryId}
             </p>
-            <p className="num truncate text-[10px] text-ink-3">
+            <p className="num truncate text-[11px] text-ink-3">
               {row.slot === null ? "slot —" : `slot ${row.slot}`} · {row.place?.name ?? "unmapped"}
             </p>
           </div>
@@ -89,7 +89,7 @@ const Row = memo(function Row({ row }: { row: BatteryRow }) {
         <Link
           href={`/digital-twin/truck-telemetry?vehicle_id=${encodeURIComponent(row.vehicleId)}`}
           onClick={(e) => e.stopPropagation()}
-          className="num inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium text-accent underline-offset-2 transition hover:bg-accent-soft hover:underline"
+          className="num inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[12px] font-medium text-accent underline-offset-2 transition hover:bg-accent-soft hover:underline"
           title={`Open carrier ${row.carrierId} on Truck Telemetry`}
         >
           {row.carrierId}
@@ -102,18 +102,18 @@ const Row = memo(function Row({ row }: { row: BatteryRow }) {
           <span className="h-1.5 w-16 overflow-hidden rounded-full bg-surface-3" aria-hidden>
             <span className={`block h-full rounded-full ${socTone}`} style={{ width: `${row.soc ?? 0}%` }} />
           </span>
-          <span className={`num w-10 text-right text-[12px] font-semibold ${critical ? "text-danger" : "text-ink"}`}>
+          <span className={`num w-10 text-right text-[13px] font-semibold ${critical ? "text-danger" : "text-ink"}`}>
             <Value value={row.soc} unit="%" reason="soc not measured on this frame." />
           </span>
         </div>
       </td>
 
       <td className="px-3 py-2 text-right">
-        <Value value={row.soh} unit="%" className="text-[12px] text-ink" reason="soh not measured on this frame." />
+        <Value value={row.soh} unit="%" className="text-[13px] text-ink" reason="soh not measured on this frame." />
       </td>
 
       <td className="px-3 py-2 text-right">
-        <Value value={row.cycles} className="text-[12px] text-ink-2" reason="charge_cycles not measured on this frame." />
+        <Value value={row.cycles} className="text-[13px] text-ink-2" reason="charge_cycles not measured on this frame." />
       </td>
 
       <td className="px-3 py-2">
@@ -121,8 +121,8 @@ const Row = memo(function Row({ row }: { row: BatteryRow }) {
       </td>
 
       <td className="px-3 py-2 text-right">
-        <span className="text-[11px] text-ink-2">{row.station?.name ?? "—"}</span>
-        {row.station && <span className="num block text-[10px] text-ink-3">{row.station.distanceKm} km away</span>}
+        <span className="text-[12px] text-ink-2">{row.station?.name ?? "—"}</span>
+        {row.station && <span className="num block text-[11px] text-ink-3">{row.station.distanceKm} km away</span>}
       </td>
     </tr>
   );
@@ -155,7 +155,7 @@ export default function BatteryTable({ rows }: { rows: BatteryRow[] }) {
       <button
         type="button"
         onClick={() => setSort((p) => ({ key, dir: p.key === key && p.dir === "asc" ? "desc" : "asc" }))}
-        className={`inline-flex cursor-pointer items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.12em] transition ${
+        className={`inline-flex cursor-pointer items-center gap-1 text-[11px] font-semibold uppercase tracking-[0.12em] transition ${
           sort.key === key ? "text-accent" : "text-ink-3 hover:text-ink-2"
         }`}
       >
@@ -184,16 +184,16 @@ export default function BatteryTable({ rows }: { rows: BatteryRow[] }) {
         <thead className="sticky top-0 z-10 bg-surface-2/95 backdrop-blur">
           <tr className="border-b border-line">
             {header("battery", "Battery")}
-            <th scope="col" className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-3">
+            <th scope="col" className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-3">
               Carrier / Truck ID
             </th>
             {header("soc", "SOC", "right")}
             {header("soh", "SOH", "right")}
             {header("cycles", "Cycles", "right")}
-            <th scope="col" className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-3">
+            <th scope="col" className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-3">
               Status
             </th>
-            <th scope="col" className="px-3 py-2 text-right text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-3">
+            <th scope="col" className="px-3 py-2 text-right text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-3">
               Nearest hub
             </th>
           </tr>

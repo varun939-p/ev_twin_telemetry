@@ -54,7 +54,7 @@ function SortHeader({
       <button
         type="button"
         onClick={onClick}
-        className={`inline-flex cursor-pointer items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.12em] transition ${
+        className={`inline-flex cursor-pointer items-center gap-1 text-[11px] font-semibold uppercase tracking-[0.12em] transition ${
           active ? "text-accent" : "text-ink-3 hover:text-ink-2"
         }`}
       >
@@ -120,8 +120,8 @@ const Row = memo(function Row({
             aria-hidden
           />
           <div className="min-w-0">
-            <p className="num truncate text-[12px] font-semibold text-ink">{row.chassis}</p>
-            <p className="truncate text-[10px] text-ink-3">
+            <p className="num truncate text-[13px] font-semibold text-ink">{row.chassis}</p>
+            <p className="truncate text-[11px] text-ink-3">
               {row.place ? `${row.place.name}, ${row.place.state}` : "No mapped location"}
             </p>
           </div>
@@ -137,21 +137,21 @@ const Row = memo(function Row({
           <span className="h-1.5 w-16 overflow-hidden rounded-full bg-surface-3" aria-hidden>
             <span className={`block h-full rounded-full ${socTone}`} style={{ width: `${row.soc ?? 0}%` }} />
           </span>
-          <span className="num w-10 text-right text-[12px] font-semibold text-ink">
+          <span className="num w-10 text-right text-[13px] font-semibold text-ink">
             <Value value={row.soc} unit="%" reason="soc is not measured on this frame." />
           </span>
         </div>
       </td>
 
       <td className="px-3 py-2 text-right">
-        <Value value={row.residualKm} unit=" km" className="text-[12px] text-ink" reason="residual_mileage_km not measured on this frame." />
+        <Value value={row.residualKm} unit=" km" className="text-[13px] text-ink" reason="residual_mileage_km not measured on this frame." />
       </td>
 
       <td className="px-3 py-2 text-right">
         <Value
           value={row.odometerKm === null ? null : Math.round(row.odometerKm).toLocaleString("en-IN")}
           unit=" km"
-          className="text-[12px] text-ink-2"
+          className="text-[13px] text-ink-2"
           reason="odometer_km not measured on this frame."
         />
       </td>
@@ -163,14 +163,14 @@ const Row = memo(function Row({
           <Link
             href={`/digital-twin/battery-tracking?battery_id=${encodeURIComponent(row.vehicleId)}`}
             onClick={(e) => e.stopPropagation()}
-            className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-accent underline-offset-2 transition hover:bg-accent-soft hover:underline"
+            className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[12px] font-semibold text-accent underline-offset-2 transition hover:bg-accent-soft hover:underline"
             title={`Open ${row.batteryLabel} on Battery Tracking`}
           >
             {row.batteryLabel}
             <span aria-hidden>→</span>
           </Link>
         ) : (
-          <span className="text-[11px] text-ink-3" title="No pack telemetry on this frame — carrier only.">
+          <span className="text-[12px] text-ink-3" title="No pack telemetry on this frame — carrier only.">
             Non-EV
           </span>
         )}
@@ -183,7 +183,7 @@ const Row = memo(function Row({
             e.stopPropagation();
             onKnowMore(row);
           }}
-          className="cursor-pointer rounded-md border border-transparent px-2 py-1 text-[11px] font-semibold text-accent underline-offset-2 transition hover:border-accent/30 hover:bg-accent-soft hover:underline"
+          className="cursor-pointer rounded-md border border-transparent px-2 py-1 text-[12px] font-semibold text-accent underline-offset-2 transition hover:border-accent/30 hover:bg-accent-soft hover:underline"
         >
           Know More
         </button>
@@ -246,10 +246,10 @@ export default function TruckTable({
             <SortHeader label="SOC" align="right" active={sort.key === "soc"} dir={sort.dir} onClick={() => toggle("soc")} />
             <SortHeader label="Residual" align="right" active={sort.key === "residual"} dir={sort.dir} onClick={() => toggle("residual")} />
             <SortHeader label="Odometer" align="right" active={sort.key === "odometer"} dir={sort.dir} onClick={() => toggle("odometer")} />
-            <th scope="col" className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-3">
+            <th scope="col" className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-3">
               Battery
             </th>
-            <th scope="col" className="px-3 py-2 text-right text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-3">
+            <th scope="col" className="px-3 py-2 text-right text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-3">
               Detail
             </th>
           </tr>

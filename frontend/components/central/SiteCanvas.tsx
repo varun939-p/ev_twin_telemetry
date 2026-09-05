@@ -35,7 +35,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
-import { ModelBadge, Pill } from "@/components/ui/Pill";
+import { Pill } from "@/components/ui/Pill";
 import type { SwapStation } from "@/lib/fleet";
 import { ROAD_DOCK_T, SITE_ASSETS, simulateSite, type InboundSeed, type PackSeed } from "@/lib/site-model";
 
@@ -226,6 +226,21 @@ export default function SiteCanvas({
   const site = useMemo(() => simulateSite(tick, packs, inbound, station), [tick, packs, inbound, station]);
 
   const go = (href: string) => router.push(href);
+
+  /**
+   * Facility assets that no longer have a destination (chargers, DG, grid)
+   * must NOT advertise themselves as clickable. `staticProps` gives them the
+   * same hover highlight and accessible label without `role="link"`, a
+   * pointer cursor or a router push — a control that looks clickable and does
+   * nothing is the single most common trust bug in an operations UI.
+   */
+  const staticProps = (id: string, label: string) => ({
+    "aria-label": label,
+    className: "outline-none",
+    onMouseEnter: () => setHoverId(id),
+    onMouseLeave: () => setHoverId(null),
+  });
+
   const linkProps = (id: string, href: string, label: string) => ({
     role: "link" as const,
     tabIndex: 0,
@@ -308,7 +323,7 @@ export default function SiteCanvas({
           strokeDasharray="10 12"
           opacity={0.8}
         />
-        <text x={72} y={196} className="fill-[var(--ink-3)] text-[11px]" style={{ fontSize: 11 }}>
+        <text x={72} y={196} className="fill-[var(--ink-3)] text-[12px]" style={{ fontSize: 11 }}>
           ENTRY
         </text>
         <text x={1148} y={336} textAnchor="end" className="fill-[var(--ink-3)]" style={{ fontSize: 11 }}>
@@ -348,7 +363,7 @@ export default function SiteCanvas({
         ))}
 
         {/* -------------------------------------------------- grid pylon */}
-        <g {...linkProps("grid", "/digital-twin/chargers", "Grid feeder — open chargers")}>
+        <g {...staticProps("grid", "Grid feeder — 250 kW utility supply")}>
           <path
             d={`M ${ANCHOR.pylon[0] - 18} ${ANCHOR.pylon[1] + 46} L ${ANCHOR.pylon[0] - 6} ${ANCHOR.pylon[1] - 40} L ${ANCHOR.pylon[0] + 6} ${ANCHOR.pylon[1] - 40} L ${ANCHOR.pylon[0] + 18} ${ANCHOR.pylon[1] + 46}`}
             fill="none"
@@ -367,7 +382,7 @@ export default function SiteCanvas({
         </g>
 
         {/* ------------------------------------------------------- station */}
-        <g {...linkProps("swap-station", "/digital-twin/swap-station", "Swap station — open telemetry")}>
+        <g {...linkProps("swap-station", "/digital-twin/battery-tracking", "Swap station — open the pack register")}>
           <Solid
             box={stationBox}
             top="var(--surface)"
@@ -461,20 +476,41 @@ export default function SiteCanvas({
           const glow = bayGlow(i);
           const hovered = hoverId === bay.id;
           return (
-            <g key={bay.id} {...linkProps(bay.id, `/digital-twin/swap-station?bay=${bay.index}`, `${bay.id} — ${bay.status}`)}>
+            <g
+              key={bay.id}
+              {...(bay.vehicleId
+                ? linkProps(
+                    bay.id,
+                    `/digital-twin/battery-tracking?battery_id=${encodeURIComponent(bay.vehicleId)}`,
+                    `${bay.id} — ${bay.status}, ${bay.batteryLabel ?? "pack"} — open in Battery Tracking`,
+                  )
+                : staticProps(bay.id, `${bay.id} — vacant`))}
+            >
               <polygon points={tile(c, 34, 28)} fill="var(--plate)" stroke="var(--line-strong)" strokeWidth={1} />
               {bay.status !== "vacant" && (
                 <>
-                  <Solid box={box} top={glow} left="var(--surface-3)" right="var(--plate)" opacity={hovered ? 0.9 : 1} />
+                  {/* A pack roof is a NEUTRAL plane tinted by its charge state,
+                      never a saturated slab: the status colour has to read as
+                      information, and a full-strength fill turns the canvas
+                      into decoration. Strength tracks charge, so a bay at 90%
+                      is visibly hotter than one at 20% without going neon. */}
+                  <Solid box={box} top="var(--surface-2)" left="var(--surface-3)" right="var(--plate)" opacity={hovered ? 0.92 : 1} />
+                  <polygon
+                    points={box.top}
+                    fill={glow}
+                    opacity={0.14 + ((bay.soc ?? 0) / 100) * 0.3}
+                    stroke={glow}
+                    strokeWidth={hovered ? 1.6 : 1}
+                  />
                   {bay.kw > 0 && (
-                    <polygon points={box.top} fill={glow} opacity={0.55} filter="url(#glow)" className="pulse-soft" />
+                    <polygon points={box.top} fill={glow} filter="url(#glow)" className="pulse-emissive" />
                   )}
-                  <text x={box.crown[0]} y={box.crown[1] + 2} textAnchor="middle" style={{ fontSize: 10, fontWeight: 700 }} className="fill-[var(--surface)]">
+                  <text x={box.crown[0]} y={box.crown[1] + 2} textAnchor="middle" style={{ fontSize: 11, fontWeight: 700 }} className="fill-[var(--ink)]">
                     {bay.soc}%
                   </text>
                 </>
               )}
-              <text x={c[0]} y={c[1] + 26} textAnchor="middle" style={{ fontSize: 9, fontWeight: 600 }} className="fill-[var(--ink-3)]">
+              <text x={c[0]} y={c[1] + 26} textAnchor="middle" style={{ fontSize: 10, fontWeight: 600 }} className="fill-[var(--ink-3)]">
                 BAY {bay.index}
               </text>
               {hovered && (
@@ -493,25 +529,33 @@ export default function SiteCanvas({
           const hovered = hoverId === charger.id;
           const live = charger.totalKw > 0;
           return (
-            <g key={charger.id} {...linkProps(charger.id, charger.href, `${charger.label} — open chargers`)}>
+            <g key={charger.id} {...staticProps(charger.id, `${charger.label} — facility asset`)}>
               <polygon points={tile(c, 40, 32)} fill="var(--plate)" stroke="var(--line-strong)" strokeWidth={1} />
-              <Solid box={box} top={live ? "var(--ok)" : "var(--surface)"} left="var(--surface-3)" right="var(--plate)" opacity={hovered ? 0.9 : 1} />
-              {live && <polygon points={box.top} fill="var(--ok)" opacity={0.5} filter="url(#glow)" className="pulse-soft" />}
+              <Solid box={box} top="var(--surface-2)" left="var(--surface-3)" right="var(--plate)" opacity={hovered ? 0.92 : 1} />
+              {live && (
+                <>
+                  <polygon points={box.top} fill="var(--ok)" opacity={0.18} stroke="var(--ok)" strokeWidth={1} />
+                  <polygon points={box.top} fill="var(--ok)" filter="url(#glow)" className="pulse-emissive" />
+                </>
+              )}
               {/* two guns */}
               {charger.guns.map((gun, gi) => {
-                const gx = box.crown[0] + (gi === 0 ? -22 : 22);
-                const gy = box.crown[1] + 16 + gi * 8;
+                // Guns hang off the kerb side of the unit, clear of the roof —
+                // they were previously drawn over the top face and the kW
+                // labels collided with the geometry.
+                const gx = box.crown[0] + (gi === 0 ? -30 : 30);
+                const gy = box.crown[1] + 30 + gi * 16;
                 const tone = gun.status === "delivering" ? "var(--ok)" : gun.status === "handshake" ? "var(--warn)" : "var(--ink-3)";
                 return (
                   <g key={gun.id}>
                     <circle cx={gx} cy={gy} r={4} fill={tone} className={gun.status === "delivering" ? "pulse-soft" : ""} />
-                    <text x={gx} y={gy - 8} textAnchor="middle" style={{ fontSize: 8, fontWeight: 700 }} className="fill-[var(--ink-3)]">
+                    <text x={gx} y={gy - 9} textAnchor="middle" style={{ fontSize: 9, fontWeight: 700 }} className="fill-[var(--ink-2)]">
                       {gun.kw > 0 ? `${gun.kw}kW` : "—"}
                     </text>
                   </g>
                 );
               })}
-              <text x={c[0]} y={c[1] + 28} textAnchor="middle" style={{ fontSize: 9, fontWeight: 600 }} className="fill-[var(--ink-3)]">
+              <text x={c[0]} y={c[1] + 28} textAnchor="middle" style={{ fontSize: 10, fontWeight: 600 }} className="fill-[var(--ink-3)]">
                 {charger.label.toUpperCase().replace("DUAL-GUN ", "")}
               </text>
             </g>
@@ -519,17 +563,22 @@ export default function SiteCanvas({
         })}
 
         {/* ---------------------------------------------------------- DG */}
-        <g {...linkProps("dg", "/digital-twin/dg", "Backup diesel generator — open DG telemetry")}>
+        <g {...staticProps("dg", "Backup diesel generator — facility asset")}>
           <polygon points={tile(ANCHOR.dg, 76, 58)} fill="var(--plate)" stroke="var(--line-strong)" strokeWidth={1} />
           <Solid
             box={dgBox}
-            top={site.dg.running ? "var(--warn)" : "var(--surface)"}
+            top="var(--surface-2)"
             left="var(--surface-3)"
             right="var(--plate)"
-            opacity={hoverId === "dg" ? 0.9 : 1}
+            opacity={hoverId === "dg" ? 0.92 : 1}
           />
-          {site.dg.running && <polygon points={dgBox.top} fill="var(--warn)" opacity={0.5} filter="url(#glow)" className="pulse-soft" />}
-          <text x={ANCHOR.dg[0]} y={ANCHOR.dg[1] + 44} textAnchor="middle" style={{ fontSize: 9, fontWeight: 600 }} className="fill-[var(--ink-3)]">
+          {site.dg.running && (
+            <>
+              <polygon points={dgBox.top} fill="var(--warn)" opacity={0.18} stroke="var(--warn)" strokeWidth={1} />
+              <polygon points={dgBox.top} fill="var(--warn)" filter="url(#glow)" className="pulse-emissive" />
+            </>
+          )}
+          <text x={ANCHOR.dg[0]} y={ANCHOR.dg[1] + 44} textAnchor="middle" style={{ fontSize: 10, fontWeight: 600 }} className="fill-[var(--ink-3)]">
             DG {site.dg.running ? `${site.dg.loadKw} kW` : "STANDBY"}
           </text>
         </g>
@@ -555,7 +604,7 @@ export default function SiteCanvas({
                   <Solid box={cab} top="var(--ink-2)" left="var(--surface-3)" right="var(--plate)" />
                   {docked && (
                     <>
-                      <polygon points={trailer.top} fill="var(--accent)" opacity={0.45} filter="url(#glow)" className="pulse-soft" />
+                      <polygon points={trailer.top} fill="var(--accent)" filter="url(#glow)" className="pulse-emissive" />
                       <path
                         d={`M ${apron[0] - 46} ${apron[1] - 2} l 92 0`}
                         stroke="var(--accent)"
@@ -583,7 +632,6 @@ export default function SiteCanvas({
       {/* ----------------------------------------------------- overlays */}
       <div className="pointer-events-none absolute inset-0">
         <div className="absolute left-3 top-3 flex flex-wrap items-center gap-2">
-          <ModelBadge />
           <Pill tone={site.dock.phase === "clear" ? "neutral" : "accent"} dot pulse={site.dock.phase !== "clear"}>
             {site.dock.caption}
           </Pill>
@@ -593,7 +641,7 @@ export default function SiteCanvas({
           <button
             type="button"
             onClick={() => setPaused((p) => !p)}
-            className="cursor-pointer rounded-lg border border-line bg-surface px-2.5 py-1.5 text-[11px] font-semibold text-ink-2 shadow-[var(--shadow)] transition hover:text-ink"
+            className="cursor-pointer rounded-lg border border-line bg-surface px-2.5 py-1.5 text-[12px] font-semibold text-ink-2 shadow-[var(--shadow)] transition hover:text-ink"
           >
             {paused ? "▶ Resume" : "❚❚ Pause"}
           </button>
@@ -606,12 +654,12 @@ export default function SiteCanvas({
             ["var(--warn)", "DG running"],
             ["var(--ink-3)", "vacant / idle"],
           ].map(([color, label]) => (
-            <span key={label} className="flex items-center gap-1.5 text-[10px] font-medium text-ink-2">
+            <span key={label} className="flex items-center gap-1.5 text-[11px] font-medium text-ink-2">
               <span className="h-2 w-2 rounded-full" style={{ background: color }} />
               {label}
             </span>
           ))}
-          <span className="text-[10px] text-ink-3">· click any asset to drill down</span>
+          <span className="text-[11px] text-ink-3">· click any asset to drill down</span>
         </div>
       </div>
     </div>

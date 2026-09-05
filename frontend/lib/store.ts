@@ -105,16 +105,36 @@ export const useTwin = create<TwinState>((set) => ({
   setGeo: (patch) =>
     set((s) => {
       const next: GeoSelection = { ...s.geo, ...patch };
-      if (patch.region !== undefined && patch.region !== s.geo.region) {
-        if (next.state && regionOfState(next.state) !== patch.region) {
+
+      /**
+       * Cascade invalidation applies ONLY to levels the caller did not set.
+       *
+       * The bug this replaces: a map cluster click sends
+       * `{region, state, city}` atomically ("Pune 29" -> Maharashtra + Pune),
+       * and the old rule saw `state` change and nulled `city` — so the spec'd
+       * behaviour silently degraded to a state-only filter. Explicit input
+       * from the caller always outranks the cascade.
+       */
+      const regionChanged = patch.region !== undefined && patch.region !== s.geo.region;
+      const stateChanged = patch.state !== undefined && patch.state !== s.geo.state;
+
+      // Region changed by itself: drop a state that no longer belongs to it.
+      if (regionChanged && patch.state === undefined) {
+        if (next.state && regionOfState(next.state) !== next.region) {
           next.state = null;
           next.city = null;
         }
       }
-      if (patch.state !== undefined && patch.state !== s.geo.state) {
+
+      // State changed by itself: the old city cannot belong to the new state.
+      if (stateChanged && patch.city === undefined) {
         next.city = null;
-        if (patch.state) next.region = regionOfState(patch.state) ?? next.region;
       }
+
+      // Keep the region consistent with the state, so picking a state (or a
+      // cluster) lights up its parent region in the filter bar.
+      if (next.state) next.region = regionOfState(next.state) ?? next.region;
+
       return { geo: next };
     }),
 

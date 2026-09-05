@@ -59,11 +59,6 @@ export default function AppShell({
               /
             </span>
             <span className="truncate text-[13px] font-semibold text-ink">{current?.label ?? "Overview"}</span>
-            {current?.draft && (
-              <Pill tone="warn" className="ml-1">
-                Draft
-              </Pill>
-            )}
           </nav>
 
           <div className="ml-auto flex items-center gap-2">

@@ -83,6 +83,18 @@ function boundsOf(points: { lat: number; lon: number }[]): L.LatLngBounds | null
  *   * `flyTo`    (a table row click)              -> fly to ZOOM.asset
  *   * scope change while not in live view          -> gentle refit
  */
+/**
+ * Reads a design token off <html> as a concrete colour string.
+ * Leaflet vector styles land in SVG presentation attributes, which do not
+ * evaluate `var()` — passing the token through verbatim paints everything
+ * black. Resolving here keeps the fallback basemap on-theme.
+ */
+function cssVar(name: string, fallback: string): string {
+  if (typeof window === "undefined") return fallback;
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return value || fallback;
+}
+
 function CameraController({ points }: { points: MapPoint[] }) {
   const map = useMap();
   const fitNonce = useTwin((s) => s.fitNonce);
@@ -190,16 +202,16 @@ function VehicleMarker({ point }: { point: MapPoint }) {
       }}
     >
       <Tooltip direction="top" offset={[0, -8]} className="twin-tip" permanent={hovered && !selected}>
-        <span className="block text-[11px] font-semibold text-ink">
+        <span className="block text-[12px] font-semibold text-ink">
           {point.batteryLabel ?? point.chassis}
         </span>
-        <span className="block text-[10px] text-ink-2">
+        <span className="block text-[11px] text-ink-2">
           {point.chassis} · {point.city ?? "unmapped"}
         </span>
-        <span className="mt-1 block text-[10px]" style={{ color }}>
+        <span className="mt-1 block text-[11px]" style={{ color }}>
           {point.status.toUpperCase()} · SOC {point.soc === null ? "—" : `${point.soc}%`}
         </span>
-        <span className="block text-[9px] text-ink-3">{point.ageLabel}</span>
+        <span className="block text-[10px] text-ink-3">{point.ageLabel}</span>
       </Tooltip>
     </CircleMarker>
   );
@@ -215,7 +227,7 @@ function ClusterMarker({ cluster, onDrill }: { cluster: MapCluster; onDrill: (c:
       iconAnchor: [size / 2, size / 2],
       html: `<div style="width:${size}px;height:${size}px" class="grid place-items-center rounded-full border-2 border-accent bg-accent-soft backdrop-blur-sm cursor-pointer transition hover:scale-105">
                <span class="num text-[13px] font-bold leading-none text-accent">${cluster.count}</span>
-               <span class="text-[8px] font-semibold uppercase tracking-wide text-accent/80 leading-none mt-0.5">${cluster.city}</span>
+               <span class="text-[10px] font-semibold uppercase tracking-wide text-accent/80 leading-none mt-0.5">${cluster.city}</span>
              </div>`,
     });
   }, [cluster.count, cluster.city]);
@@ -227,13 +239,13 @@ function ClusterMarker({ cluster, onDrill }: { cluster: MapCluster; onDrill: (c:
       eventHandlers={{ click: () => onDrill(cluster) }}
     >
       <Tooltip direction="top" offset={[0, -18]} className="twin-tip">
-        <span className="block text-[11px] font-semibold text-ink">
+        <span className="block text-[12px] font-semibold text-ink">
           {cluster.count} assets · {cluster.city}, {cluster.state}
         </span>
-        <span className="block text-[10px] text-ink-2">
+        <span className="block text-[11px] text-ink-2">
           Avg SOC {cluster.avgSoc === null ? "—" : `${cluster.avgSoc}%`}
         </span>
-        <span className="mt-1 block text-[10px] text-accent">
+        <span className="mt-1 block text-[11px] text-accent">
           Click to filter the table to {cluster.state} / {cluster.city}
         </span>
       </Tooltip>
@@ -349,11 +361,23 @@ export default function LeafletFleetMap({
           eventHandlers={{ tileerror: onTileError }}
         />
 
-        {/* vector basemap — only mounted when the tile CDN is unreachable */}
+        {/* Vector basemap — only mounted when the tile CDN is unreachable.
+            NOTE: Leaflet writes these into SVG presentation attributes, where
+            `var(--token)` does NOT resolve (it silently paints black). The
+            tokens are therefore resolved to concrete colours in JS first. */}
         {fallbackGeo && (
           <GeoJSON
+            // Namespaced: the sibling <TileLayer> is also keyed on `resolved`,
+            // and two children of <MapContainer> sharing a key is a React
+            // duplicate-key error.
+            key={`fallback-${resolved}`}
             data={fallbackGeo}
-            style={{ color: "var(--line-strong)", weight: 1, fillColor: "var(--surface-2)", fillOpacity: 1 }}
+            style={{
+              color: cssVar("--line-strong", "#d4d4d8"),
+              weight: 0.8,
+              fillColor: cssVar("--surface-3", "#f4f4f5"),
+              fillOpacity: 1,
+            }}
           />
         )}
         <CameraController points={points} />
@@ -392,7 +416,7 @@ export default function LeafletFleetMap({
         <button
           type="button"
           onClick={resetView}
-          className={`pointer-events-auto absolute left-3 top-3 inline-flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold shadow-[var(--shadow)] transition ${
+          className={`pointer-events-auto absolute left-3 top-3 inline-flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[12px] font-semibold shadow-[var(--shadow)] transition ${
             liveView || zoom > ZOOM.fleet + 1
               ? "border-accent/50 bg-accent text-white hover:brightness-110"
               : "border-line bg-surface text-ink-2 hover:bg-surface-3 hover:text-ink"
@@ -406,7 +430,7 @@ export default function LeafletFleetMap({
         </button>
 
         {/* zoom read-out + layer state */}
-        <div className="pointer-events-none absolute bottom-3 right-3 rounded-md border border-line bg-surface/90 px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.1em] text-ink-3 backdrop-blur-sm">
+        <div className="pointer-events-none absolute bottom-3 right-3 rounded-md border border-line bg-surface/90 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.1em] text-ink-3 backdrop-blur-sm">
           z<span className="num">{zoom}</span> · {showClusters ? "city clusters" : "assets"}
           {fallbackGeo && <span className="ml-1 text-warn">· offline basemap</span>}
         </div>
@@ -414,7 +438,7 @@ export default function LeafletFleetMap({
         {/* legend */}
         <div className="pointer-events-none absolute bottom-3 left-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-line bg-surface/90 px-2.5 py-1.5 backdrop-blur-sm">
           {(["moving", "charging", "idle", "unknown"] as AssetStatus[]).map((s) => (
-            <span key={s} className="flex items-center gap-1.5 text-[10px] font-medium text-ink-2">
+            <span key={s} className="flex items-center gap-1.5 text-[11px] font-medium text-ink-2">
               <span className="h-2 w-2 rounded-full" style={{ background: STATUS_COLOR[s] }} />
               {s}
             </span>

@@ -29,7 +29,7 @@ export function Select<T extends string>({
 }) {
   return (
     <label className={`flex min-w-0 flex-col gap-1 ${className}`}>
-      <span className="text-[9px] font-semibold uppercase tracking-[0.14em] text-ink-3">{label}</span>
+      <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-3">{label}</span>
       <span className="relative block">
         <select
           aria-label={label}
@@ -69,7 +69,7 @@ export function SegmentedControl<T extends string>({
 }) {
   return (
     <div className={`flex min-w-0 flex-col gap-1 ${className}`}>
-      <span className="text-[9px] font-semibold uppercase tracking-[0.14em] text-ink-3">{label}</span>
+      <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-3">{label}</span>
       <div role="group" aria-label={label} className="flex overflow-hidden rounded-lg border border-line bg-surface">
         {options.map((o, i) => {
           const active = o.value === value;
@@ -85,7 +85,7 @@ export function SegmentedControl<T extends string>({
               } ${active ? "bg-accent-soft text-accent" : "text-ink-2 hover:bg-surface-3 hover:text-ink"}`}
             >
               {o.label}
-              {o.count !== undefined && <span className="num ml-1.5 text-[10px] text-ink-3">{o.count}</span>}
+              {o.count !== undefined && <span className="num ml-1.5 text-[11px] text-ink-3">{o.count}</span>}
             </button>
           );
         })}
@@ -106,7 +106,7 @@ export function FilterChip({
 }) {
   const cls = tone === "accent" ? "border-accent/30 bg-accent-soft text-accent" : "border-info/30 bg-info-soft text-info";
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium ${cls}`}>
+    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px] font-medium ${cls}`}>
       {children}
       <button
         type="button"

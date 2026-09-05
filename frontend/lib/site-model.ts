@@ -36,23 +36,30 @@ export interface SiteAssetSpec {
   id: string;
   kind: SiteAssetKind;
   label: string;
-  /** Drill-down target — clicking the 3D asset routes here. */
-  href: string;
+  /**
+   * Drill-down target, or `null` for assets with no page of their own.
+   * Chargers, the DG and the grid feeder are `null` since their routes were
+   * pulled out into a separate workstream; the canvas renders them as
+   * informational geometry rather than dead links.
+   */
+  href: string | null;
   /** Isometric anchor in canvas units (the SVG is 1200 x 680). */
   x: number;
   y: number;
 }
 
 export const SITE_ASSETS: readonly SiteAssetSpec[] = [
-  { id: "swap-station", kind: "swap-station", label: "Swap Station", href: "/digital-twin/swap-station", x: 600, y: 250 },
-  { id: "bay-1", kind: "bay", label: "Bay 1", href: "/digital-twin/swap-station?bay=1", x: 470, y: 300 },
-  { id: "bay-2", kind: "bay", label: "Bay 2", href: "/digital-twin/swap-station?bay=2", x: 555, y: 300 },
-  { id: "bay-3", kind: "bay", label: "Bay 3", href: "/digital-twin/swap-station?bay=3", x: 640, y: 300 },
-  { id: "bay-4", kind: "bay", label: "Bay 4", href: "/digital-twin/swap-station?bay=4", x: 725, y: 300 },
-  { id: "charger-a", kind: "charger", label: "Dual-gun Charger A", href: "/digital-twin/chargers?unit=A", x: 300, y: 430 },
-  { id: "charger-b", kind: "charger", label: "Dual-gun Charger B", href: "/digital-twin/chargers?unit=B", x: 430, y: 470 },
-  { id: "dg", kind: "dg", label: "Backup Diesel Generator", href: "/digital-twin/dg", x: 930, y: 420 },
-  { id: "grid", kind: "grid", label: "Grid Feeder", href: "/digital-twin/chargers", x: 930, y: 250 },
+  { id: "swap-station", kind: "swap-station", label: "Swap Station", href: "/digital-twin/battery-tracking", x: 600, y: 250 },
+  // Bays resolve to the PACK they hold, so the canvas hands off to the pack
+  // register with a battery already selected. Vacant bays are inert.
+  { id: "bay-1", kind: "bay", label: "Bay 1", href: "/digital-twin/battery-tracking", x: 470, y: 300 },
+  { id: "bay-2", kind: "bay", label: "Bay 2", href: "/digital-twin/battery-tracking", x: 555, y: 300 },
+  { id: "bay-3", kind: "bay", label: "Bay 3", href: "/digital-twin/battery-tracking", x: 640, y: 300 },
+  { id: "bay-4", kind: "bay", label: "Bay 4", href: "/digital-twin/battery-tracking", x: 725, y: 300 },
+  { id: "charger-a", kind: "charger", label: "Dual-gun Charger A", href: null, x: 300, y: 430 },
+  { id: "charger-b", kind: "charger", label: "Dual-gun Charger B", href: null, x: 430, y: 470 },
+  { id: "dg", kind: "dg", label: "Backup Diesel Generator", href: null, x: 930, y: 420 },
+  { id: "grid", kind: "grid", label: "Grid Feeder", href: null, x: 930, y: 250 },
 ];
 
 /* ------------------------------------------------------------- model input */
@@ -103,7 +110,7 @@ export interface GunState {
 export interface ChargerState {
   id: string;
   label: string;
-  href: string;
+  href: string | null;
   guns: GunState[];
   totalKw: number;
   ratedKw: number;

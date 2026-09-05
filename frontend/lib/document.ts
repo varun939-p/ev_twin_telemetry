@@ -1,5 +1,10 @@
 import document from "@/data/trusted_vehicle_telemetry.json";
-import { formatAge, frameAgeHours, type TrustedTelemetryDocument } from "@/lib/trusted-telemetry";
+import {
+  formatAge,
+  frameAgeHours,
+  normalizeDocument,
+  type TrustedTelemetryDocument,
+} from "@/lib/trusted-telemetry";
 
 /**
  * Server-side document boundary.
@@ -12,9 +17,15 @@ import { formatAge, frameAgeHours, type TrustedTelemetryDocument } from "@/lib/t
  * The cast is the TypeScript boundary only: the shape is guaranteed upstream
  * by `telemetry.schemas.parse_payload`, which validated every field.
  *
+ * `normalizeDocument` is the RUNTIME half of the 24-parameter contract — it
+ * guarantees every vehicle carries all 24 keys and a verdict for each, whether
+ * the backend sent 8 channels or all 24. This is the single place it runs, so
+ * no view has to defend against a partial payload, and the day the API unlocks
+ * the remaining 16 channels every page populates without a code change.
+ *
  * IMPORTANT: never import this module from a `"use client"` file.
  */
-export const TRUSTED_DOC = document as unknown as TrustedTelemetryDocument;
+export const TRUSTED_DOC = normalizeDocument(document as unknown as TrustedTelemetryDocument);
 
 /** "12 min ago" / "3.4 h ago" for the shell's freshness chip. */
 export function feedFreshnessLabel(doc: TrustedTelemetryDocument = TRUSTED_DOC, now: Date = new Date()): string {

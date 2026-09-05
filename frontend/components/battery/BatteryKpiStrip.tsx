@@ -56,10 +56,11 @@ export default function BatteryKpiStrip({
         tone="neutral"
       />
 
+      {/* The old click-through target (/digital-twin/swap-station) was removed
+          with the draft routes, so this card no longer pretends to navigate. */}
       <KpiCard
         label="Batteries Charging Right Now"
         value={charging.value}
-        href="/digital-twin/swap-station"
         tone="accent"
         hint={charging.note}
         unavailableReason={charging.note}
@@ -88,7 +89,7 @@ export default function BatteryKpiStrip({
         hint={load.note}
         unavailableReason={load.note}
         footer={
-          <p className="num text-[10px] leading-snug text-ink-3">
+          <p className="num text-[11px] leading-snug text-ink-3">
             Σ(active packs × |V×I|/1000) {scopeNote}
             {load.activePacks > 0 && ` · ${load.activePacks} active`}
           </p>

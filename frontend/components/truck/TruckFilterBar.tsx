@@ -3,7 +3,7 @@
 import { useMemo } from "react";
 
 import { FilterChip, GhostButton, SegmentedControl, Select } from "@/components/ui/Field";
-import { CITIES_BY_STATE, REGIONS, statesInRegion, type EvFilter } from "@/lib/fleet";
+import type { EvFilter, GeoIndex } from "@/lib/fleet";
 import { useIsFiltered, useTwin } from "@/lib/store";
 
 /**
@@ -20,12 +20,13 @@ import { useIsFiltered, useTwin } from "@/lib/store";
  * map is not a special case, it is just another writer.
  */
 export default function TruckFilterBar({
-  stateCounts,
+  geoIndex,
   evCounts,
   scopedCount,
   totalCount,
 }: {
-  stateCounts: Record<string, number>;
+  /** Regions/states/cities present in the DATA, with live counts. */
+  geoIndex: GeoIndex;
   evCounts: { ev: number; nonEv: number };
   scopedCount: number;
   totalCount: number;
@@ -39,8 +40,17 @@ export default function TruckFilterBar({
   const clearFilters = useTwin((s) => s.clearFilters);
   const isFiltered = useIsFiltered();
 
-  const states = useMemo(() => statesInRegion(geo.region), [geo.region]);
-  const cities = useMemo(() => (geo.state ? [...(CITIES_BY_STATE[geo.state] ?? [])] : []), [geo.state]);
+  // Options come from the dataset, never from a hardcoded list: pick a region
+  // and the State select narrows to the states in that region that actually
+  // have carriers.
+  const states = useMemo(
+    () => (geo.region ? (geoIndex.statesByRegion[geo.region] ?? []) : geoIndex.states),
+    [geo.region, geoIndex],
+  );
+  const cities = useMemo(
+    () => (geo.state ? (geoIndex.citiesByState[geo.state] ?? []) : []),
+    [geo.state, geoIndex],
+  );
 
   return (
     <div className="rounded-xl border border-line bg-surface p-3 shadow-[var(--shadow)]">
@@ -61,17 +71,17 @@ export default function TruckFilterBar({
           value={geo.region}
           placeholder="All regions"
           onChange={(region) => setGeo({ region })}
-          options={REGIONS.map((r) => ({ value: r, label: r }))}
-          className="w-[132px]"
+          options={geoIndex.regions.map((r) => ({ value: r.value, label: r.value, badge: r.count }))}
+          className="w-[150px]"
         />
 
         <Select
           label="State"
           value={geo.state}
-          placeholder={geo.region ? `All states in ${geo.region}` : "All states"}
+          placeholder={geo.region ? `All states in ${geo.region}` : `All states · ${geoIndex.states.length}`}
           onChange={(state) => setGeo({ state })}
-          options={states.map((s) => ({ value: s, label: s, badge: stateCounts[s] }))}
-          className="w-[176px]"
+          options={states.map((s) => ({ value: s.value, label: s.value, badge: s.count }))}
+          className="w-[188px]"
         />
 
         <Select
@@ -80,12 +90,12 @@ export default function TruckFilterBar({
           placeholder={geo.state ? `All cities in ${geo.state}` : "Pick a state first"}
           onChange={(city) => setGeo({ city })}
           disabled={!geo.state}
-          options={cities.map((c) => ({ value: c, label: c }))}
-          className="w-[160px]"
+          options={cities.map((c) => ({ value: c.value, label: c.value, badge: c.count }))}
+          className="w-[176px]"
         />
 
         <div className="ml-auto flex items-end gap-2">
-          <p className="text-[11px] text-ink-2">
+          <p className="text-[12px] text-ink-2">
             <span className="num font-semibold text-ink">{scopedCount}</span>
             <span className="text-ink-3"> / {totalCount} carriers in scope</span>
           </p>
@@ -105,7 +115,7 @@ export default function TruckFilterBar({
             </FilterChip>
           )}
           {ev === "non-ev" && (
-            <span className="rounded-md border border-info/30 bg-info-soft px-2 py-1 text-[11px] text-info">
+            <span className="rounded-md border border-info/30 bg-info-soft px-2 py-1 text-[12px] text-info">
               Non-EV telemetry integration pending — diesel carriers report position and odometer only.
             </span>
           )}

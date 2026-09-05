@@ -19,65 +19,69 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
-  /* surfaces */
-  --canvas: #f4f4f2;
+  /* surfaces — pure white cards on a soft zinc canvas */
+  --canvas: #f4f4f5;
   --surface: #ffffff;
-  --surface-2: #fafaf9;
-  --surface-3: #f0efec;
-  --line: #e3e2de;
-  --line-strong: #cfcec9;
+  --surface-2: #fafafa;
+  --surface-3: #f4f4f5;
+  --line: #e4e4e7;
+  --line-strong: #d4d4d8;
 
-  /* ink */
-  --ink: #16181c;
-  --ink-2: #565b63;
-  --ink-3: #8b9098;
+  /* ink — zinc ramp, all three pass AA on --surface */
+  --ink: #18181b;
+  --ink-2: #52525b;
+  --ink-3: #71717a;
 
   /* accent + status */
-  --accent: #0d7d72;
-  --accent-soft: #0d7d7215;
-  --accent-ink: #0b5f57;
-  --ok: #1a7f45;
-  --ok-soft: #1a7f4514;
-  --warn: #a45d08;
-  --warn-soft: #a45d0814;
-  --danger: #b4271f;
-  --danger-soft: #b4271f14;
-  --info: #3f4c99;
-  --info-soft: #3f4c9914;
+  --accent: #0f766e;
+  --accent-soft: #0f766e14;
+  --accent-ink: #115e59;
+  --ok: #15803d;
+  --ok-soft: #15803d14;
+  --warn: #b45309;
+  --warn-soft: #b4530914;
+  --danger: #b91c1c;
+  --danger-soft: #b91c1c14;
+  --info: #1d4ed8;
+  --info-soft: #1d4ed814;
 
   /* map / canvas graphics */
-  --grid: #e7e6e2;
-  --plate: #eceae5;
-  --shadow: 0 1px 2px rgba(20, 22, 26, 0.05), 0 8px 24px -12px rgba(20, 22, 26, 0.12);
+  --grid: #ececee;
+  --plate: #f4f4f5;
+  --shadow: 0 1px 2px rgba(9, 9, 11, 0.04), 0 1px 3px rgba(9, 9, 11, 0.06);
 }
 
 .dark {
-  --canvas: #111213;
-  --surface: #191a1c;
-  --surface-2: #1f2123;
-  --surface-3: #26282b;
-  --line: #2c2f33;
-  --line-strong: #3b3f45;
+  /* Crisp, not muddy: the canvas is near-black and every surface lifts off it
+   * by a clear, even step, so cards read as physical planes instead of one
+   * flat grey wash. Neutral zinc, zero hue — deliberately NOT the saturated
+   * blue-on-black "AI dashboard" look this refactor replaced. */
+  --canvas: #09090b;
+  --surface: #18181b;
+  --surface-2: #1f1f22;
+  --surface-3: #27272a;
+  --line: #2e2e32;
+  --line-strong: #3f3f46;
 
-  --ink: #f1f1ef;
-  --ink-2: #a7acb3;
-  --ink-3: #71767d;
+  --ink: #fafafa;
+  --ink-2: #a1a1aa;
+  --ink-3: #7c7c85;
 
-  --accent: #2fbfae;
-  --accent-soft: #2fbfae1a;
-  --accent-ink: #7fded2;
-  --ok: #3fbb6d;
-  --ok-soft: #3fbb6d1a;
-  --warn: #e0993a;
-  --warn-soft: #e0993a1a;
-  --danger: #f0685e;
-  --danger-soft: #f0685e1a;
-  --info: #8b96e8;
-  --info-soft: #8b96e81a;
+  --accent: #2dd4bf;
+  --accent-soft: #2dd4bf1a;
+  --accent-ink: #99f6e4;
+  --ok: #4ade80;
+  --ok-soft: #4ade801a;
+  --warn: #fbbf24;
+  --warn-soft: #fbbf241a;
+  --danger: #f87171;
+  --danger-soft: #f871711a;
+  --info: #60a5fa;
+  --info-soft: #60a5fa1a;
 
-  --grid: #232629;
-  --plate: #202325;
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 12px 32px -16px rgba(0, 0, 0, 0.7);
+  --grid: #232326;
+  --plate: #1f1f22;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.35);
 }
 
 @theme inline {
@@ -187,6 +191,29 @@ body {
   animation: soft-pulse 1.8s ease-in-out infinite;
 }
 
+/**
+ * Emissive pulse for LARGE filled areas (the isometric bay/charger/DG roofs).
+ *
+ * `.pulse-soft` peaks at opacity 1, which is right for a 4 px status dot and
+ * catastrophic for a 60 px slab: a CSS animation overrides the SVG `opacity`
+ * attribute, so a face set to 0.14 was being driven to full saturation every
+ * 1.8 s and the whole canvas read as neon. This keeps the swing inside a
+ * narrow, low band so "energy is flowing here" stays legible without the
+ * surface ever becoming a solid block of colour.
+ */
+@keyframes emissive-pulse {
+  0%,
+  100% {
+    opacity: 0.08;
+  }
+  50% {
+    opacity: 0.22;
+  }
+}
+.pulse-emissive {
+  animation: emissive-pulse 2.4s ease-in-out infinite;
+}
+
 @keyframes rise-in {
   from {
     opacity: 0;
@@ -205,6 +232,7 @@ body {
   .energy-flow,
   .energy-flow-slow,
   .pulse-soft,
+  .pulse-emissive,
   .rise-in {
     animation: none !important;
   }

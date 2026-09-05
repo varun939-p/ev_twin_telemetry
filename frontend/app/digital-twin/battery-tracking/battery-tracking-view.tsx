@@ -20,13 +20,12 @@ import { useEffect, useMemo, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 
 import AttentionPanel from "@/components/alerts/AttentionPanel";
-import BatteryAnalytics from "@/components/battery/BatteryAnalytics";
 import BatteryFilterBar from "@/components/battery/BatteryFilterBar";
 import BatteryKpiStrip from "@/components/battery/BatteryKpiStrip";
 import BatteryTable from "@/components/battery/BatteryTable";
 import { Card, CardHeader, Hairline, PageHeading } from "@/components/ui/Surface";
 import { Pill } from "@/components/ui/Pill";
-import { applyVehicleFilters, batteryRegistry, isEvVehicle, nearestStation } from "@/lib/fleet";
+import { applyVehicleFilters, batteryRegistry, buildGeoIndex, isEvVehicle, nearestStation } from "@/lib/fleet";
 import { SOC_CRITICAL, batteryAlerts, batteryRows } from "@/lib/fleet-metrics";
 import { useFilterState, useTwin } from "@/lib/store";
 import type { TrustedTelemetryDocument } from "@/lib/trusted-telemetry";
@@ -38,6 +37,8 @@ export default function BatteryTrackingView({ data }: { data: TrustedTelemetryDo
 
   const vehicles = data.vehicles;
   const registry = useMemo(() => batteryRegistry(vehicles), [vehicles]);
+  // Region options derived from the loaded fleet, not a static list of states.
+  const geoIndex = useMemo(() => buildGeoIndex(vehicles), [vehicles]);
 
   /** Every pack in the fleet, before this page's filters. */
   const allPacks = useMemo(() => vehicles.filter(isEvVehicle), [vehicles]);
@@ -121,7 +122,12 @@ export default function BatteryTrackingView({ data }: { data: TrustedTelemetryDo
       <BatteryKpiStrip packs={scoped} totalPacks={allPacks.length} />
 
       {/* 3 — filters ----------------------------------------------------- */}
-      <BatteryFilterBar stationCounts={stationCounts} scopedCount={rows.length} totalCount={allPacks.length} />
+      <BatteryFilterBar
+        stationCounts={stationCounts}
+        geoIndex={geoIndex}
+        scopedCount={rows.length}
+        totalCount={allPacks.length}
+      />
 
       {/* 4 — register ---------------------------------------------------- */}
       <Card>
@@ -130,7 +136,7 @@ export default function BatteryTrackingView({ data }: { data: TrustedTelemetryDo
           title="Battery packs"
           description="Six vital fields per pack. Carrier IDs link back to Truck Telemetry, where the map flies to that truck at a readable zoom."
           actions={
-            <span className="text-[11px] text-ink-3">
+            <span className="text-[12px] text-ink-3">
               Rows tinted red are under the {SOC_CRITICAL}% dispatch reserve.
             </span>
           }
@@ -138,9 +144,6 @@ export default function BatteryTrackingView({ data }: { data: TrustedTelemetryDo
         <Hairline />
         <BatteryTable rows={rows} />
       </Card>
-
-      {/* 5 — analytical generators --------------------------------------- */}
-      <BatteryAnalytics vehicles={scoped} registry={registry} scopeLabel={scopeLabel} />
     </div>
   );
 }

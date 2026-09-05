@@ -26,10 +26,14 @@ back-fills a field.
 | `/digital-twin/central` | **full** | `app/digital-twin/central/{page,central-view}.tsx` |
 | `/digital-twin/truck-telemetry` | **full** | `app/digital-twin/truck-telemetry/{page,truck-telemetry-view}.tsx` |
 | `/digital-twin/battery-tracking` | **full** | `app/digital-twin/battery-tracking/{page,battery-tracking-view}.tsx` |
-| `/digital-twin/swap-station` | draft | `app/digital-twin/swap-station/{page,swap-station-view}.tsx` |
-| `/digital-twin/chargers` | draft | `app/digital-twin/chargers/page.tsx` |
-| `/digital-twin/dg` | draft | `app/digital-twin/dg/page.tsx` |
 | `/trucks`, `/batteries` | 308 | `next.config.mjs` → the routes above |
+| `/digital-twin/{swap-station,chargers,dg}` | 307 | `next.config.mjs` → `/digital-twin/central` |
+
+**There are exactly three pages.** Swap Station, Chargers and DG were removed
+(routes deleted, sidebar entries deleted) — they are being built as a separate
+workstream and will be re-integrated later. The redirects are **temporary
+(307)** on purpose: those paths are coming back, and a 308 would be cached by
+browsers and CDNs long after the real routes ship.
 
 Every route follows the same split: `page.tsx` is a **server component** that
 imports the trusted document and passes it down; `*-view.tsx` is the
@@ -59,7 +63,6 @@ therefore parsed on the server and never shipped as a raw asset.
 | `lib/trusted-telemetry.ts` | **untouched.** Payload types, `PARAM_ORDER` (24), field status, geo helpers |
 | `lib/fleet.ts` | filter model, `REGIONS`, `SOC_BRACKETS`, `SWAP_STATIONS`, battery registry, ETA maths |
 | `lib/fleet-metrics.ts` | status derivation, `CoveredMetric` KPIs, alert taxonomy, table projections |
-| `lib/analytics.ts` | chart series builders + CSV export |
 | `lib/map-data.ts` | map points, city clusters, the `ZOOM` ladder |
 | `lib/site-model.ts` | the **only** modelled data in the app — facility simulation |
 | `lib/document.ts` | server-only accessor for the trusted document |
@@ -76,10 +79,9 @@ therefore parsed on the server and never shipped as a raw asset.
 | `components/battery/BatteryKpiStrip.tsx` | the 4 required KPI cards |
 | `components/battery/BatteryFilterBar.tsx` | swap station · region · SOC bracket |
 | `components/battery/BatteryTable.tsx` | pack register, SOC < 20 % in red, `Carrier ID` deep link |
-| `components/battery/BatteryAnalytics.tsx` | Recharts: cycles vs time, mileage vs SOC, SOH vs SOC |
 | `components/central/SiteCanvas.tsx` | isometric SVG site — road, 4 bays, crane, 2 chargers, DG, grid |
 | `components/alerts/AttentionPanel.tsx` | grouped "Need Attention" banner, scoped per page |
-| `components/ui/*` | Surface/Card, Pill, Modal, Field, InfoTip, Metric/KpiCard, DraftNotice |
+| `components/ui/*` | Surface/Card, Pill, Modal, Field, InfoTip, Metric/KpiCard |
 
 ---
 
@@ -141,7 +143,7 @@ row re-renders two rows and one marker — not the 100-row table.
                         └───┬───────────────┬──────────────────┬─────────┘
              read filters   │               │ read pointers    │ read filters
                             ▼               ▼                  ▼
-                   applyVehicleFilters   TruckTable       BatteryAnalytics
+                   applyVehicleFilters   TruckTable       BatteryTable
                             │            (hover/select)    (Recharts series)
                             ▼
                    truckRows → buildMapPoints → buildCityClusters
@@ -184,8 +186,8 @@ selection and bumps `fitNonce`.
 ```
 Truck table  Battery ID  → /digital-twin/battery-tracking?battery_id=<ID>
 Battery table Carrier ID → /digital-twin/truck-telemetry?vehicle_id=<ID>
-Battery KPI "Charging Right Now" → /digital-twin/swap-station
-Any asset in the Central canvas  → its sub-page
+Central canvas bay          → /digital-twin/battery-tracking?battery_id=<ID>
+Central canvas docking truck → /digital-twin/truck-telemetry?vehicle_id=<ID>
 ```
 
 Each destination view reads the parameter with `useSearchParams()` inside a
@@ -194,13 +196,29 @@ Each destination view reads the parameter with `useSearchParams()` inside a
 arriving page scrolls, highlights and (on the truck page) flies the camera
 exactly as if the operator had done it by hand.
 
-### 4.6 Charts
+### 4.6 Filter options are derived from the data
 
-`components/battery/BatteryAnalytics.tsx` renders three Recharts figures from
-`buildReport(...)` in `lib/analytics.ts`, fed by the **already-filtered** rows.
-The charts are therefore a third view of the same scope as the map and the
-table: change the SOC bracket and all three move together. Points carry their
-`vehicleId`, so a click on a scatter dot selects the pack.
+`buildGeoIndex(vehicles)` in `lib/fleet.ts` walks the fleet once and returns
+only the regions, states and cities that actually carry assets, each with a
+count. Nothing in the dropdowns is hardcoded: the Region select currently
+offers North·42 / West·41 / East·15 / South·2 and the State select offers the
+7 states present, instead of the previous static list of 29 states of which 22
+were empty. Counts are computed on the **unfiltered** fleet so options never
+vanish mid-drill-down.
+
+### 4.7 The 24-parameter contract
+
+`TelemetryParam` is derived from the `PARAM_ORDER` tuple, and `TelemetryValues`
+is `Record<TelemetryParam, ParamValue>` — all 24 keys, required. A typo is a
+compile error, and a compile-time assertion pins the tuple at exactly 24.
+
+`normalizeVehicle()` (run once at the document boundary in `lib/document.ts`)
+is the runtime half: it guarantees all 24 keys and a verdict per key whatever
+the backend actually sends. Missing → `absent_upstream` + `null` (never `0`);
+present-but-empty → `null_upstream`; listed in `field_errors` → `field_error`.
+The backend measures 8 of 24 today; when it provisions the rest, the new keys
+arrive as `measured` and every view populates with **no frontend change**,
+because everything iterates `PARAM_ORDER` and reads `field_status`.
 
 ---
 
@@ -220,9 +238,10 @@ papers over the other 16.
 * Anything modelled rather than measured carries a `ModelBadge`. The only
   modelled module is `lib/site-model.ts` (bay charge progression, gun power,
   crane motion, DG state) and it is labelled everywhere it surfaces.
-* Chargers and DG carry **no** simulation at all. There is no real channel to
-  anchor them to, so they are structured placeholders with a `DraftNotice`
-  listing the exact fields needed to go live.
+* Chargers, the DG and the grid feeder are drawn on the Central canvas as
+  facility context but have **no** route and are deliberately **not
+  clickable** — no `role="link"`, no pointer cursor. A control that looks
+  interactive and does nothing is the fastest way to lose an operator's trust.
 
 ---
 
@@ -263,11 +282,10 @@ Two decisions worth flagging at review:
 
 ## 8. Known gaps
 
-* Interaction was verified by SSR output, route/redirect status codes, the
-  type-checker and the linter. No browser was available in the build sandbox,
-  so hover sync, camera behaviour and the modal need one manual pass before
-  the client demo.
-* The three draft pages are structure only, by scope.
+* Interaction is now verified in a real headless Chromium, not just by SSR
+  output: sidebar route set, Know More modal (24/24 parameters + close), the
+  Battery-ID and canvas deep links, dataset-derived dropdown contents, and the
+  camera ladder (fleet z5 → cluster z9 → asset z11 → Exit Live View z5).
 * `POST /api/provision-site` is still proxied in `next.config.mjs` but no page
   calls it — the provisioning UI was part of the deleted legacy dashboard and
   needs a home if it is still wanted.
