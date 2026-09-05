@@ -241,6 +241,14 @@ deploy/schema.sql   the DDL
 docs/               ARCHITECTURE.md — read this
 ```
 
+### Deploying to Vercel
+
+**The Next.js app is in `frontend/`, not at the repository root.** Vercel's
+Root Directory must be set to `frontend` in the project settings or the build
+fails with `No Next.js version detected` — that setting cannot be supplied
+from `vercel.json`. Full instructions, environment variables and the
+health-check checklist are in **[`DEPLOYMENT.md`](DEPLOYMENT.md)**.
+
 ### Frontend layout
 
 The dashboard is the three-route **Digital Twin** product. The `@/` alias
