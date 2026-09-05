@@ -25,6 +25,7 @@ import BatteryKpiStrip from "@/components/battery/BatteryKpiStrip";
 import BatteryTable from "@/components/battery/BatteryTable";
 import TruckDetailModal from "@/components/truck/TruckDetailModal";
 import { Card, CardHeader, Hairline, PageHeading } from "@/components/ui/Surface";
+import PanelErrorBoundary from "@/components/ui/PanelErrorBoundary";
 import { Pill } from "@/components/ui/Pill";
 import {
   applyVehicleFilters,
@@ -35,8 +36,9 @@ import {
   nearestStation,
 } from "@/lib/fleet";
 import { SOC_CRITICAL, batteryAlerts, batteryRows, type BatteryRow } from "@/lib/fleet-metrics";
+import { recordSocSamples } from "@/lib/soc-history";
 import { useFilterState, useTwin } from "@/lib/store";
-import { orderedParams, type TrustedTelemetryDocument } from "@/lib/trusted-telemetry";
+import { numericValue, orderedParams, type TrustedTelemetryDocument } from "@/lib/trusted-telemetry";
 
 export default function BatteryTrackingView({ data }: { data: TrustedTelemetryDocument }) {
   const filters = useFilterState();
@@ -81,6 +83,22 @@ export default function BatteryTrackingView({ data }: { data: TrustedTelemetryDo
     return counts;
   }, [allPacks, sites]);
 
+  /**
+   * Sample every pack's SOC as each document arrives, so the alert tooltips can
+   * quote an OBSERVED rate of change rather than inventing one from a single
+   * frame. Keyed on `generated_at`: a poll that returns an unchanged document
+   * records nothing, and the sampler itself de-duplicates on `observed_at`.
+   */
+  useEffect(() => {
+    recordSocSamples(
+      allPacks.map((v) => ({
+        vehicleId: v.vehicle_id,
+        soc: numericValue(v, "soc"),
+        observedAt: v.observed_at,
+      })),
+    );
+  }, [allPacks, data.generated_at]);
+
   const criticalCount = rows.filter((r) => r.soc !== null && r.soc < SOC_CRITICAL).length;
 
   /* --------------------------------------------------------- deep links */
@@ -113,11 +131,13 @@ export default function BatteryTrackingView({ data }: { data: TrustedTelemetryDo
   return (
     <div className="space-y-4">
       {/* 1 — alert banner, absolute top --------------------------------- */}
-      <AttentionPanel
-        alerts={alerts}
-        title="Need Attention — Batteries"
-        emptyMessage="No pack anomalies in the current scope. Carrier alerts live on Truck Telemetry."
-      />
+      <PanelErrorBoundary name="Battery alerts" resetKey={data.generated_at}>
+        <AttentionPanel
+          alerts={alerts}
+          title="Need Attention — Batteries"
+          emptyMessage="No pack anomalies in the current scope. Carrier alerts live on Truck Telemetry."
+        />
+      </PanelErrorBoundary>
 
       <PageHeading
         title="Battery Tracking"
@@ -138,7 +158,9 @@ export default function BatteryTrackingView({ data }: { data: TrustedTelemetryDo
       />
 
       {/* 2 — the four KPIs ---------------------------------------------- */}
-      <BatteryKpiStrip packs={scoped} totalPacks={allPacks.length} />
+      <PanelErrorBoundary name="Battery KPIs" resetKey={data.generated_at}>
+        <BatteryKpiStrip packs={scoped} totalPacks={allPacks.length} />
+      </PanelErrorBoundary>
 
       {/* 3 — filters ----------------------------------------------------- */}
       <BatteryFilterBar
@@ -153,7 +175,9 @@ export default function BatteryTrackingView({ data }: { data: TrustedTelemetryDo
       <Card>
         <CardHeader eyebrow="Asset register" title="Battery packs" />
         <Hairline />
-        <BatteryTable rows={rows} onKnowMore={setDetail} />
+        <PanelErrorBoundary name="Battery register" resetKey={data.generated_at}>
+          <BatteryTable rows={rows} onKnowMore={setDetail} />
+        </PanelErrorBoundary>
       </Card>
 
       <TruckDetailModal

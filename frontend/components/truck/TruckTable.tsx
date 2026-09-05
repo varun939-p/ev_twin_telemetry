@@ -5,6 +5,7 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 
 import { StatusPill, Value } from "@/components/ui/Pill";
 import { EmptyState } from "@/components/ui/Surface";
+import DetailChevron from "@/components/ui/DetailChevron";
 import { ZOOM } from "@/lib/map-data";
 import { useIsHovered, useIsSelected, useTwin } from "@/lib/store";
 import type { TruckRow } from "@/lib/fleet-metrics";
@@ -199,16 +200,7 @@ const Row = memo(function Row({
       </td>
 
       <td className="px-3 py-2 text-right">
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onKnowMore(row);
-          }}
-          className="cursor-pointer rounded-md border border-transparent px-2 py-1 text-[12px] font-semibold text-accent underline-offset-2 transition hover:border-accent/30 hover:bg-accent-soft hover:underline"
-        >
-          Know More
-        </button>
+        <DetailChevron onClick={() => onKnowMore(row)} label={row.chassis} />
       </td>
     </tr>
   );
@@ -259,7 +251,7 @@ export default function TruckTable({
   }
 
   return (
-    <div className="scroll-thin max-h-[520px] overflow-auto">
+    <div className="scroll-thin table-scroll max-h-[520px] overflow-auto">
       <table className="w-full border-collapse text-left">
         <thead className="sticky top-0 z-10 bg-surface-2/95 backdrop-blur">
           <tr className="border-b border-line">

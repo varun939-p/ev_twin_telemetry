@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 
 import InfoTip from "@/components/ui/InfoTip";
+import { useSocTrend } from "@/lib/soc-history";
 import { Pill, type Tone } from "@/components/ui/Pill";
 import { useTwin } from "@/lib/store";
 import { ALERT_KIND_LABEL, type AlertKind, type AlertSeverity, type TwinAlert } from "@/lib/fleet-metrics";
@@ -227,6 +228,7 @@ export default function AttentionPanel({
                           <InfoTip label={`Why ${alert.label} needs attention`}>
                             <span className="block font-semibold text-ink">{alert.label}</span>
                             <span className="mt-1 block">{alert.comment}</span>
+                            <SocTrendNote alert={alert} />
                           </InfoTip>
                         </span>
                       </div>
@@ -256,5 +258,40 @@ export default function AttentionPanel({
       )}
 
     </section>
+  );
+}
+
+/**
+ * Observed SOC context for a flagged pack.
+ *
+ * Answers "how fast is this moving?" using only frames the dashboard has
+ * actually seen this session (see `lib/soc-history.ts`). With one frame it
+ * says so plainly rather than printing a rate it cannot know — a fabricated
+ * "dropped 1% in 5 min" is worse than an honest "establishing baseline",
+ * because an operator would act on it.
+ *
+ * Only rendered for SOC alerts; a stale-GPS row has no charge trend to show.
+ */
+function SocTrendNote({ alert }: { alert: TwinAlert }) {
+  const trend = useSocTrend(alert.vehicleId);
+  if (alert.kind !== "soc-critical" && alert.kind !== "soc-low") return null;
+
+  return (
+    <span className="mt-1.5 block border-t border-line pt-1.5">
+      <span className="block font-semibold text-ink">Observed trend</span>
+      {trend ? (
+        <span className="block">
+          {alert.label} {trend.label}.
+          {trend.deltaPct < 0
+            ? " Continued discharge at this rate shortens the window before the reserve."
+            : ""}
+        </span>
+      ) : (
+        <span className="block">
+          Establishing a baseline — a rate needs two distinct frames, and only one has been
+          observed so far. It appears here as soon as the upstream publishes the next.
+        </span>
+      )}
+    </span>
   );
 }

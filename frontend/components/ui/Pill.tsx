@@ -73,10 +73,19 @@ export function Pill({
  * active nav item and primary CTAs. If a routine fleet state also wore the
  * accent, the accent would stop meaning "this is where you act".
  */
+/**
+ * Status hues, matched 1:1 to the map markers and the isometric bays.
+ *
+ * `idle` is NEUTRAL, not amber. A parked carrier is the normal resting state
+ * of most of the fleet — 90 of 100 frames right now — and painting it as a
+ * warning made the register look like an emergency and left no colour
+ * headroom for the packs that genuinely need attention. Amber is reserved for
+ * "approaching reserve".
+ */
 const STATUS_TONE: Record<AssetStatus, Tone> = {
   moving: "ok",
-  charging: "info",
-  idle: "warn",
+  charging: "ok",
+  idle: "neutral",
   unknown: "neutral",
 };
 

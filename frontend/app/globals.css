@@ -76,10 +76,10 @@
  * Dark data canvas. Scoped token override — NOT a theme.
  * ------------------------------------------------------------------------- */
 .canvas-dark {
-  --canvas: #0d0f14;
-  --surface: #16171b;
-  --surface-2: #1b1c21;
-  --surface-3: #202127;
+  --canvas: #14161a;
+  --surface: #191b20;
+  --surface-2: #1e2027;
+  --surface-3: #23262d;
 
   --line: rgba(255, 255, 255, 0.08);
   --line-strong: rgba(255, 255, 255, 0.16);
@@ -104,7 +104,7 @@
   --neutral-soft: rgba(255, 255, 255, 0.06);
 
   --grid: rgba(255, 255, 255, 0.05);
-  --plate: #1b1c21;
+  --plate: #1e2027;
   --shadow: none;
 
   background-color: var(--canvas);
@@ -151,6 +151,14 @@
   border-color: var(--line);
 }
 
+html,
+body {
+  height: 100%;
+  /* A stray wide child must never produce a horizontal scrollbar on the
+     document; every scrollable region in this app owns its own overflow. */
+  overflow-x: clip;
+}
+
 html {
   color-scheme: light;
 }
@@ -181,6 +189,25 @@ body {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum" 1, "zero" 1;
+}
+
+/**
+ * TABLE SCROLL STABILITY.
+ *
+ * Sorting a register reorders every row. Chrome's scroll anchoring then tries
+ * to keep "the same content" in view, and because the anchor node has moved
+ * hundreds of pixels it gives up and resets the container to the top —
+ * measured at scrollTop 2401 -> 0 on a sort click. From the operator's seat
+ * that is the table lurching back to row 1 for no reason.
+ *
+ * `overflow-anchor: none` opts the container out of anchoring, so the scroll
+ * offset is simply preserved. `min-height` stops the container collapsing
+ * when a filter narrows the register to a couple of rows, which is the other
+ * way this area used to shift the page under the cursor.
+ */
+.table-scroll {
+  overflow-anchor: none;
+  min-height: 240px;
 }
 
 /* Scrollbars that match the surface instead of the OS default */

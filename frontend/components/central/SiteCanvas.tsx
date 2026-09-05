@@ -271,17 +271,19 @@ export default function SiteCanvas({
   const dgBox = isoBox(ANCHOR.dg, 62, 46, 52);
 
   /**
-   * Bay roof tint. Uses the SAME hues as the status pills and the map markers
-   * (`charging` = steel indigo, `full` = desaturated green), so one colour
-   * means one thing everywhere in the product. Copper is deliberately absent:
-   * it is reserved for the active nav item and primary CTAs.
+   * Bay roof tint.
+   *
+   * A charging bay is GREEN. Energy flowing into a pack is the most positive
+   * state on this canvas and must read as such at a glance — the same
+   * "good/charging" hue the status chips and map markers use, so one colour
+   * means one thing across the whole product. `full` is that green at rest;
+   * a vacant bay is inert grey.
    */
   const bayGlow = (i: number) => {
     const bay = site.bays[i];
     if (!bay) return "var(--ink-3)";
     if (bay.status === "vacant") return "var(--ink-3)";
-    if (bay.status === "full") return "var(--ok)";
-    return "var(--info)";
+    return "var(--ok)";
   };
 
   return (
@@ -666,8 +668,7 @@ export default function SiteCanvas({
 
         <div className="absolute bottom-3 left-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-line bg-surface/90 px-2.5 py-1.5 backdrop-blur-sm">
           {[
-            ["var(--info)", "charging"],
-            ["var(--ok)", "full / delivering"],
+            ["var(--ok)", "charging / delivering"],
             ["var(--warn)", "DG running"],
             ["var(--ink-3)", "vacant / idle"],
           ].map(([color, label]) => (

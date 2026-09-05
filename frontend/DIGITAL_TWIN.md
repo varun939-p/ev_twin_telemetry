@@ -299,6 +299,18 @@ papers over the other 16.
 
 ---
 
+## 5b. Production hardening
+
+| Concern | Mechanism |
+| --- | --- |
+| Live updates | `components/shell/LiveRefresh.tsx` — `router.refresh()` on a 20s interval. Re-runs the server render and reconciles in place: Zustand filters, map camera and scroll all survive. |
+| Wasted work | Polling pauses on `visibilitychange` and `offline`, catches up on return, and `inFlight` collapses overlapping ticks. |
+| Leaks | Interval and both listeners are cleared on unmount. Verified: 9 navigations then 2 ticks in 45s visible, 0 while hidden. |
+| Blast radius | `components/ui/PanelErrorBoundary.tsx` wraps each data surface. A synthetic fault in the KPI strip left the table, alerts, filters and heading rendering, with a retry. `resetKey={data.generated_at}` self-heals on the next document. |
+| Observed SOC trend | `lib/soc-history.ts` samples SOC per document keyed on `observed_at`, bounded to 12 samples/vehicle. Tooltips quote a measured delta ("dropped 1% in 30 min") or say a baseline is still forming — never a rate invented from one frame. |
+| Table stability | `.table-scroll` sets `overflow-anchor: none` + `min-height`. Sorting preserved scrollTop 2401 -> 2401; previously it reset to 0. |
+| Viewport | No horizontal overflow measured at 1024/1280/1440/1600/1920/2560. Content capped at 1920px so ultrawide does not stretch prose. |
+
 ## 6. Alerting
 
 Alerts are **strictly partitioned by scope** and the two panels can no longer

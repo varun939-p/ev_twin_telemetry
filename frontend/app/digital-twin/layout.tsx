@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 import AppShell from "@/components/shell/AppShell";
+import LiveRefresh from "@/components/shell/LiveRefresh";
 import { feedFreshnessLabel, loadTelemetry, measuredChannelCount } from "@/lib/document";
 
 /**
@@ -45,6 +46,9 @@ export default async function DigitalTwinLayout({ children }: { children: ReactN
       source={source}
       sourceNote={note}
     >
+      {/* Re-runs the server render on an interval so upstream changes appear
+          without a reload. Pauses while the tab is hidden or offline. */}
+      <LiveRefresh intervalSeconds={20} />
       {children}
     </AppShell>
   );

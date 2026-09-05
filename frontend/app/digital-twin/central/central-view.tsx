@@ -26,6 +26,7 @@ import SiteCanvas from "@/components/central/SiteCanvas";
 import { KpiCard } from "@/components/ui/Metric";
 import { Pill } from "@/components/ui/Pill";
 import { Card, CardHeader, Hairline, PageHeading } from "@/components/ui/Surface";
+import PanelErrorBoundary from "@/components/ui/PanelErrorBoundary";
 import { SegmentedControl } from "@/components/ui/Field";
 import {
   deriveSites,
@@ -119,7 +120,7 @@ export default function CentralView({ data }: { data: TrustedTelemetryDocument }
       />
 
       {/* 1 — live strip, all validated telemetry ------------------------- */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
         <KpiCard
           label="Carriers inbound to this hub"
           value={inbound.length}
@@ -165,7 +166,9 @@ export default function CentralView({ data }: { data: TrustedTelemetryDocument }
       {/* 2 — the site canvas -------------------------------------------- */}
       <Card>
         <div className="p-2 sm:p-3">
-          <SiteCanvas packs={sitePacks} inbound={inbound} station={station} />
+          <PanelErrorBoundary name="Facility canvas" resetKey={data.generated_at}>
+            <SiteCanvas packs={sitePacks} inbound={inbound} station={station} />
+          </PanelErrorBoundary>
         </div>
       </Card>
 

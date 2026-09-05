@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 
+import DetailChevron from "@/components/ui/DetailChevron";
 import { StatusPill, Value } from "@/components/ui/Pill";
 import { EmptyState } from "@/components/ui/Surface";
 import { SOC_CRITICAL, type BatteryRow } from "@/lib/fleet-metrics";
@@ -157,16 +158,7 @@ const Row = memo(function Row({ row, onKnowMore }: { row: BatteryRow; onKnowMore
             one contract. `stopPropagation` keeps the click off the row's own
             select handler, which would otherwise fire a pointer event and
             pulse the row underneath the modal. */}
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onKnowMore(row);
-          }}
-          className="cursor-pointer rounded-md border border-line bg-surface px-2 py-1 text-[12px] font-medium text-ink-2 transition hover:border-line-strong hover:text-ink"
-        >
-          Know More
-        </button>
+        <DetailChevron onClick={() => onKnowMore(row)} label={row.batteryId} />
       </td>
     </tr>
   );
@@ -230,7 +222,7 @@ export default function BatteryTable({
   }
 
   return (
-    <div className="scroll-thin max-h-[460px] overflow-auto">
+    <div className="scroll-thin table-scroll max-h-[460px] overflow-auto">
       <table className="w-full border-collapse text-left">
         <thead className="sticky top-0 z-10 bg-surface-2/95 backdrop-blur">
           <tr className="border-b border-line">

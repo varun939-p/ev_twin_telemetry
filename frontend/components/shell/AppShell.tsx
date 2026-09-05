@@ -46,7 +46,11 @@ export default function AppShell({
   const current = NAV_ITEMS.find((i) => pathname === i.href || pathname.startsWith(`${i.href}/`));
 
   return (
-    <div className="flex min-h-screen bg-canvas">
+    // `min-h-screen` guarantees the shell fills short viewports; `w-full` +
+    // `min-w-0` on the content column stop a wide table from forcing the whole
+    // page to scroll horizontally (flex children default to min-width:auto,
+    // which is the classic cause of that bug).
+    <div className="flex min-h-screen w-full bg-canvas">
       <Sidebar open={navOpen} onNavigate={() => setNavOpen(false)} />
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -94,7 +98,10 @@ export default function AppShell({
           </div>
         </header>
 
-        <main className="min-w-0 flex-1 px-4 py-5 lg:px-6 lg:py-6">{children}</main>
+        {/* The 1920px ceiling is a no-op on every standard monitor and stops
+            an ultrawide display stretching cards and prose to unreadable
+            line lengths. */}
+        <main className="mx-auto w-full min-w-0 max-w-[1920px] flex-1 px-4 py-5 lg:px-6 lg:py-6">{children}</main>
       </div>
     </div>
   );

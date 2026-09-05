@@ -40,6 +40,7 @@ import L from "leaflet";
 import type { GeoJsonObject } from "geojson";
 
 import { useIsHovered, useIsSelected, useTwin } from "@/lib/store";
+import { regionOfState } from "@/lib/fleet";
 import { STATUS_SHORT, type AssetStatus } from "@/lib/fleet-metrics";
 import { ZOOM, type MapCluster, type MapPoint } from "@/lib/map-data";
 
@@ -53,9 +54,9 @@ const CLUSTER_BREAK = 7;
  *  instead of a glow — a halo over map detail reads as a rendering artefact. */
 const STATUS_COLOR: Record<AssetStatus, string> = {
   moving: "#4ca771",
-  charging: "#5b67d8",
-  idle: "#d9822b",
-  unknown: "#8b8d94",
+  charging: "#4ca771",
+  idle: "#8b8d94",
+  unknown: "#6b7280",
 };
 
 /**
@@ -262,8 +263,15 @@ function ClusterMarker({ cluster, onDrill }: { cluster: MapCluster; onDrill: (c:
       eventHandlers={{ click: () => onDrill(cluster) }}
     >
       <Tooltip direction="top" offset={[0, -18]} className="twin-tip">
+        {/* Region -> state -> city, largest scope first. A cluster bubble
+            shows only a city name and a count; on hover the operator needs to
+            know WHERE that is without cross-referencing the filter bar. */}
         <span className="block text-[12px] font-semibold text-ink">
-          {cluster.count} assets · {cluster.city}, {cluster.state}
+          {cluster.city}, {cluster.state}
+        </span>
+        <span className="block text-[11px] text-ink-2">
+          {regionOfState(cluster.state) ?? "Unmapped region"} region ·{" "}
+          <span className="num">{cluster.count}</span> {cluster.count === 1 ? "carrier" : "carriers"}
         </span>
         <span className="block text-[11px] text-ink-2">
           Avg SOC {cluster.avgSoc === null ? "—" : `${cluster.avgSoc}%`}

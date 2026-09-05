@@ -30,6 +30,7 @@ import TruckDetailModal from "@/components/truck/TruckDetailModal";
 import TruckFilterBar from "@/components/truck/TruckFilterBar";
 import TruckTable from "@/components/truck/TruckTable";
 import { Card, CardHeader, Hairline, PageHeading } from "@/components/ui/Surface";
+import PanelErrorBoundary from "@/components/ui/PanelErrorBoundary";
 import { Pill } from "@/components/ui/Pill";
 import { applyVehicleFilters, batteryRegistry, buildGeoIndex, deriveSites, isEvVehicle } from "@/lib/fleet";
 import { truckAlerts, truckRows, type TruckRow } from "@/lib/fleet-metrics";
@@ -120,7 +121,9 @@ export default function TruckTelemetryView({ data }: { data: TrustedTelemetryDoc
       {/* 1 — MAP, absolute top, full width ------------------------------- */}
       <Card>
         <div className="p-3">
-          <FleetMap points={points} clusters={clusters} heightClass="h-[440px]" />
+          <PanelErrorBoundary name="Carrier map" resetKey={data.generated_at}>
+            <FleetMap points={points} clusters={clusters} heightClass="h-[440px]" />
+          </PanelErrorBoundary>
           <p className="mt-2 px-1 text-[12px] text-ink-3">
             <span className="num">{points.length}</span> of <span className="num">{rows.length}</span> carriers in
             scope carry a measured fix
@@ -137,11 +140,13 @@ export default function TruckTelemetryView({ data }: { data: TrustedTelemetryDoc
       </Card>
 
       {/* 2 — truck-scoped alerts ---------------------------------------- */}
-      <AttentionPanel
-        alerts={alerts}
-        title="Need Attention — Carriers"
-        emptyMessage="No carrier anomalies in the current scope. Battery chemistry alerts live on Battery Tracking."
-      />
+      <PanelErrorBoundary name="Carrier alerts" resetKey={data.generated_at}>
+        <AttentionPanel
+          alerts={alerts}
+          title="Need Attention — Carriers"
+          emptyMessage="No carrier anomalies in the current scope. Battery chemistry alerts live on Battery Tracking."
+        />
+      </PanelErrorBoundary>
 
       {/* 3 + 4 — filters directly above the table ------------------------ */}
       <div id="carrier-table" className="space-y-3">
@@ -155,7 +160,9 @@ export default function TruckTelemetryView({ data }: { data: TrustedTelemetryDoc
         <Card>
           <CardHeader title="Carrier fleet" />
           <Hairline />
-          <TruckTable rows={rows} onKnowMore={setDetail} />
+          <PanelErrorBoundary name="Carrier fleet table" resetKey={data.generated_at}>
+            <TruckTable rows={rows} onKnowMore={setDetail} />
+          </PanelErrorBoundary>
         </Card>
       </div>
 
