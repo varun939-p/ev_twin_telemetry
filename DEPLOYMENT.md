@@ -51,6 +51,7 @@ descriptions live in `frontend/.env.example`.
 | `TELEMETRY_API_PASSCODE` | if the control plane is authenticated | Issued with the secret key. |
 | `TELEMETRY_REVALIDATE_SECONDS` | no (default 30) | Keep at or below the parser's poll interval. |
 | `TELEMETRY_TIMEOUT_MS` | no (default 6000) | Abort budget per request. |
+| `TELEMETRY_HEALTH_PATH` | no (default `/health`) | Uncached liveness probe backing the Live/Cached distinction. |
 
 None of these are `NEXT_PUBLIC_*`, so none reach the browser.
 `lib/telemetry-source.ts` is marked `server-only`, which turns an accidental
@@ -63,6 +64,11 @@ Open the dashboard and read the chip in the top-right of the header:
 * **`Live · 100 frames · 8/24 · 42 h old`** — the control plane answered. The
   `8/24` is how many telemetry channels the upstream currently measures; it
   rises on its own as the vendor provisions more, with no frontend change.
+* **`Cached`** — the control plane is not answering, but Next's data cache
+  still holds a document it served earlier, so the dashboard keeps working.
+  The readings are as old as the outage, and the tooltip says so. It returns
+  to `Live` on its own within one poll (~20 s) once the API recovers — nobody
+  has to refresh.
 * **`Snapshot`** — the control plane could not be reached. Hover it: the
   tooltip names the exact reason (`Control plane unreachable`, a `4xx`
   rejecting the credentials, or a timeout). The dashboard still renders every
