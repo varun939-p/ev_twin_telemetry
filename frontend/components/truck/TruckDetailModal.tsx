@@ -4,7 +4,7 @@ import Link from "next/link";
 
 import Modal from "@/components/ui/Modal";
 import { Pill } from "@/components/ui/Pill";
-import { predictArrival, formatEta } from "@/lib/fleet";
+import { predictArrival, formatEta, type SwapStation } from "@/lib/fleet";
 import {
   FIELD_GROUPS,
   STATUS_COPY,
@@ -40,6 +40,7 @@ const STATUS_TONE: Record<FieldStatus, "ok" | "warn" | "danger" | "neutral"> = {
 
 export default function TruckDetailModal({
   vehicle,
+  sites,
   params,
   batteryLabel,
   open,
@@ -49,13 +50,15 @@ export default function TruckDetailModal({
   /** Label + unit metadata for all 24 parameters, from `orderedParams(doc)`. */
   params: ParameterHealth[];
   batteryLabel: string | null;
+  /** Derived operating sites, for the arrival estimate. */
+  sites: readonly SwapStation[];
   open: boolean;
   onClose: () => void;
 }) {
   if (!vehicle) return null;
 
   const meta = new Map(params.map((p) => [p.field, p]));
-  const arrival = predictArrival(vehicle);
+  const arrival = predictArrival(vehicle, sites);
 
   const observed = vehicle.observed_at
     ? new Date(vehicle.observed_at).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", hour12: false })

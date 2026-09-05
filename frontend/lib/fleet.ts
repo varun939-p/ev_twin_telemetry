@@ -215,7 +215,12 @@ export function vehicleCity(vehicle: TrustedVehicle): { name: string; state: str
   return { name: near.name, state: near.state };
 }
 
-export function applyVehicleFilters(vehicles: TrustedVehicle[], filters: FilterState): TrustedVehicle[] {
+export function applyVehicleFilters(
+  vehicles: TrustedVehicle[],
+  filters: FilterState,
+  /** Derived sites, required only when a station filter is active. */
+  sites: readonly SwapStation[] = [],
+): TrustedVehicle[] {
   return vehicles.filter((v) => {
     if (filters.ev === "ev" && !isEvVehicle(v)) return false;
     if (filters.ev === "non-ev" && isEvVehicle(v)) return false;
@@ -236,7 +241,7 @@ export function applyVehicleFilters(vehicles: TrustedVehicle[], filters: FilterS
       if (soc === null || soc <= min) return false;
     }
 
-    if (filters.stationId && nearestStation(v)?.id !== filters.stationId) return false;
+    if (filters.stationId && nearestStation(v, sites)?.id !== filters.stationId) return false;
 
     if (filters.focus && !filters.focus.vehicleIds.includes(v.vehicle_id)) return false;
     return true;
@@ -367,22 +372,152 @@ export interface SwapStation {
   state: string;
   lat: number;
   lon: number;
-  /** Physical bays at the site -- drives the Swap Station bay scaffold. */
+  /** Physical bays at the site -- drives the facility model's bay scaffold. */
   bays: number;
+  /** Carriers measured at this site, from the payload. */
+  assetCount: number;
 }
 
-export const SWAP_STATIONS: ReadonlyArray<SwapStation> = [
-  { id: "pune-hub", name: "Pune Swap Hub", state: "Maharashtra", lat: 18.5204, lon: 73.8567, bays: 4 },
-  { id: "raurkela-hub", name: "Raurkela Swap Hub", state: "Odisha", lat: 22.2601, lon: 84.83, bays: 4 },
-];
+/**
+ * DERIVED OPERATING SITES — nothing about the fleet's geography is hardcoded.
+ *
+ * The previous build shipped a literal two-element array ("Pune Swap Hub",
+ * "Raurkela Swap Hub"). That is a lie the moment the API serves a fleet that
+ * operates anywhere else: the Site toggle would still offer Pune and Raurkela
+ * and every vehicle would be force-assigned to whichever of the two happened
+ * to be less far away.
+ *
+ * Sites are now computed from the payload, in priority order:
+ *
+ *   1. An EXPLICIT hub identifier on the frame, if the upstream ever sends one
+ *      (`site_id` / `site` / `hub` / `station`). This is the path we want; the
+ *      v1 contract does not carry it yet, so it is written and dormant.
+ *   2. Otherwise, the fleet's own measured GPS: vehicles are grouped by their
+ *      nearest reference city and every city holding at least
+ *      `MIN_SITE_ASSETS` carriers becomes an operating site, anchored on the
+ *      CENTROID of the vehicles actually there rather than on the city's
+ *      nominal coordinates.
+ *
+ * The result is ordered by fleet presence, so the busiest site is the default
+ * selection. Feed this dashboard a Gujarat-only fleet and the toggle shows
+ * Gujarat sites, with no code change.
+ */
+export const MIN_SITE_ASSETS = 3;
+/** Guard-rail: a toggle is a toggle, not a directory. */
+export const MAX_SITES = 8;
+/**
+ * Bays are a FACILITY attribute and no telemetry channel reports them. Until a
+ * site controller feed exists this is the facility model's assumption, and it
+ * is labelled as modelled wherever it surfaces.
+ */
+export const ASSUMED_BAYS_PER_SITE = 4;
 
+/** Reads an explicit hub id off a frame, if the upstream provides one. */
+function explicitSiteKey(vehicle: TrustedVehicle): string | null {
+  const frame = vehicle as unknown as Record<string, unknown>;
+  for (const key of ["site_id", "site", "hub", "hub_id", "station", "station_id"]) {
+    const raw = frame[key];
+    if (typeof raw === "string" && raw.trim()) return raw.trim();
+  }
+  return null;
+}
+
+const slug = (value: string) =>
+  value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+
+export function deriveSites(vehicles: TrustedVehicle[]): SwapStation[] {
+  interface Bucket {
+    name: string;
+    state: string;
+    /** Canonical anchor from the reference-city table, when we have one. */
+    anchor: { lat: number; lon: number } | null;
+    lats: number[];
+    lons: number[];
+    count: number;
+  }
+  const buckets = new Map<string, Bucket>();
+  let sawExplicit = false;
+
+  for (const v of vehicles) {
+    const geo = vehicleGeo(v);
+    if (!geo) continue; // never invent a position for an unlocatable asset
+
+    const explicit = explicitSiteKey(v);
+    const place = vehicleCity(v);
+    if (explicit) sawExplicit = true;
+
+    const name = explicit ?? place?.name;
+    if (!name) continue;
+    const key = slug(explicit ?? `${place!.name}-${place!.state}`);
+
+    const reference = place ? REFERENCE_CITIES.find((c) => c.name === place.name && c.state === place.state) : undefined;
+
+    const bucket = buckets.get(key) ?? {
+      name,
+      state: place?.state ?? "",
+      anchor: reference ? { lat: reference.lat, lon: reference.lon } : null,
+      lats: [],
+      lons: [],
+      count: 0,
+    };
+    bucket.lats.push(geo.lat);
+    bucket.lons.push(geo.lon);
+    bucket.count += 1;
+    buckets.set(key, bucket);
+  }
+
+  // An explicit hub id is authoritative: honour every one the API sends, even
+  // a site with a single carrier. The population threshold only exists to stop
+  // GPS-derived clustering from inventing a "site" out of one parked truck.
+  const floor = sawExplicit ? 1 : MIN_SITE_ASSETS;
+
+  return [...buckets.entries()]
+    .filter(([, b]) => b.count >= floor)
+    .sort((a, b) => b[1].count - a[1].count || a[1].name.localeCompare(b[1].name))
+    .slice(0, MAX_SITES)
+    .map(([id, b]) => {
+      /**
+       * Anchor priority: the reference city's own coordinates, else the MEDIAN
+       * of member positions.
+       *
+       * Not the mean. A single carrier hundreds of km east of a cluster still
+       * resolves to that cluster's nearest city, and averaging dragged the
+       * Kolkata anchor out to 95.2°E — into Myanmar — which would have put a
+       * site marker in the Bay of Bengal. The median ignores that carrier's
+       * position entirely while still describing where the fleet actually is.
+       */
+      const anchor = b.anchor ?? { lat: median(b.lats), lon: median(b.lons) };
+      return {
+        id,
+        name: b.name,
+        state: b.state,
+        lat: anchor.lat,
+        lon: anchor.lon,
+        bays: ASSUMED_BAYS_PER_SITE,
+        assetCount: b.count,
+      };
+    });
+}
+
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
 /** Nearest hub to a vehicle's measured fix, or null when it has no fix. */
-export function nearestStation(vehicle: TrustedVehicle): (SwapStation & { distanceKm: number }) | null {
+export function nearestStation(
+  vehicle: TrustedVehicle,
+  sites: readonly SwapStation[],
+): (SwapStation & { distanceKm: number }) | null {
   const geo = vehicleGeo(vehicle);
   if (!geo) return null;
-  let best = SWAP_STATIONS[0];
+  if (sites.length === 0) return null; // no derived sites => no false assignment
+  let best = sites[0];
   let bestKm = Number.POSITIVE_INFINITY;
-  for (const s of SWAP_STATIONS) {
+  for (const s of sites) {
     const km = haversineKm(geo.lat, geo.lon, s.lat, s.lon);
     if (km < bestKm) {
       bestKm = km;
@@ -401,10 +536,10 @@ export interface ArrivalEstimate {
   feasible: boolean;
 }
 
-export function predictArrival(vehicle: TrustedVehicle): ArrivalEstimate {
+export function predictArrival(vehicle: TrustedVehicle, sites: readonly SwapStation[]): ArrivalEstimate {
   const soc = numericValue(vehicle, "soc");
   const rangeKm = soc === null ? null : ((soc / 100) * PACK_CAPACITY_KWH) / CONSUMPTION_KWH_PER_KM;
-  const station = nearestStation(vehicle);
+  const station = nearestStation(vehicle, sites);
 
   if (!station) {
     return { rangeKm, station: null, distanceKm: null, etaMinutes: null, feasible: false };

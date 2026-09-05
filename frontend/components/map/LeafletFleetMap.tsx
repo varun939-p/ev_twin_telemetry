@@ -40,7 +40,6 @@ import L from "leaflet";
 import type { GeoJsonObject } from "geojson";
 
 import { useIsHovered, useIsSelected, useTwin } from "@/lib/store";
-import { useTheme } from "@/lib/theme";
 import { STATUS_SHORT, type AssetStatus } from "@/lib/fleet-metrics";
 import { ZOOM, type MapCluster, type MapPoint } from "@/lib/map-data";
 
@@ -103,7 +102,16 @@ function boundsOf(points: { lat: number; lon: number }[]): L.LatLngBounds | null
  */
 function cssVar(name: string, fallback: string): string {
   if (typeof window === "undefined") return fallback;
-  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  /**
+   * Resolve against the DARK CANVAS element, not <html>.
+   *
+   * The map lives inside `.canvas-dark`, which re-declares the token set
+   * locally. Reading from `document.documentElement` picks up the LIGHT page
+   * values, which painted the offline basemap white-on-black. Always resolve
+   * from an element that is actually inside the scope being drawn.
+   */
+  const host = document.querySelector(".canvas-dark") ?? document.documentElement;
+  const value = getComputedStyle(host).getPropertyValue(name).trim();
   return value || fallback;
 }
 
@@ -279,7 +287,6 @@ export default function LeafletFleetMap({
   clusters: MapCluster[];
   heightClass?: string;
 }) {
-  const { resolved } = useTheme();
 
   const setGeo = useTwin((s) => s.setGeo);
   const setFocus = useTwin((s) => s.setFocus);
@@ -298,13 +305,29 @@ export default function LeafletFleetMap({
    * The 300 KB GeoJSON is imported ONLY on that failure path, so the happy
    * path never pays for it.
    */
-  const [fallbackGeo, setFallbackGeo] = useState<GeoJsonObject | null>(null);
+  interface Fallback {
+    geo: GeoJsonObject;
+    /** Concrete colours, resolved ONCE from the dark canvas scope. */
+    stroke: string;
+    fill: string;
+  }
+  const [fallbackGeo, setFallbackGeo] = useState<Fallback | null>(null);
   const tileErrorRef = useRef(false);
   const onTileError = () => {
     if (tileErrorRef.current) return;
     tileErrorRef.current = true;
     import("@/data/india_states.json")
-      .then((mod) => setFallbackGeo((mod.default ?? mod) as unknown as GeoJsonObject))
+      .then((mod) =>
+        setFallbackGeo({
+          geo: (mod.default ?? mod) as unknown as GeoJsonObject,
+          // Resolved here, in an event handler, rather than during render:
+          // the DOM exists, so `.canvas-dark` is present and the tokens
+          // resolve to the DARK set. React 19 also forbids reading refs
+          // during render, which rules out doing this inline in the style.
+          stroke: cssVar("--line-strong", "rgba(255,255,255,0.16)"),
+          fill: cssVar("--surface-3", "#202127"),
+        }),
+      )
       .catch(() => undefined);
   };
 
@@ -352,7 +375,11 @@ export default function LeafletFleetMap({
   const showClusters = zoom < CLUSTER_BREAK && clusters.length > 0;
 
   return (
-    <div className={`relative ${heightClass} w-full overflow-hidden rounded-lg border border-line`}>
+    // `canvas-dark` scopes the dark token set to the map only: the overlay
+    // chrome (zoom buttons, legend, Exit Live View) and the Leaflet tooltips
+    // all inherit it, and the OSM tile inversion filter keys off the same
+    // class. The surrounding page stays light.
+    <div className={`canvas-dark relative ${heightClass} w-full overflow-hidden rounded-lg border border-line`}>
       <MapContainer
         ref={mapRef}
         center={center}
@@ -383,16 +410,8 @@ export default function LeafletFleetMap({
             tokens are therefore resolved to concrete colours in JS first. */}
         {fallbackGeo && (
           <GeoJSON
-            // Re-keyed on the theme so the vector fill/stroke are re-resolved
-            // from the tokens when the palette flips.
-            key={`fallback-${resolved}`}
-            data={fallbackGeo}
-            style={{
-              color: cssVar("--line-strong", "#d4d4d8"),
-              weight: 0.8,
-              fillColor: cssVar("--surface-3", "#f4f4f5"),
-              fillOpacity: 1,
-            }}
+            data={fallbackGeo.geo}
+            style={{ color: fallbackGeo.stroke, weight: 0.8, fillColor: fallbackGeo.fill, fillOpacity: 1 }}
           />
         )}
         <CameraController points={points} />

@@ -1,7 +1,7 @@
 "use client";
 
 import { FilterChip, GhostButton, SegmentedControl, Select } from "@/components/ui/Field";
-import { SOC_BRACKETS, SWAP_STATIONS, type GeoIndex, type SocBracket } from "@/lib/fleet";
+import { SOC_BRACKETS, type GeoIndex, type SocBracket, type SwapStation } from "@/lib/fleet";
 import { useIsFiltered, useTwin } from "@/lib/store";
 
 /**
@@ -17,11 +17,14 @@ import { useIsFiltered, useTwin } from "@/lib/store";
  * site" is a real geographic assignment rather than a hard-coded list.
  */
 export default function BatteryFilterBar({
+  sites,
   stationCounts,
   geoIndex,
   scopedCount,
   totalCount,
 }: {
+  /** Sites derived from the live payload, in fleet-presence order. */
+  sites: readonly SwapStation[];
   stationCounts: Record<string, number>;
   /** Regions present in the DATA, with live counts — never a hardcoded list. */
   geoIndex: GeoIndex;
@@ -47,7 +50,7 @@ export default function BatteryFilterBar({
           value={stationId}
           placeholder="All stations"
           onChange={setStation}
-          options={SWAP_STATIONS.map((s) => ({ value: s.id, label: s.name, badge: stationCounts[s.id] ?? 0 }))}
+          options={sites.map((s) => ({ value: s.id, label: s.name, badge: stationCounts[s.id] ?? s.assetCount }))}
           className="w-[190px]"
         />
 

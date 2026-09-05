@@ -152,12 +152,6 @@ export default function Sidebar({ open, onNavigate }: { open: boolean; onNavigat
           )}
         </nav>
 
-        <div className="border-t border-line px-4 py-3">
-          <p className="text-[11px] leading-relaxed text-ink-3">
-            Rendering only telemetry that passed the backend validation gates. Unmeasured channels show as
-            <span className="num text-ink-2"> — </span>, never 0.
-          </p>
-        </div>
       </aside>
     </>
   );

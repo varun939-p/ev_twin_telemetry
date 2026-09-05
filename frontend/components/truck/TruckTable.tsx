@@ -81,12 +81,34 @@ const Row = memo(function Row({
   const requestFly = useTwin((s) => s.requestFly);
   const ref = useRef<HTMLTableRowElement>(null);
 
-  // Map -> table: only a MAP-originated pointer scrolls this row into view.
-  const hoverOrigin = useTwin((s) => (s.hovered?.vehicleId === row.vehicleId ? s.hovered.origin : null));
+  /**
+   * Map -> table: announce the row, never move the page.
+   *
+   * This used to call `scrollIntoView({block:"nearest"})`. The table is not
+   * its own scroll container, so "nearest" resolves up to the document
+   * scroller and the viewport lurched every time the pointer moved over a
+   * map pin — hijacking the screen of someone reading a different row.
+   * The row now pulses instead; the operator decides where to look.
+   *
+   * Keyed on `seq`, so re-hovering the SAME pin replays the pulse.
+   */
+  const pointerSeq = useTwin((s) =>
+    s.selected?.vehicleId === row.vehicleId
+      ? s.selected.seq
+      : s.hovered?.vehicleId === row.vehicleId
+        ? s.hovered.seq
+        : null,
+  );
   useEffect(() => {
-    if (hoverOrigin !== "map") return;
-    ref.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-  }, [hoverOrigin]);
+    if (pointerSeq === null) return;
+    const el = ref.current;
+    if (!el) return;
+    // remove -> reflow -> re-add, or the browser coalesces the class churn
+    // into no change and the animation never replays.
+    el.classList.remove("row-pulse");
+    void el.offsetWidth;
+    el.classList.add("row-pulse");
+  }, [pointerSeq]);
 
   const openOnMap = () => {
     select(row.vehicleId, "table");

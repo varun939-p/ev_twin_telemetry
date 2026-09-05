@@ -25,7 +25,7 @@ import { useIsHovered, useIsSelected, useTwin } from "@/lib/store";
  * scrolling a hundred rows.
  */
 
-const Row = memo(function Row({ row }: { row: BatteryRow }) {
+const Row = memo(function Row({ row, onKnowMore }: { row: BatteryRow; onKnowMore: (row: BatteryRow) => void }) {
   const hovered = useIsHovered(row.vehicleId);
   const selected = useIsSelected(row.vehicleId);
   const hover = useTwin((s) => s.hover);
@@ -151,13 +151,37 @@ const Row = memo(function Row({ row }: { row: BatteryRow }) {
         <span className="text-[12px] text-ink-2">{row.station?.name ?? "—"}</span>
         {row.station && <span className="num block text-[11px] text-ink-3">{row.station.distanceKm} km away</span>}
       </td>
+
+      <td className="px-3 py-2 text-right">
+        {/* Same 24-parameter modal the carrier table opens — one component,
+            one contract. `stopPropagation` keeps the click off the row's own
+            select handler, which would otherwise fire a pointer event and
+            pulse the row underneath the modal. */}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onKnowMore(row);
+          }}
+          className="cursor-pointer rounded-md border border-line bg-surface px-2 py-1 text-[12px] font-medium text-ink-2 transition hover:border-line-strong hover:text-ink"
+        >
+          Know More
+        </button>
+      </td>
     </tr>
   );
 });
 
 type SortKey = "battery" | "soc" | "soh" | "cycles";
 
-export default function BatteryTable({ rows }: { rows: BatteryRow[] }) {
+export default function BatteryTable({
+  rows,
+  onKnowMore,
+}: {
+  rows: BatteryRow[];
+  /** Opens the shared 24-parameter modal for this pack's frame. */
+  onKnowMore: (row: BatteryRow) => void;
+}) {
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "soc", dir: "asc" });
 
   const sorted = useMemo(() => {
@@ -223,11 +247,14 @@ export default function BatteryTable({ rows }: { rows: BatteryRow[] }) {
             <th scope="col" className="px-3 py-2 text-right text-[11px] font-semibold text-ink-3">
               Nearest hub
             </th>
+            <th scope="col" className="px-3 py-2 text-right text-[11px] font-semibold text-ink-3">
+              Detail
+            </th>
           </tr>
         </thead>
         <tbody>
           {sorted.map((row) => (
-            <Row key={row.vehicleId} row={row} />
+            <Row key={row.vehicleId} row={row} onKnowMore={onKnowMore} />
           ))}
         </tbody>
       </table>

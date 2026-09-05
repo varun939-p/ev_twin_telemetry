@@ -28,7 +28,7 @@ import { Pill } from "@/components/ui/Pill";
 import { Card, CardHeader, Hairline, PageHeading } from "@/components/ui/Surface";
 import { SegmentedControl } from "@/components/ui/Field";
 import {
-  SWAP_STATIONS,
+  deriveSites,
   batteryRegistry,
   formatEta,
   isEvVehicle,
@@ -46,10 +46,21 @@ const DRILL_DOWNS = [
 ];
 
 export default function CentralView({ data }: { data: TrustedTelemetryDocument }) {
-  const [stationId, setStationId] = useState<string>(SWAP_STATIONS[0].id);
-  const station = SWAP_STATIONS.find((s) => s.id === stationId) ?? null;
-
   const vehicles = data.vehicles;
+
+  /**
+   * Sites come from the payload, ordered by fleet presence. The toggle used to
+   * be a two-element literal ("Pune", "Raurkela"); it now shows whatever the
+   * API is actually reporting and defaults to the busiest site.
+   */
+  const sites = useMemo(() => deriveSites(vehicles), [vehicles]);
+
+  // Held as `null` until the operator picks one, so an empty payload cannot
+  // crash the page on `sites[0].id` and a site vanishing between polls falls
+  // back to the busiest remaining one instead of rendering a dead selection.
+  const [selectedSiteId, setSelectedSiteId] = useState<string | null>(null);
+  const station = sites.find((s) => s.id === selectedSiteId) ?? sites[0] ?? null;
+  const stationId = station?.id ?? "";
   const registry = useMemo(() => batteryRegistry(vehicles), [vehicles]);
 
   const medianAgeHours = useMemo(() => medianFrameAgeHours(vehicles), [vehicles]);
@@ -58,23 +69,23 @@ export default function CentralView({ data }: { data: TrustedTelemetryDocument }
   const sitePacks = useMemo<PackSeed[]>(
     () =>
       vehicles
-        .filter((v) => isEvVehicle(v) && nearestStation(v)?.id === stationId)
+        .filter((v) => isEvVehicle(v) && nearestStation(v, sites)?.id === stationId)
         .map((v) => ({
           vehicleId: v.vehicle_id,
           batteryLabel: registry.get(v.vehicle_id)?.label ?? v.vehicle_id,
           soc: numericValue(v, "soc"),
         }))
         .sort((a, b) => (a.soc ?? 101) - (b.soc ?? 101)),
-    [vehicles, stationId, registry],
+    [vehicles, stationId, registry, sites],
   );
 
   /** Carriers actually moving toward this hub, ordered by GPS-derived ETA. */
   const inbound = useMemo<InboundSeed[]>(
     () =>
       vehicles
-        .filter((v) => assetStatus(v) === "moving" && nearestStation(v)?.id === stationId)
+        .filter((v) => assetStatus(v) === "moving" && nearestStation(v, sites)?.id === stationId)
         .map((v) => {
-          const arrival = predictArrival(v);
+          const arrival = predictArrival(v, sites);
           return {
             vehicleId: v.vehicle_id,
             carrierLabel: truckChassis(v.vehicle_id),
@@ -84,7 +95,7 @@ export default function CentralView({ data }: { data: TrustedTelemetryDocument }
           };
         })
         .sort((a, b) => (a.etaMinutes ?? 1e9) - (b.etaMinutes ?? 1e9)),
-    [vehicles, stationId],
+    [vehicles, stationId, sites],
   );
 
   const inService = useMemo(() => vehicles.filter((v) => assetStatus(v) === "moving").length, [vehicles]);
@@ -101,8 +112,8 @@ export default function CentralView({ data }: { data: TrustedTelemetryDocument }
           <SegmentedControl
             label="Site"
             value={stationId}
-            onChange={setStationId}
-            options={SWAP_STATIONS.map((s) => ({ value: s.id, label: s.name.replace(" Swap Hub", ""), count: sitePacksCount(vehicles, s.id) }))}
+            onChange={setSelectedSiteId}
+            options={sites.map((s) => ({ value: s.id, label: s.name, count: s.assetCount }))}
           />
         }
       />
@@ -218,7 +229,3 @@ export default function CentralView({ data }: { data: TrustedTelemetryDocument }
   );
 }
 
-/** Pack count per hub, for the site selector badges. */
-function sitePacksCount(vehicles: TrustedTelemetryDocument["vehicles"], stationId: string): number {
-  return vehicles.filter((v) => isEvVehicle(v) && nearestStation(v)?.id === stationId).length;
-}

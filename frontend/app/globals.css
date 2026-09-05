@@ -16,91 +16,99 @@
  * correctly in both variants with no `dark:` duplication in components.
  * ------------------------------------------------------------------------- */
 
-@custom-variant dark (&:where(.dark, .dark *));
-
 /* ---------------------------------------------------------------------------
- * LIGHT — the same restrained system inverted. Paper-white cards, warm-neutral
- * canvas, identical accent and status hues so a screenshot taken in either
- * theme reads as the same product.
+ * ONE THEME, TWO SURFACES.
+ *
+ * The product is a LIGHT enterprise interface. The dark/light toggle is gone:
+ * a client-facing dashboard should have one deliberate, art-directed
+ * appearance, not two half-tuned ones.
+ *
+ * The exception is the two DATA CANVASES — the fleet map and the isometric
+ * facility model. Those stay dark, because a dark ground is what makes status
+ * colour read as luminous signal rather than as ink on paper. They opt in via
+ * `.canvas-dark`, which re-declares the same token names locally, so every
+ * component inside them keeps using `bg-surface` / `text-ink` and simply
+ * resolves to the dark values. No component knows which surface it is on.
  * ------------------------------------------------------------------------- */
+
 :root {
-  --canvas: #f2f2f0;
+  /* surfaces */
+  --canvas: #f7f8fa;
   --surface: #ffffff;
-  --surface-2: #fafaf9;
-  --surface-3: #f2f2f0;
+  --surface-2: #fbfbfc;
+  --surface-3: #f1f2f4;
 
-  /* Hairlines, not shadows. */
-  --line: rgba(13, 15, 20, 0.10);
-  --line-strong: rgba(13, 15, 20, 0.18);
+  --line: #e6e7ea;
+  --line-strong: #d3d5da;
 
-  --ink: #16171b;
-  --ink-2: #55565c;
-  --ink-3: #83848b;
+  /* ink */
+  --ink: #1b1e24;
+  --ink-2: #6b7280;
+  --ink-3: #98a0ac;
 
-  /* Copper. Used ONLY for the active nav item and primary CTAs. */
-  --accent: #a8621d;
-  --accent-soft: rgba(217, 130, 43, 0.12);
-  --accent-ink: #8a4f16;
+  /* Deep petrol-blue. Active nav and primary CTAs ONLY. */
+  --accent: #1d4e89;
+  --accent-soft: #eaf0f7;
+  --accent-ink: #163c69;
 
-  --ok: #3d8c5e;
-  --ok-soft: rgba(76, 167, 113, 0.14);
-  --warn: #a8701f;
-  --warn-soft: rgba(217, 154, 43, 0.14);
-  --danger: #c0413d;
-  --danger-soft: rgba(217, 83, 79, 0.13);
-  --info: #4a55b8;
-  --info-soft: rgba(91, 103, 216, 0.13);
+  /* Status: tinted ground + darker text of the same hue. Never a solid
+     saturated pill — `--ok` is the TEXT colour, `--ok-soft` the ground. */
+  --ok: #1f9254;
+  --ok-soft: #e7f6ed;
+  --warn: #b7791f;
+  --warn-soft: #fdf3e3;
+  --danger: #c4423b;
+  --danger-soft: #fbeae9;
+  --info: #1d4e89;
+  --info-soft: #eaf0f7;
+  --neutral-ink: #6b7280;
+  --neutral-soft: #f1f2f4;
 
-  --grid: rgba(13, 15, 20, 0.06);
-  --plate: #f2f2f0;
-  --shadow: none;
+  /* map / canvas graphics */
+  --grid: #eceef1;
+  --plate: #f1f2f4;
+
+  /* Barely-there. One 1px hairline of shadow, no glow, no stacked blurs. */
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
 }
 
 /* ---------------------------------------------------------------------------
- * DARK — the primary theme.
- *
- * Navy-black canvas, warm-neutral charcoal cards. The two are only ~9 points
- * apart in luminance, so the card is felt rather than announced; separation
- * comes from a 1px hairline, NOT from a glow or a drop shadow. `--shadow` is
- * literally `none` in this theme and that is deliberate: stacked blurred
- * shadows are the single biggest tell of a generated dashboard.
- *
- * The accent is copper, not cyan. It appears on the active nav item and
- * primary CTAs and nowhere else — roughly 1% of the pixels on screen. Status
- * hues are desaturated so a red row reads as serious rather than as an alarm
- * light.
+ * Dark data canvas. Scoped token override — NOT a theme.
  * ------------------------------------------------------------------------- */
-.dark {
+.canvas-dark {
   --canvas: #0d0f14;
   --surface: #16171b;
   --surface-2: #1b1c21;
   --surface-3: #202127;
 
-  /* The card border from the brief, and one step up for dividers that must
-     survive being drawn over a lighter surface. */
-  --line: rgba(255, 255, 255, 0.06);
-  --line-strong: rgba(255, 255, 255, 0.12);
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.16);
 
   --ink: #eceded;
-  --ink-2: #9b9da4;
-  --ink-3: #6e7077;
+  --ink-2: #a8abb2;
+  --ink-3: #7b7e86;
 
-  --accent: #d9822b;
-  --accent-soft: rgba(217, 130, 43, 0.14);
-  --accent-ink: #e9a463;
+  --accent: #6f9fd8;
+  --accent-soft: rgba(111, 159, 216, 0.16);
+  --accent-ink: #a8c6e8;
 
   --ok: #4ca771;
-  --ok-soft: rgba(76, 167, 113, 0.14);
-  --warn: #d99a2b;
-  --warn-soft: rgba(217, 154, 43, 0.14);
-  --danger: #d9534f;
-  --danger-soft: rgba(217, 83, 79, 0.14);
-  --info: #5b67d8;
-  --info-soft: rgba(91, 103, 216, 0.16);
+  --ok-soft: rgba(76, 167, 113, 0.16);
+  --warn: #d9a441;
+  --warn-soft: rgba(217, 164, 65, 0.16);
+  --danger: #e0645f;
+  --danger-soft: rgba(224, 100, 95, 0.16);
+  --info: #6f9fd8;
+  --info-soft: rgba(111, 159, 216, 0.16);
+  --neutral-ink: #a8abb2;
+  --neutral-soft: rgba(255, 255, 255, 0.06);
 
-  --grid: rgba(255, 255, 255, 0.045);
+  --grid: rgba(255, 255, 255, 0.05);
   --plate: #1b1c21;
   --shadow: none;
+
+  background-color: var(--canvas);
+  color: var(--ink);
 }
 
 @theme inline {
@@ -128,14 +136,15 @@
   --color-info-soft: var(--info-soft);
   --color-grid: var(--grid);
   --color-plate: var(--plate);
+  --color-neutral-ink: var(--neutral-ink);
+  --color-neutral-soft: var(--neutral-soft);
 
-  /* Three faces: Plex for UI copy and table text, Space Grotesk for display
-   * numerals and headings, JetBrains Mono for every telemetry value.
+  /* Geist for everything typographic, Geist Mono for every telemetry value.
    * Telemetry is tabular by nature — a monospace with real tabular figures
    * stops columns of SOC / odometer values from dancing between renders. */
-  --font-sans: var(--font-plex), ui-sans-serif, system-ui, sans-serif;
-  --font-display: var(--font-grotesk), var(--font-plex), ui-sans-serif, system-ui, sans-serif;
-  --font-mono: var(--font-jetbrains), ui-monospace, "SF Mono", monospace;
+  --font-sans: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", monospace;
 }
 
 * {
@@ -146,27 +155,26 @@ html {
   color-scheme: light;
 }
 
-html.dark {
-  color-scheme: dark;
-}
-
 body {
   background: var(--canvas);
   color: var(--ink);
   font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.45;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 
 /* Numbers never reflow: every metric uses .num */
 /**
- * Display face — Space Grotesk. Headings and the large KPI numerals only.
- * Body copy and table text stay on Plex: Grotesk's tight apertures are an
- * asset at 20 px and a liability at 12 px in a 100-row register.
+ * Display treatment — headings and large KPI numerals. Same family as body
+ * (Geist covers both), differentiated by weight and optical tightening rather
+ * than by a second typeface.
  */
 .display {
   font-family: var(--font-display);
-  letter-spacing: -0.015em;
+  font-weight: 600;
+  letter-spacing: -0.018em;
 }
 
 .num {
@@ -246,15 +254,35 @@ body {
 }
 
 /**
- * Row arrival highlight. Replaces `scrollIntoView` on the battery register:
- * an incoming pointer tints the row and fades out over 1.4s, so the operator
- * can find it without the page moving under them. Colour-independent of the
- * row's own state (critical rows keep their red tint underneath).
+ * ROW ARRIVAL HIGHLIGHT — replaces `scrollIntoView` on both registers.
+ *
+ * A soft light-blue wash that fades over 1.6s: enough to catch the eye when a
+ * carrier docks, a deep link lands, or a map pin is hovered, without moving
+ * the page under the operator. Blue is used here rather than the petrol-blue
+ * brand accent so the highlight cannot be confused with a selected/active
+ * control, and it is distinct from every status hue (green/amber/red), so it
+ * never reads as a state change on the pack itself.
+ *
+ * The row's own background (a red tint on a below-reserve pack) shows through
+ * as the wash fades, so nothing is masked.
  */
+:root {
+  --row-pulse: rgba(191, 219, 254, 0.85); /* light blue, ~blue-200 */
+  --row-pulse-edge: #60a5fa;
+}
+.canvas-dark {
+  --row-pulse: rgba(96, 165, 250, 0.22);
+  --row-pulse-edge: #60a5fa;
+}
+
 @keyframes row-pulse {
   0% {
-    background-color: var(--accent-soft);
-    box-shadow: inset 3px 0 0 0 var(--accent);
+    background-color: var(--row-pulse);
+    box-shadow: inset 3px 0 0 0 var(--row-pulse-edge);
+  }
+  70% {
+    background-color: var(--row-pulse);
+    box-shadow: inset 3px 0 0 0 var(--row-pulse-edge);
   }
   100% {
     background-color: transparent;
@@ -262,7 +290,7 @@ body {
   }
 }
 .row-pulse {
-  animation: row-pulse 1.4s ease-out 1;
+  animation: row-pulse 1.6s ease-out 1;
 }
 
 @keyframes rise-in {
@@ -321,12 +349,12 @@ body {
 }
 /**
  * OSM publishes only a light cartography. Rather than pay for a second tile
- * provider (or re-download the whole viewport on every theme toggle), the dark
+ * provider (or re-download the viewport when the palette changes), the dark
  * basemap is derived in CSS: invert + hue-rotate flips the paper white to
  * near-black while keeping road/water hues roughly where the eye expects them,
  * then the saturation and contrast are pulled back so the map recedes behind
  * the markers instead of competing with them.
  */
-.dark .leaflet-tile {
+.canvas-dark .leaflet-tile {
   filter: invert(1) hue-rotate(180deg) brightness(0.92) contrast(0.92) saturate(0.72);
 }

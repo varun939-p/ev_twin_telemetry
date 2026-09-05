@@ -31,7 +31,7 @@ import TruckFilterBar from "@/components/truck/TruckFilterBar";
 import TruckTable from "@/components/truck/TruckTable";
 import { Card, CardHeader, Hairline, PageHeading } from "@/components/ui/Surface";
 import { Pill } from "@/components/ui/Pill";
-import { applyVehicleFilters, batteryRegistry, buildGeoIndex, isEvVehicle } from "@/lib/fleet";
+import { applyVehicleFilters, batteryRegistry, buildGeoIndex, deriveSites, isEvVehicle } from "@/lib/fleet";
 import { truckAlerts, truckRows, type TruckRow } from "@/lib/fleet-metrics";
 import { buildCityClusters, buildMapPoints, ZOOM } from "@/lib/map-data";
 import { useFilterState, useTwin } from "@/lib/store";
@@ -57,9 +57,12 @@ export default function TruckTelemetryView({ data }: { data: TrustedTelemetryDoc
     return { ev, nonEv: vehicles.length - ev };
   }, [vehicles]);
 
-  const scoped = useMemo(() => applyVehicleFilters(vehicles, filters), [vehicles, filters]);
+  /** Operating sites derived from the payload — never a hardcoded hub list. */
+  const sites = useMemo(() => deriveSites(vehicles), [vehicles]);
+
+  const scoped = useMemo(() => applyVehicleFilters(vehicles, filters, sites), [vehicles, filters, sites]);
   const rows = useMemo(() => truckRows(scoped, registry), [scoped, registry]);
-  const alerts = useMemo(() => truckAlerts(scoped), [scoped]);
+  const alerts = useMemo(() => truckAlerts(scoped, sites), [scoped, sites]);
 
   const { points, unlocatable } = useMemo(() => buildMapPoints(rows), [rows]);
   const clusters = useMemo(() => buildCityClusters(points), [points]);
@@ -87,7 +90,9 @@ export default function TruckTelemetryView({ data }: { data: TrustedTelemetryDoc
     const lat = match.values["latitude"];
     const lon = match.values["longitude"];
     if (typeof lat === "number" && typeof lon === "number") requestFly(lat, lon, ZOOM.asset);
-    document.getElementById("carrier-table")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    // No scrollIntoView. `select(..., "link")` above pulses the arriving row
+    // and flies the map to it; that is enough to locate the asset without
+    // seizing the scroll position the operator chose.
   }, [deepLink, vehicles, select, requestFly]);
 
   /* ------------------------------------------------------------- render */
@@ -148,15 +153,7 @@ export default function TruckTelemetryView({ data }: { data: TrustedTelemetryDoc
         />
 
         <Card>
-          <CardHeader
-            eyebrow="Deployment candidates"
-            title="Carrier fleet"
-            actions={
-              <span className="text-[12px] text-ink-3">
-                Sorted rows keep unmeasured values at the bottom — a null is unknown, not zero.
-              </span>
-            }
-          />
+          <CardHeader title="Carrier fleet" />
           <Hairline />
           <TruckTable rows={rows} onKnowMore={setDetail} />
         </Card>
@@ -188,6 +185,7 @@ export default function TruckTelemetryView({ data }: { data: TrustedTelemetryDoc
       )}
 
       <TruckDetailModal
+        sites={sites}
         open={detail !== null}
         vehicle={detail?.vehicle ?? null}
         params={params}

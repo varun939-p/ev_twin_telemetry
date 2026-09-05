@@ -196,6 +196,25 @@ Each destination view reads the parameter with `useSearchParams()` inside a
 arriving page scrolls, highlights and (on the truck page) flies the camera
 exactly as if the operator had done it by hand.
 
+### 4.5b Sites are derived, never hardcoded
+
+`deriveSites(vehicles)` in `lib/fleet.ts` replaces the two-element
+`SWAP_STATIONS` literal. Priority order:
+
+1. an explicit `site_id` / `site` / `hub` / `station` on the frame, if the
+   upstream ever sends one (written and dormant — v1 does not carry it);
+2. otherwise the fleet's own measured GPS, grouped by nearest reference city,
+   with any city holding >= `MIN_SITE_ASSETS` becoming an operating site.
+
+Anchors use the reference city's canonical coordinates, falling back to the
+MEDIAN of member positions — not the mean, which a single distant carrier
+dragged to 95.2 E and would have put the Kolkata marker in the Bay of Bengal.
+
+Today's payload yields 7 sites (Pune 31, Udaipur 24, Kota 12, Raurkela 10,
+Mumbai 7, Delhi NCR 6, Kolkata 4). A Gujarat-only payload yields Ahmedabad.
+`nearestStation(vehicle, sites)` now takes the derived list explicitly, so no
+module holds mutable global geography.
+
 ### 4.6 Filter options are derived from the data
 
 `buildGeoIndex(vehicles)` in `lib/fleet.ts` walks the fleet once and returns
@@ -281,6 +300,21 @@ papers over the other 16.
 ---
 
 ## 6. Alerting
+
+Alerts are **strictly partitioned by scope** and the two panels can no longer
+show the same row:
+
+| Page | Kinds |
+| --- | --- |
+| Battery Tracking | `soc-critical`, `soc-low`, `soh`, `thermal`, `field-error` |
+| Truck Telemetry | `stale`, `no-fix`, `range`, `completeness` |
+
+`stale` used to be raised by BOTH producers, so ~98 identical rows appeared on
+both pages and buried the handful of pack-specific items worth acting on.
+Staleness is a property of the telemetry LINK to a carrier, not of a battery,
+so it lives only on Truck Telemetry. The battery panel went from 102 items to
+4. `thermal` is new and dormant until the upstream provisions a temperature
+channel.
 
 `truckAlerts()` and `batteryAlerts()` are separate functions with separate
 scopes — a pack anomaly cannot leak onto the carrier page, enforced by the data

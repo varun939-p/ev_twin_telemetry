@@ -16,7 +16,7 @@ import type { MapCluster, MapPoint } from "@/lib/map-data";
 const LeafletFleetMap = dynamic(() => import("./LeafletFleetMap"), {
   ssr: false,
   loading: () => (
-    <div className="h-[460px] w-full animate-pulse rounded-lg border border-line bg-surface-3" aria-label="Loading map" />
+    <div className="canvas-dark h-[460px] w-full animate-pulse rounded-lg border border-line bg-surface-2" aria-label="Loading map" />
   ),
 });
 

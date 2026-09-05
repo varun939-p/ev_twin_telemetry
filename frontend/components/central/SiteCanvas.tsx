@@ -285,7 +285,11 @@ export default function SiteCanvas({
   };
 
   return (
-    <div className="relative">
+    // `canvas-dark` re-declares the design tokens locally, so every child —
+    // the SVG, the overlay pills, the Pause button — resolves `--surface`,
+    // `--ink` and the status hues to their dark-ground values without any of
+    // them knowing they are on a dark surface.
+    <div className="canvas-dark relative overflow-hidden rounded-lg">
       <svg
         viewBox={`0 0 ${VIEW.w} ${VIEW.h}`}
         className="block h-auto w-full select-none"

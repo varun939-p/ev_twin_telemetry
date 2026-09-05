@@ -5,7 +5,6 @@ import { useState, type ReactNode } from "react";
 
 import LiveClock from "@/components/shell/LiveClock";
 import Sidebar, { NAV_ITEMS } from "@/components/shell/Sidebar";
-import ThemeToggle from "@/components/shell/ThemeToggle";
 import { Pill } from "@/components/ui/Pill";
 import type { TelemetrySource } from "@/lib/trusted-telemetry";
 
@@ -92,7 +91,6 @@ export default function AppShell({
               <span className="num">{measuredChannels}</span>/24 · {feedAgeLabel}
             </Pill>
             <LiveClock />
-            <ThemeToggle />
           </div>
         </header>
 

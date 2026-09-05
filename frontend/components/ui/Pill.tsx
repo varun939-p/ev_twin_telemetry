@@ -14,17 +14,24 @@ import { STATUS_SHORT } from "@/lib/fleet-metrics";
 
 export type Tone = "neutral" | "accent" | "ok" | "warn" | "danger" | "info";
 
+/**
+ * Tinted ground + darker text of the SAME hue — never a solid saturated pill.
+ *
+ * The borders are gone deliberately. A tint plus a matching outline reads as a
+ * filled button and competes with the real controls; the tint alone is enough
+ * separation at this contrast, and it keeps a table of 100 status chips quiet.
+ */
 const TONE_CLASS: Record<Tone, string> = {
-  neutral: "border-line bg-surface-2 text-ink-2",
-  accent: "border-accent/30 bg-accent-soft text-accent",
-  ok: "border-ok/30 bg-ok-soft text-ok",
-  warn: "border-warn/30 bg-warn-soft text-warn",
-  danger: "border-danger/35 bg-danger-soft text-danger",
-  info: "border-info/30 bg-info-soft text-info",
+  neutral: "bg-neutral-soft text-neutral-ink",
+  accent: "bg-accent-soft text-accent",
+  ok: "bg-ok-soft text-ok",
+  warn: "bg-warn-soft text-warn",
+  danger: "bg-danger-soft text-danger",
+  info: "bg-info-soft text-info",
 };
 
 const DOT_CLASS: Record<Tone, string> = {
-  neutral: "bg-ink-3",
+  neutral: "bg-neutral-ink",
   accent: "bg-accent",
   ok: "bg-ok",
   warn: "bg-warn",
@@ -50,7 +57,7 @@ export function Pill({
   return (
     <span
       title={title}
-      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-[3px] text-[11px] font-semibold ${TONE_CLASS[tone]} ${className}`}
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-md px-2 py-[3px] text-[12px] font-medium ${TONE_CLASS[tone]} ${className}`}
     >
       {dot && <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${DOT_CLASS[tone]} ${pulse ? "pulse-soft" : ""}`} />}
       {children}

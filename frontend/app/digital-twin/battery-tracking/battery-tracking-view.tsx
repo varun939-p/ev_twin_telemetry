@@ -16,19 +16,27 @@
  * pack row; clicking a scatter point selects it and scrolls the table to it.
  */
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
 import AttentionPanel from "@/components/alerts/AttentionPanel";
 import BatteryFilterBar from "@/components/battery/BatteryFilterBar";
 import BatteryKpiStrip from "@/components/battery/BatteryKpiStrip";
 import BatteryTable from "@/components/battery/BatteryTable";
+import TruckDetailModal from "@/components/truck/TruckDetailModal";
 import { Card, CardHeader, Hairline, PageHeading } from "@/components/ui/Surface";
 import { Pill } from "@/components/ui/Pill";
-import { applyVehicleFilters, batteryRegistry, buildGeoIndex, isEvVehicle, nearestStation } from "@/lib/fleet";
-import { SOC_CRITICAL, batteryAlerts, batteryRows } from "@/lib/fleet-metrics";
+import {
+  applyVehicleFilters,
+  batteryRegistry,
+  buildGeoIndex,
+  deriveSites,
+  isEvVehicle,
+  nearestStation,
+} from "@/lib/fleet";
+import { SOC_CRITICAL, batteryAlerts, batteryRows, type BatteryRow } from "@/lib/fleet-metrics";
 import { useFilterState, useTwin } from "@/lib/store";
-import type { TrustedTelemetryDocument } from "@/lib/trusted-telemetry";
+import { orderedParams, type TrustedTelemetryDocument } from "@/lib/trusted-telemetry";
 
 export default function BatteryTrackingView({ data }: { data: TrustedTelemetryDocument }) {
   const filters = useFilterState();
@@ -41,25 +49,37 @@ export default function BatteryTrackingView({ data }: { data: TrustedTelemetryDo
   const geoIndex = useMemo(() => buildGeoIndex(vehicles), [vehicles]);
 
   /** Every pack in the fleet, before this page's filters. */
+  /**
+   * Selected pack for the 24-parameter modal. Deliberately the SAME component
+   * the carrier table opens: the payload contract is per-frame, not per-page,
+   * so a second "battery detail" modal would be a second thing to keep in
+   * sync with the 24-parameter spec.
+   */
+  const [detail, setDetail] = useState<BatteryRow | null>(null);
+  const params = useMemo(() => orderedParams(data), [data]);
+
   const allPacks = useMemo(() => vehicles.filter(isEvVehicle), [vehicles]);
+
+  /** Operating sites derived from the payload — never a hardcoded hub list. */
+  const sites = useMemo(() => deriveSites(vehicles), [vehicles]);
 
   /** Scope: pack frames only, narrowed by station / region / SOC bracket. */
   const scoped = useMemo(
-    () => applyVehicleFilters(vehicles, { ...filters, ev: "ev" }),
-    [vehicles, filters],
+    () => applyVehicleFilters(vehicles, { ...filters, ev: "ev" }, sites),
+    [vehicles, filters, sites],
   );
 
-  const rows = useMemo(() => batteryRows(scoped, registry), [scoped, registry]);
-  const alerts = useMemo(() => batteryAlerts(scoped, registry), [scoped, registry]);
+  const rows = useMemo(() => batteryRows(scoped, registry, sites), [scoped, registry, sites]);
+  const alerts = useMemo(() => batteryAlerts(scoped, registry, sites), [scoped, registry, sites]);
 
   const stationCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const pack of allPacks) {
-      const station = nearestStation(pack);
+      const station = nearestStation(pack, sites);
       if (station) counts[station.id] = (counts[station.id] ?? 0) + 1;
     }
     return counts;
-  }, [allPacks]);
+  }, [allPacks, sites]);
 
   const criticalCount = rows.filter((r) => r.soc !== null && r.soc < SOC_CRITICAL).length;
 
@@ -122,6 +142,7 @@ export default function BatteryTrackingView({ data }: { data: TrustedTelemetryDo
 
       {/* 3 — filters ----------------------------------------------------- */}
       <BatteryFilterBar
+        sites={sites}
         stationCounts={stationCounts}
         geoIndex={geoIndex}
         scopedCount={rows.length}
@@ -132,8 +153,17 @@ export default function BatteryTrackingView({ data }: { data: TrustedTelemetryDo
       <Card>
         <CardHeader eyebrow="Asset register" title="Battery packs" />
         <Hairline />
-        <BatteryTable rows={rows} />
+        <BatteryTable rows={rows} onKnowMore={setDetail} />
       </Card>
+
+      <TruckDetailModal
+        sites={sites}
+        open={detail !== null}
+        vehicle={detail?.vehicle ?? null}
+        params={params}
+        batteryLabel={detail?.batteryId ?? null}
+        onClose={() => setDetail(null)}
+      />
     </div>
   );
 }

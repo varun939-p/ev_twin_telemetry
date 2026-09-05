@@ -19,6 +19,7 @@ import {
   truckChassis,
   vehicleCity,
   type BatteryIdentity,
+  type SwapStation,
 } from "@/lib/fleet";
 import {
   frameAgeHours,
@@ -211,11 +212,26 @@ export type AlertScope = "battery" | "truck";
  * who stops reading the banner. One group header + the worst three rows +
  * "show all" keeps the panel triageable at any fleet size.
  */
+/**
+ * Alert taxonomy, STRICTLY partitioned by scope.
+ *
+ *   BATTERY page  soc-critical | soc-low | soh | thermal | field-error
+ *   TRUCK page    stale | no-fix | range | completeness
+ *
+ * The partition is the point. `stale` used to be raised by BOTH producers, so
+ * the same ~98 rows appeared on both pages and buried the handful of
+ * pack-specific items an operator actually needs to act on. Staleness is a
+ * property of the TELEMETRY LINK to a carrier, not of a battery, so it now
+ * lives only on Truck Telemetry. Nothing is lost — it moved.
+ */
 export type AlertKind =
+  // battery-scoped
   | "soc-critical"
   | "soc-low"
   | "soh"
+  | "thermal"
   | "field-error"
+  // carrier-scoped
   | "stale"
   | "no-fix"
   | "range"
@@ -225,6 +241,7 @@ export const ALERT_KIND_LABEL: Record<AlertKind, string> = {
   "soc-critical": "Below dispatch reserve",
   "soc-low": "Approaching reserve",
   soh: "Degraded state of health",
+  thermal: "Pack temperature",
   "field-error": "Rejected readings",
   stale: "Stale telemetry",
   "no-fix": "No GPS fix",
@@ -255,6 +272,9 @@ export const SOC_CRITICAL = 20;
 export const SOC_LOW = 35;
 export const SOH_DEGRADED = 90;
 export const STALE_HOURS = 24;
+/** Pack thermal thresholds (°C). Watch band, then hard limit. */
+export const TEMP_WARN_C = 45;
+export const TEMP_CRITICAL_C = 55;
 
 function ageComment(vehicle: TrustedVehicle, now: Date): string {
   if (!vehicle.observed_at) return "No observation timestamp on the last validated frame.";
@@ -278,6 +298,7 @@ function ageComment(vehicle: TrustedVehicle, now: Date): string {
 export function batteryAlerts(
   vehicles: TrustedVehicle[],
   registry: ReadonlyMap<string, BatteryIdentity>,
+  sites: readonly SwapStation[],
   now: Date = new Date(),
 ): TwinAlert[] {
   const alerts: TwinAlert[] = [];
@@ -313,7 +334,7 @@ export function batteryAlerts(
         label,
         title: `${label} approaching reserve`,
         comment: `SOC ${soc}% — inside the ${SOC_LOW}% watch band. ${age} Swap capacity should be reserved at ${
-          nearestStation(v)?.name ?? "the nearest hub"
+          nearestStation(v, sites)?.name ?? "the nearest hub"
         }.`,
         metric: `SOC ${soc}%`,
       });
@@ -350,18 +371,34 @@ export function batteryAlerts(
       });
     }
 
-    const hours = v.observed_at ? frameAgeHours(v.observed_at, now) : Number.NaN;
-    if (Number.isFinite(hours) && hours > STALE_HOURS) {
+    /**
+     * Pack thermal. Dormant today — every thermal channel is absent upstream —
+     * and live the moment the vendor provisions one, with no code change,
+     * because it reads through `numericValue` and so is gated on the field's
+     * `measured` verdict rather than on a hardcoded assumption.
+     *
+     * `max_temp_c` is preferred over the pack average: a single hot cell group
+     * is what precedes a thermal event, and an average hides it.
+     */
+    const packTemp = numericValue(v, "max_temp_c") ?? numericValue(v, "battery_temp_c");
+    if (packTemp !== null && packTemp >= TEMP_WARN_C) {
+      const critical = packTemp >= TEMP_CRITICAL_C;
       alerts.push({
-        id: `${v.vehicle_id}:stale`,
-        kind: "stale",
+        id: `${v.vehicle_id}:thermal`,
+        kind: "thermal",
         scope: "battery",
-        severity: hours > STALE_HOURS * 7 ? "critical" : "info",
+        severity: critical ? "critical" : "warning",
         vehicleId: v.vehicle_id,
         label,
-        title: `${label} telemetry is stale`,
-        comment: `${age} Nothing has been received for longer than the ${STALE_HOURS} h freshness window — the pack state shown is the last trusted snapshot, not a live reading.`,
-        metric: hours > 48 ? `${Math.round(hours / 24)} d old` : `${hours.toFixed(1)} h old`,
+        title: critical
+          ? `${label} pack temperature is critical`
+          : `${label} pack running warm`,
+        comment: `Peak cell-group temperature ${packTemp} °C — ${
+          critical
+            ? `at or above the ${TEMP_CRITICAL_C} °C limit. Take the pack out of service and inspect before the next charge.`
+            : `above the ${TEMP_WARN_C} °C watch threshold. Monitor through the next charge cycle.`
+        } ${age}`,
+        metric: `${packTemp} °C`,
       });
     }
   }
@@ -374,7 +411,11 @@ export function batteryAlerts(
  * Pack chemistry lives on the Battery page; this list is about the vehicle:
  * where it is, whether we can hear it, and whether it can reach a hub.
  */
-export function truckAlerts(vehicles: TrustedVehicle[], now: Date = new Date()): TwinAlert[] {
+export function truckAlerts(
+  vehicles: TrustedVehicle[],
+  sites: readonly SwapStation[],
+  now: Date = new Date(),
+): TwinAlert[] {
   const alerts: TwinAlert[] = [];
 
   for (const v of vehicles) {
@@ -425,7 +466,7 @@ export function truckAlerts(vehicles: TrustedVehicle[], now: Date = new Date()):
        */
       const moving = (numericValue(v, "speed_kmh") ?? 0) > 0;
       const fresh = Number.isFinite(hours) && hours <= STALE_HOURS;
-      const arrival = predictArrival(v);
+      const arrival = predictArrival(v, sites);
       if (moving && fresh && arrival.rangeKm !== null && arrival.distanceKm !== null && !arrival.feasible) {
         alerts.push({
           id: `${v.vehicle_id}:range`,
@@ -524,11 +565,12 @@ export interface BatteryRow {
 export function batteryRows(
   vehicles: TrustedVehicle[],
   registry: ReadonlyMap<string, BatteryIdentity>,
+  sites: readonly SwapStation[],
 ): BatteryRow[] {
   return vehicles
     .filter(isEvVehicle)
     .map((v) => {
-      const station = nearestStation(v);
+      const station = nearestStation(v, sites);
       return {
         vehicleId: v.vehicle_id,
         batteryId: registry.get(v.vehicle_id)?.label ?? v.vehicle_id,

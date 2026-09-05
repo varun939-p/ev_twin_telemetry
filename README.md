@@ -263,9 +263,10 @@ components/battery/   BatteryKpiStrip, BatteryFilterBar, BatteryTable
 components/central/   SiteCanvas (pure SVG isometric scene)
 components/alerts/    AttentionPanel (grouped "Need Attention" banner)
 components/ui/        Surface, Pill, Modal, Field, InfoTip, Metric
+                      (single light theme; map + site canvas opt into .canvas-dark)
 
 lib/store.ts          Zustand store: filters + bi-directional hover/selection pointer
-lib/fleet.ts          filter model, buildGeoIndex (dataset-derived dropdowns), ETA maths
+lib/fleet.ts          filter model, deriveSites + buildGeoIndex (both payload-derived), ETA maths
 lib/fleet-metrics.ts  status derivation, KPI coverage types, alerts, table projections
 lib/site-model.ts     the ONLY modelled data in the app — facility simulation
 lib/theme.ts(x)       dark/light controller (useSyncExternalStore, no FOUC)
