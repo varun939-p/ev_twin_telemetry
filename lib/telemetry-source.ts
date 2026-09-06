@@ -133,7 +133,11 @@ async function resolveBaseUrl(): Promise<string> {
  *
  * So liveness is probed separately and explicitly:
  *   * `cache: "no-store"` — never satisfied from the data cache, by design;
- *   * a tight timeout, because this must not add latency to a good render;
+ *   * the SAME abort budget as the document fetch, because the probe runs
+ *     concurrently with it (they share one upstream socket) and a cold Python
+ *     start can take a few seconds on Vercel. Capping the probe at 2.5s while
+ *     the document gets 6s produced a false "Backend unreachable" label on
+ *     the first render after a cold start;
  *   * it hits `/api/health`, a few bytes, not the document;
  *   * it runs INSIDE the same serverless invocation, so it adds no extra
  *     function calls — only one small round trip we already have a socket for.
@@ -149,7 +153,7 @@ async function probeLiveness(cfg: SourceConfig): Promise<HealthProbe> {
     const res = await fetchWithTimeout(
       `${baseUrl}${cfg.healthPath}`,
       { cache: "no-store", headers: { Accept: "application/json" } },
-      Math.min(cfg.timeoutMs, 2_500),
+      cfg.timeoutMs,
     );
     if (!res.ok) throw new Error("health endpoint did not answer");
     const body: unknown = await res.json();
