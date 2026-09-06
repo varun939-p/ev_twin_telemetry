@@ -53,16 +53,14 @@ export default function BatteryKpiStrip({
         label="Batteries charging right now"
         value={charging.value}
         tone="info"
-        hint={charging.note}
-        unavailableReason={charging.note}
+        unavailableReason="Awaiting live data"
       />
 
       <KpiCard
         label="Deployed / in service"
         value={deployed.value}
         tone="ok"
-        hint={deployed.note}
-        unavailableReason={deployed.note}
+        unavailableReason="Awaiting live data"
         footer={
           deployed.value !== null && (
             <Pill tone="ok" dot pulse>
@@ -77,13 +75,13 @@ export default function BatteryKpiStrip({
         value={load.value}
         unit="kW"
         tone="info"
-        hint={load.note}
-        unavailableReason={load.note}
+        unavailableReason="Awaiting live data"
         footer={
-          <p className="num text-[11px] leading-snug text-ink-3">
-            Σ(active packs × |V×I|/1000) {scopeNote}
-            {load.activePacks > 0 && ` · ${load.activePacks} active`}
-          </p>
+          load.activePacks > 0 && (
+            <p className="num text-[11px] leading-snug text-ink-3">
+              {load.activePacks} pack{load.activePacks !== 1 ? "s" : ""} charging
+            </p>
+          )
         }
       />
     </div>
