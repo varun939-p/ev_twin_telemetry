@@ -13,6 +13,15 @@ import { Pill, type Tone } from "@/components/ui/Pill";
  *     it never prints 0 for a channel the fleet does not measure.
  *  2. When `href` is set the whole tile is a real <Link> (keyboard reachable,
  *     middle-clickable, prefetched) rather than a div with an onClick.
+ *
+ * Hydration note: the numeric value is a live freshness figure that legitimately
+ * advances as the document ages. The data layer renders it deterministically
+ * (the value is anchored to the document's own `generated_at` — see
+ * `central-view.tsx`), so server and client agree. `suppressHydrationWarning`
+ * on the value <p> is a defence-in-depth net: if the number were ever to cross
+ * a rounding boundary between the SSR pass and hydration (a sub-second drift),
+ * React would otherwise throw a hydration crash on an otherwise-correct live
+ * metric. Suppressing it lets React reconcile the number in place instead.
  */
 export function KpiCard({
   label,
@@ -52,7 +61,10 @@ export function KpiCard({
         {icon}
       </div>
 
-      <p className={`display mt-2 text-[28px] font-bold leading-none tabular-nums ${value === null ? "text-ink-3" : accentText[tone]}`}>
+      <p
+        suppressHydrationWarning
+        className={`display mt-2 text-[28px] font-bold leading-none tabular-nums ${value === null ? "text-ink-3" : accentText[tone]}`}
+      >
         {value === null ? "—" : value}
         {unit && value !== null && <span className="ml-1 text-sm font-medium text-ink-3">{unit}</span>}
       </p>
@@ -121,6 +133,7 @@ export function Metric({
     <div className="rounded-lg border border-line bg-surface-2 px-3 py-2.5">
       <p className="text-[10px] font-semibold text-ink-3">{label}</p>
       <p
+        suppressHydrationWarning
         className={`num mt-1 text-[15px] font-semibold ${value === null ? "cursor-help text-ink-3" : accentText[tone]}`}
         title={value === null ? (reason ?? "Not measured upstream — stored NULL, not zero.") : undefined}
       >
