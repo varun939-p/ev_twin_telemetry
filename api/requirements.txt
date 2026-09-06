@@ -14,7 +14,11 @@
 
 fastapi==0.115.12
 SQLAlchemy==2.0.52
-psycopg[binary]==3.3.4
+# Use plain psycopg (no C extension) — psycopg[binary] requires pre-compiled
+# system libraries that are not guaranteed in the Vercel Python runtime and
+# cause a 500 crash on cold start.  SQLAlchemy routes through the same
+# postgresql+psycopg:// driver; only the install variant changes.
+psycopg==3.3.4
 pydantic==2.13.4
 pydantic-settings==2.15.0
 requests==2.34.2
