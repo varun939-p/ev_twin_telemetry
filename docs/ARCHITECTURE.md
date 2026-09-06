@@ -404,10 +404,14 @@ run: no background process, no writable filesystem, no socket outliving a
 request. The refactor keeps every line of engine code and changes only the
 *scheduling* and the *delivery*:
 
-* **Scheduling:** Vercel Cron (`vercel.json`) calls `GET /api/cron/ingest`
-  every five minutes (`*/5 * * * *`). This requires sub-daily Cron support;
-  Hobby deployments must replace it with an external five-minute scheduler.
-  A daily cron plus browser visits is not a reliable polling mechanism.
+* **Scheduling:** Vercel Cron (`vercel.json`) calls `GET /api/cron/ingest`.
+  The shipped schedule is **once-daily** (`0 18 * * *`) so it is accepted on
+  the Hobby plan. A sub-daily cron (`*/5 * * * *`) requires sub-daily Cron
+  support (e.g. Pro) and is rejected on Hobby. For data fresher than a day on
+  Hobby, point an external five-minute scheduler at the ingestion route; a
+  daily cron plus browser visits is not real-time. On Hobby, set
+  `POLL_INTERVAL_SECONDS=86400` in the Vercel environment so diagnostics match
+  the daily cadence instead of permanently labeling it overdue.
   `POST /api/ingest/run` triggers the same single cycle on
   demand. Each uses `run_recorded_cycle` around `TelemetryExtractor.run_cycle()` —
   the same runner the independent `python -m telemetry run` worker uses — so validation, unchanged-frame skipping and

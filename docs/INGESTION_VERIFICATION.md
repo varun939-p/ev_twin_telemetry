@@ -11,7 +11,7 @@ status. No authenticated production ingestion was verified.
 | --- | --- |
 | `telemetry/` exists. `telemetry/main.py:app` is the real FastAPI entry point; `main_parser.py` is offline-only. Uvicorn does not poll. | Documented separate HTTP and continuous-worker commands. Vercel imports the same app and shared recorded cycle runner. |
 | Dashboard GETs could synchronously ingest, and `/api/ingest/trigger` was publicly writable. Browser requests could hit a protected route without auth and parse a plain-text proxy error as JSON. | Reads no longer poll. All ingestion routes share bearer protection, fail closed on Vercel, and release their lock even if initialization fails. Optional browser bootstrap is local-development-only and handles non-JSON/network errors safely. |
-| The shipped cron was daily, while ingestion depended on visitors. | Worker default and expected poll interval are 300s; Vercel cron is `*/5 * * * *`. **Sub-daily Cron support (e.g. Pro), or an external scheduler, is required.** Document revalidation remains 30s. |
+| The shipped cron was daily, while ingestion depended on visitors. | Worker default poll interval is 300s; the shipped Vercel cron is Hobby-compatible daily (`0 18 * * *`). The engine's real-time cadence (`*/5`) requires sub-daily Cron support (e.g. Pro) or an external scheduler. On Hobby, set `POLL_INTERVAL_SECONDS=86400` so diagnostics match the daily cadence. Document revalidation remains 30s. |
 | A healthy historical fallback could remain sticky. Date-hint ordering and failed-probe accounting could miss newer data. | Current default is checked each cycle; historical winners are reconsidered. Calendar dates/hints are considered newest-first, failures consume candidate budget, and best-effort cooldown does not hide new default-day data. Explicit `API_DATE` is surfaced as a limitation. |
 | Health depended on per-process state and observation age did not establish whether polling worked. | Added a 30-day durable `ingestion_runs` journal, structured start/finish/failure events and an uncached diagnostic endpoint/banner. Old upstream observations are distinguished from incomplete, failed, overdue, unconfigured and unavailable ingestion. |
 | `postgresql+psycopg` escaped the serverless pool check. | Detect the URL's backend/dialect correctly; force NullPool on Vercel/Lambda even when `DB_NULLPOOL=false`. |
@@ -60,8 +60,9 @@ authorized real-data cycle and inspection of its date/validation diagnostics.
 
 ## Production work still required
 
-1. Confirm Vercel plan/cadence support, or configure an authenticated external
-   five-minute scheduler. Do not silently retain a daily cron.
+1. The shipped `vercel.json` is now a Hobby-compatible daily cron
+   (`0 18 * * *`), so it deploys on the free plan. For real-time data, configure
+   an authenticated external five-minute scheduler instead of a paid plan.
 2. Apply the `ingestion_runs` migration before redeploying. Confirm pooled Neon
    `postgresql+psycopg` + SSL, the **rotated** vendor credential pair, vendor
    base URL and nonempty `CRON_SECRET` in the secure project settings. These
