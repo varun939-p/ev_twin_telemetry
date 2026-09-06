@@ -9,10 +9,10 @@ export type { TelemetrySource } from "@/lib/trusted-telemetry";
 /**
  * Server-side document helpers.
  *
- * The document itself now comes from `lib/telemetry-source.ts` (live control
- * plane, with the committed snapshot as a fallback). This module keeps the
- * pure presentation helpers that need it, re-exported from one place so pages
- * have a single import.
+ * The document itself now comes from `lib/telemetry-source.ts` (the
+ * database-backed control plane, with an honestly-labeled empty document as
+ * the fallback). This module keeps the pure presentation helpers that need
+ * it, re-exported from one place so pages have a single import.
  *
  * The previous `TRUSTED_DOC` module constant is gone on purpose. A top-level
  * `const` is evaluated once per process, which is exactly wrong for live

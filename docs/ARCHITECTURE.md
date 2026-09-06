@@ -101,17 +101,23 @@ telemetry/
 ├── auth.py            token lifecycle: 55-min proactive rotation
 ├── mapping.py         drift detection: missing / unrecognised upstream keys
 ├── extractor.py       ONE cycle: fetch -> validate -> write
-├── orchestrator.py    the loop: scheduling, backoff, signals, health
+├── orchestrator.py    the loop: scheduling, backoff, signals, health (self-hosted only)
+├── document.py        the trusted-document builder (shared: DB reads + offline captures)
 ├── metrics.py         Prometheus text exposition (stdlib only)
 ├── logging_setup.py   human or JSON logs
-├── models.py          SQLAlchemy 2.0 typed ORM (3 tables + indexes)
+├── models.py          SQLAlchemy 2.0 typed ORM (4 tables + indexes)
 ├── repository.py      ALL SQL lives here; the only place upserts are built
+├── main.py            FastAPI control plane (serverless: reads Neon, triggers cycles)
 └── __main__.py        CLI: run | init-db | schema | once | fields | mock-server
 
-tests/                 94 tests (66 run without a DB): registry, validation,
-                       rotation, retry, upserts, mock fidelity, end-to-end loop
+api/index.py           Vercel entrypoint: mounts telemetry.main with a path normalizer
+app/ components/ lib/  the Next.js dashboard (repository root = Vercel project root)
+vercel.json            cron schedule, Python-function sizing, security headers
+tests/                 158 tests: registry, validation, rotation, retry, upserts,
+                       mock fidelity, end-to-end loop, control-plane contract
 tools/mock_server.py   a faithful stand-in for the upstream API
 tools/smoke_test.sh    mock upstream -> engine -> PostgreSQL, end to end
+tools/serverless_check.py  pre-flight of the production request shape
 deploy/schema.sql      the DDL PostgreSQL actually runs (generated, not hand-typed)
 docs/ARCHITECTURE.md   this document
 ```
@@ -383,24 +389,61 @@ disable without risking duplicates.
   `twin_auth_forced_total`, `twin_token_seconds_until_refresh`.
 * **Credentials** come only from the environment; the DB URL is redacted in
   logs and a token is only ever logged as `6f02a7…49da(len=128)`.
-* **Migrations:** `init-db` uses `create_all`, which is right for first boot and
-  CI. Promote `deploy/schema.sql` into an Alembic revision before your second
-  schema change, so migrations are reviewable and reversible.
+* **Migrations:** `init-db` uses `create_all` plus an idempotent column
+  reconcile, which is right for first boot and CI. Promote `deploy/schema.sql`
+  into an Alembic revision before your second schema change, so migrations are
+  reviewable and reversible.
 
 ---
 
-## 11. What I would do in Phase 3
+## 11. Serverless topology (2026-09 refactor)
+
+The engine was built as a 24/7 poller, which is the one shape Vercel cannot
+run: no background process, no writable filesystem, no socket outliving a
+request. The refactor keeps every line of engine code and changes only the
+*scheduling* and the *delivery*:
+
+* **Scheduling:** Vercel Cron (`vercel.json`) calls `GET /api/cron/ingest`
+  every five minutes; `POST /api/ingest/run` triggers the same single cycle on
+  demand. Each call runs `TelemetryExtractor.run_cycle()` exactly once — the
+  same method the loop calls — so validation, unchanged-frame skipping and
+  live-date resolution behave identically in both worlds. Per-warm-instance
+  state (the 55-minute token, the unchanged signatures, the resolved date)
+  survives across invocations on the same container; a cold start simply
+  re-authenticates.
+* **Delivery:** the dashboard's read endpoint rebuilds the trusted document
+  from `vehicle_state` on every call (`telemetry/document.py` is the ONE
+  builder — `main_parser.py` reuses it for offline captures). The validator's
+  per-parameter verdicts are persisted on the snapshot row at ingest time
+  (`vehicle_state.field_status`), so a DB-sourced document is byte-for-byte as
+  honest as a parse-sourced one. No file exists in the path.
+* **Routing:** `next.config.mjs` rewrites `/api/:path*` onto `api/index.py`
+  (same deployment, so same-origin: no CORS, no second host). The ASGI wrapper
+  in `api/index.py` normalizes the scope path — the platform may deliver the
+  original path or the rewritten destination depending on runtime version —
+  and FastAPI itself runs with `redirect_slashes=False` because Vercel's proxy
+  does not replay 307s reliably.
+* **Database:** on Vercel the engine swaps to `NullPool` + `pool_pre_ping`
+  (a pooled socket would die between invocations anyway), and Neon's **pooled**
+  endpoint absorbs the short-lived connection pattern. The old QueuePool
+  configuration still applies to the Docker/dedicated-server deployment.
+* **Security:** ingestion is Bearer-gated by `CRON_SECRET`. Fail closed on
+  Vercel when unset, open locally so `make api` needs no configuration. The
+  document endpoint is read-only over the public internet by design — it holds
+  no secrets because it needs none.
+
+---
+
+## 12. What I would do in Phase 3
 
 In rough order of value:
 
-1. **Close the 14-key gap** (§7) — one `--dry-run` against the real API.
-2. **Alembic** — before the first schema change, not after.
-3. **Partition `telemetry` by month** — before it passes ~50M rows.
-4. **A read API for the dashboard** (FastAPI over `vehicle_state` + a
-   time-range endpoint over `telemetry`) so the frontend never holds a DB
-   credential.
-5. **A `charging_events` derived table** — the swap station cares about
+1. **Alembic** — before the first *manual* schema change, not after.
+2. **Partition `telemetry` by month** — before it passes ~50M rows.
+3. **A time-range endpoint over `telemetry`** so the dashboard can draw
+   SOC/SOH history from the database instead of client-session observation.
+4. **A `charging_events` derived table** — the swap station cares about
    charge-start/stop transitions, and deriving them at ingest is far cheaper
    than re-deriving them per dashboard load.
-6. **SOH trend alerting** — `soh_drop_alerts` already exists upstream; storing
+5. **SOH trend alerting** — `soh_drop_alerts` already exists upstream; storing
    the delta locally makes it your own alert instead of theirs.

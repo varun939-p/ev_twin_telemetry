@@ -5,6 +5,14 @@
 -- This file is a reviewable snapshot. In production, promote it into an
 -- Alembic revision (alembic revision --autogenerate) so migrations are
 -- versioned and reversible.
+--
+-- SERVERLESS TOPOLOGY (2026-09): the Vercel cron / on-demand route
+-- (`POST /api/ingest.run`) writes here; `GET /api/telemetry/trusted`
+-- reads `vehicle_state` straight into the dashboard document. There is
+-- no intermediate JSON file any more.
+--
+-- ALREADY RUNNING THE PREVIOUS SCHEMA?  Skip the CREATE TABLEs and run
+-- only the MIGRATION block at the bottom -- it is idempotent.
 -- ============================================================================
 
 CREATE TABLE vehicles (
@@ -50,13 +58,31 @@ CREATE TABLE vehicle_state (
 	last_updated TIMESTAMP WITH TIME ZONE, 
 	ingested_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
 	raw_frame JSONB, 
+	field_status JSONB, 
+	missing_fields JSONB, 
+	field_errors JSONB, 
 	PRIMARY KEY (vehicle_id)
 );
 CREATE INDEX ix_vehicle_state_last_updated ON vehicle_state (last_updated);
-CREATE INDEX ix_vehicle_state_charging ON vehicle_state (charging_status) WHERE charging_status = 1;
 CREATE INDEX ix_vehicle_state_soh ON vehicle_state (soh);
+CREATE INDEX ix_vehicle_state_charging ON vehicle_state (charging_status) WHERE charging_status = 1;
 CREATE INDEX ix_vehicle_state_soc ON vehicle_state (soc);
 COMMENT ON TABLE vehicle_state IS 'Latest telemetry snapshot per vehicle (upserted)';
+CREATE TABLE provisioned_sites (
+	id BIGSERIAL NOT NULL, 
+	site_id VARCHAR(64) NOT NULL, 
+	label VARCHAR(64) NOT NULL, 
+	customer VARCHAR(64) NOT NULL, 
+	chargers BIGINT NOT NULL, 
+	dg_capacity_kw BIGINT NOT NULL, 
+	grid_feeder_kw BIGINT NOT NULL, 
+	source VARCHAR(64) NOT NULL, 
+	received_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	PRIMARY KEY (id)
+);
+CREATE INDEX ix_provisioned_sites_site_id ON provisioned_sites (site_id);
+CREATE INDEX ix_provisioned_sites_received_at ON provisioned_sites (received_at);
+COMMENT ON TABLE provisioned_sites IS 'Site provisioning requests (append-only)';
 CREATE TABLE telemetry (
 	id BIGSERIAL NOT NULL, 
 	vehicle_id VARCHAR(32) NOT NULL, 
@@ -91,3 +117,33 @@ CREATE TABLE telemetry (
 );
 CREATE INDEX ix_telemetry_observed_at ON telemetry (observed_at);
 COMMENT ON TABLE telemetry IS 'Immutable telemetry history, one row per vehicle reading';
+
+-- ============================================================================
+-- MIGRATION -- databases provisioned before the serverless refactor.
+--
+-- `python -m telemetry init-db` (and the control plane's process start-up)
+-- runs the equivalent of this block automatically: `CREATE TABLE IF NOT
+-- EXISTS` for `provisioned_sites` plus `ADD COLUMN IF NOT EXISTS` for the
+-- validator-verdict columns below. It is listed here so the change is
+-- reviewable, and so it can be applied by hand (psql / Neon SQL editor)
+-- before the first deployment if preferred.
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS provisioned_sites (
+	id BIGSERIAL NOT NULL,
+	site_id VARCHAR(64) NOT NULL,
+	label VARCHAR(64) DEFAULT '' NOT NULL,
+	customer VARCHAR(64) NOT NULL,
+	chargers BIGINT DEFAULT '0' NOT NULL,
+	dg_capacity_kw BIGINT DEFAULT '0' NOT NULL,
+	grid_feeder_kw BIGINT DEFAULT '0' NOT NULL,
+	source VARCHAR(64) DEFAULT 'nextjs-dashboard' NOT NULL,
+	received_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+	PRIMARY KEY (id)
+);
+CREATE INDEX IF NOT EXISTS ix_provisioned_sites_site_id ON provisioned_sites (site_id);
+CREATE INDEX IF NOT EXISTS ix_provisioned_sites_received_at ON provisioned_sites (received_at);
+
+ALTER TABLE vehicle_state ADD COLUMN IF NOT EXISTS field_status JSONB;
+ALTER TABLE vehicle_state ADD COLUMN IF NOT EXISTS missing_fields JSONB;
+ALTER TABLE vehicle_state ADD COLUMN IF NOT EXISTS field_errors JSONB;

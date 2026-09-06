@@ -1,6 +1,6 @@
 # Digital Twin — frontend architecture
 
-Reference for the internal review. Every path below is relative to `frontend/`.
+Reference for the internal review. Every path below is relative to the repository root.
 The `@/` alias resolves to this directory.
 
 ---
@@ -90,7 +90,7 @@ therefore parsed on the server and never shipped as a raw asset.
 ### 4.1 Ingest → page
 
 ```
-frontend/data/trusted_vehicle_telemetry.json
+the Neon vehicle_state table (see docs/ARCHITECTURE.md §11)
         │  (import, server side only)
         ▼
 lib/document.ts ── TRUSTED_DOC ──► app/**/page.tsx        [server component]

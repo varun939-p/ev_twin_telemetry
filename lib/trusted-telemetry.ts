@@ -22,8 +22,17 @@
  * client component) needs the type, and that module is `server-only` — a
  * type-only import across that boundary erases at compile time but is exactly
  * the kind of thing that breaks the day someone makes it a value import.
+ *
+ *   live     the control plane answered this render and the database holds
+ *            ingested vehicles
+ *   cached   the control plane is not answering, but Next's data cache still
+ *            holds the last good document — readings are as old as the outage
+ *   waiting  there is no document to show yet: the database is empty (first
+ *            deploy, cron not fired, credentials pending) or unreachable.
+ *            No file fallback exists any more; the UI renders its empty
+ *            states and the chip names the reason.
  */
-export type TelemetrySource = "live" | "cached" | "snapshot";
+export type TelemetrySource = "live" | "cached" | "waiting";
 
 /** Per-parameter verdict written by the data layer. Anything != "measured" is
  *  rendered disabled.  Values are exhaustive -- see `field_status_legend`. */

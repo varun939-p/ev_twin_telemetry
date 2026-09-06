@@ -20,6 +20,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     Index,
+    Integer,
     JSON,
     Numeric,
     SmallInteger,
@@ -33,6 +34,10 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 # JSONB on PostgreSQL; generic JSON elsewhere so dev/CI on SQLite still works.
 _JSON = JSON().with_variant(JSONB(), "postgresql")
+# BIGINT identity on PostgreSQL; plain INTEGER on SQLite (whose autoincrement
+# only fires for INTEGER PRIMARY KEY, so the control-plane tests can run
+# without a real PostgreSQL).
+_BIGID = BigInteger().with_variant(Integer(), "sqlite")
 
 from .fields import SPEC_BY_NAME
 
@@ -66,7 +71,7 @@ class Vehicle(Base):
     __tablename__ = "vehicles"
     __table_args__ = (Index("ix_vehicles_last_seen", "last_seen"), {"comment": "Fleet dimension table"})
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(_BIGID, primary_key=True, autoincrement=True)
     vehicle_id: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
     first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -130,6 +135,38 @@ class VehicleState(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     raw_frame: Mapped[dict | None] = mapped_column(_JSON, nullable=True)
+    # ---- validator verdicts, persisted so the dashboard document can be ----
+    # ---- rebuilt from the database WITHOUT re-inventing any status --------
+    # field_status:   the 24-key verdict map (measured / absent_upstream /
+    #                 null_upstream / field_error) decided by parse_payload
+    # missing_fields: parameters the upstream never sent for this vehicle
+    # field_errors:   [{field, raw, error}] for values rejected by validation
+    field_status: Mapped[dict | None] = mapped_column(_JSON, nullable=True)
+    missing_fields: Mapped[list | None] = mapped_column(_JSON, nullable=True)
+    field_errors: Mapped[list | None] = mapped_column(_JSON, nullable=True)
+
+
+class ProvisionedSite(Base):
+    """Append-only log of site-provisioning requests (the control-plane demo).
+
+    Serverless filesystems are ephemeral and read-only in production, so the
+    old ``provisioned_sites.json`` append became a table: same API shape
+    (``totalSites`` counts every received request), but the rows survive
+    cold starts, redeployments and region failover.
+    """
+
+    __tablename__ = "provisioned_sites"
+    __table_args__ = (Index("ix_provisioned_sites_received_at", "received_at"), {"comment": "Site provisioning requests (append-only)"})
+
+    id: Mapped[int] = mapped_column(_BIGID, primary_key=True, autoincrement=True)
+    site_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    label: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    customer: Mapped[str] = mapped_column(String(64), nullable=False)
+    chargers: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    dg_capacity_kw: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    grid_feeder_kw: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    source: Mapped[str] = mapped_column(String(64), nullable=False, default="nextjs-dashboard")
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
 class Telemetry(Base):
@@ -148,7 +185,7 @@ class Telemetry(Base):
         {"comment": "Immutable telemetry history, one row per vehicle reading"},
     )
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(_BIGID, primary_key=True, autoincrement=True)
     vehicle_id: Mapped[str] = mapped_column(String(32), nullable=False, index=False)
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 

@@ -197,15 +197,18 @@ is converted on the way in — see `docs/ARCHITECTURE.md` §5.
 ## Tests
 
 ```bash
-# no PostgreSQL needed: 132 pass, the 21 database-backed ones skip
+# no PostgreSQL needed: 132 pass, the PostgreSQL-backed ones skip
 pytest
 
-# everything, including the PostgreSQL upsert tests: 153 pass
+# everything, including the PostgreSQL upsert tests: 158 pass
 export TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@127.0.0.1:5432/twin
 pytest
 
 # just the database-independent tests (validation, rotation, retry, live-date)
 pytest -k "not repository and not e2e"
+
+# the serverless pre-flight: rewrite -> function -> upstream -> store -> document
+make check        # (python tools/serverless_check.py)
 ```
 
 The PostgreSQL tests *skip* rather than fail without `TEST_DATABASE_URL`,
@@ -214,7 +217,7 @@ prove nothing about the statement that ships.
 
 What the suite actually proves:
 
-* **153 tests**, no mocking of the code under test — the retry, auth and loop
+* **158 tests**, no mocking of the code under test — the retry, auth and loop
   tests drive a real HTTP server and a real PostgreSQL.
 * Token rotation at exactly 55 minutes, driven by a fake clock (no sleeping).
 * A revoked token mid-run: exactly one re-auth, zero failed cycles, **and the
@@ -230,29 +233,39 @@ What the suite actually proves:
 
 ## Layout
 
+One repository, two runtimes, **one Vercel project**: the Next.js dashboard
+lives at the repository root, and `api/index.py` mounts the FastAPI control
+plane as a Python serverless function in the same deployment.
+
 ```
+api/index.py        Vercel entrypoint (ASGI wrapper + path normalizer)
+api/requirements.txt the function's runtime dependencies (function-scoped)
 telemetry/          the engine (fields → schemas → api/auth → extractor → repository)
-telemetry/main.py   FastAPI control plane (provisioning + manual ingestion)
-main_parser.py      local capture → validated trusted JSON for the frontend
-frontend/           Next.js 16 dashboard (app/ router, @/ alias → frontend/)
-tests/              153 tests, 21 PostgreSQL-gated skips
-tools/              mock upstream server + smoke test
-deploy/schema.sql   the DDL
+telemetry/main.py   FastAPI control plane — DB-backed reads, cron/on-demand ingestion
+telemetry/document.py the trusted-document builder (shared by DB reads and offline captures)
+main_parser.py      offline capture → validated JSON (dev tool; production reads Neon)
+app/ components/ lib/ data/   the Next.js 16 dashboard (@/ alias → repository root)
+vercel.json         cron schedule + Python-function config + security headers
+next.config.mjs     /api/:path* rewrite → the Python function (Vercel) or uvicorn (dev)
+tests/              158 tests, PostgreSQL-gated skips
+tools/              mock upstream, smoke test, serverless_check.py pre-flight
+deploy/schema.sql   the DDL + the idempotent migration block
 docs/               ARCHITECTURE.md — read this
 ```
 
 ### Deploying to Vercel
 
-**The Next.js app is in `frontend/`, not at the repository root.** Vercel's
-Root Directory must be set to `frontend` in the project settings or the build
-fails with `No Next.js version detected` — that setting cannot be supplied
-from `vercel.json`. Full instructions, environment variables and the
-health-check checklist are in **[`DEPLOYMENT.md`](DEPLOYMENT.md)**.
+The repository root **is** the Vercel project root — no Root Directory
+override, no legacy `builds`. Framework detection finds `package.json` (Next.js),
+`api/index.py` is built as a Python serverless function automatically, and
+`vercel.json` schedules the ingestion cron. Full instructions, environment
+variables and the health-check checklist are in
+**[`DEPLOYMENT.md`](DEPLOYMENT.md)**.
 
-### Frontend layout
+### Dashboard layout
 
 The dashboard is the three-route **Digital Twin** product. The `@/` alias
-resolves to `frontend/` (see `frontend/tsconfig.json`).
+resolves to the repository root (see `tsconfig.json`).
 
 Swap Station, Chargers and DG were removed from this app (routes deleted,
 sidebar entries deleted) and are being built as a separate workstream;
@@ -278,20 +291,31 @@ lib/fleet.ts          filter model, deriveSites + buildGeoIndex (both payload-de
 lib/fleet-metrics.ts  status derivation, KPI coverage types, alerts, table projections
 lib/site-model.ts     the ONLY modelled data in the app — facility simulation
 lib/theme.ts(x)       dark/light controller (useSyncExternalStore, no FOUC)
-lib/telemetry-source.ts  server-only: live document fetch, token auth,
-                         validation, snapshot fallback  <-- the data boundary
+lib/telemetry-source.ts  server-only: same-origin document fetch, validation,
+                         honest empty-document fallback  <-- the data boundary
 lib/document.ts       re-exports the loader + presentation helpers
 ```
 
 ### Live telemetry
 
-`GET /api/telemetry/trusted` (added to `telemetry/main.py`) serves the
-validated document `main_parser.py` writes. The Next.js server fetches it via
-`lib/telemetry-source.ts`, which handles the `secret_key`/`passcode` token
-exchange, an abort budget, structural validation and a fallback to the
-committed snapshot. Credentials are server-side only — see
-`frontend/.env.example`. The header chip reports `Live` or `Snapshot` (with
-the reason) so nobody mistakes cached data for current data.
+`GET /api/telemetry/trusted` (served by `telemetry/main.py`, mounted by
+`api/index.py` on Vercel) rebuilds the validated document **from the Neon
+`vehicle_state` table on every call** — there is no JSON file in the path any
+more. The Next.js server fetches it from its own origin through the
+`/api/*` rewrite in `next.config.mjs`, with an abort budget, structural
+validation and an honestly-labeled empty document as the only fallback.
+Credentials are server-side only — see `.env.example`. The header chip
+reports `Live`, `Cached` or `Waiting` (with the reason) so nobody mistakes
+stale or missing data for current data.
+
+Ingestion is pull-based and stateless, exactly as a serverless platform
+requires: the Vercel Cron job (`vercel.json`) calls `GET /api/cron/ingest`
+every five minutes (Pro plan; Hobby caps crons at once per day — use an
+external scheduler for tighter cadences, see `DEPLOYMENT.md`), which runs ONE
+extraction cycle — vendor API → validation → Neon upsert — and returns its
+summary. `POST /api/ingest/run` does the same on demand with the same Bearer
+secret. The old `python -m telemetry run` loop still exists for
+dedicated-server/Docker deployments, sharing every line of engine code.
 
 Because every view iterates `PARAM_ORDER` and reads `field_status`, unlocking
 a channel upstream populates the dashboard with **no frontend change** — this
@@ -310,10 +334,10 @@ toggling the theme never re-downloads the viewport. **The OSM attribution
 control is required by their tile usage policy; do not remove it.**
 If the tile CDN is
 unreachable, the map falls back to a vector basemap drawn from
-`frontend/data/india_states.json` — a simplified extract (36 state/UT
+`data/india_states.json` — a simplified extract (36 state/UT
 MultiPolygons, ~19k points) of the MIT-licensed `states_india.geojson`
 (© 2024 Mr Akshay Shinde, https://github.com/mraxays/india-states.geojson —
-license text in `frontend/data/india_states.LICENSE`). That file is imported
+license text in `data/india_states.LICENSE`). That file is imported
 lazily, only on the tile-error path.
 
 Markers are measured GPS fixes only, coloured by live motion state. Hovering a

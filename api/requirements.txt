@@ -1,0 +1,22 @@
+# Runtime dependencies for the Vercel Python serverless function (api/index.py).
+#
+# This is the FUNCTION's install list, kept separate from the repository-root
+# requirements.txt (which also carries dev tooling: pytest, httpx, ...).  Only
+# what `telemetry` actually imports ships in the lambda bundle -- smaller
+# bundle, faster cold start.
+#
+#   telemetry.api      -> requests
+#   telemetry.auth     -> (requests via api)
+#   telemetry.config   -> pydantic, pydantic-settings, python-dotenv
+#   telemetry.db       -> SQLAlchemy, psycopg[binary]
+#   telemetry.main     -> fastapi
+#   zoneinfo fallback  -> tzdata (the AWS/Vercel image may lack the tz database)
+
+fastapi==0.115.12
+SQLAlchemy==2.0.52
+psycopg[binary]==3.3.4
+pydantic==2.13.4
+pydantic-settings==2.15.0
+requests==2.34.2
+python-dotenv==1.2.3
+tzdata
