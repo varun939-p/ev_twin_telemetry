@@ -113,16 +113,21 @@ def pg_session(pg_url):
 
     The upsert is PostgreSQL-specific SQL, so the tests that matter most for
     data correctness run here rather than against a SQLite approximation.
+    Schema creation goes through `init_schema` (not bare create_all) so the
+    column reconcile for databases created by older engine versions runs here
+    exactly as it does in production.
     """
     if not pg_url:
         pytest.skip("TEST_DATABASE_URL not set -- PostgreSQL-specific tests skipped")
     engine = create_engine(pg_url, future=True)
-    Base.metadata.create_all(engine)
+    from telemetry.db import init_schema
+
+    init_schema(engine)
     # Start each test from an empty store so assertions are absolute.
     with engine.begin() as conn:
         from sqlalchemy import text
 
-        conn.execute(text("TRUNCATE telemetry, vehicle_state, vehicles RESTART IDENTITY CASCADE"))
+        conn.execute(text("TRUNCATE telemetry, vehicle_state, vehicles, provisioned_sites RESTART IDENTITY CASCADE"))
     factory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
     session = factory()
     yield session

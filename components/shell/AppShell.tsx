@@ -32,7 +32,7 @@ export default function AppShell({
   frameCount: number;
   /** How many of the 24 channels the upstream is currently measuring. */
   measuredChannels: number;
-  /** Whether this render is live control-plane data or the committed snapshot. */
+  /** Whether this render is live, cache-carried, or still waiting for data. */
   source: TelemetrySource;
   /** Why we fell back, when we did. Never hidden from the operator. */
   sourceNote: string | null;
@@ -80,7 +80,9 @@ export default function AppShell({
                 an uncached health probe, because the document itself may have
                 come from the stale-while-revalidate cache). "Cached" means the
                 feed is down but the last good document is still on screen.
-                "Snapshot" means we are on the committed file. An operator must
+                "Waiting" means there is no document yet — the database is
+                empty (first deploy, cron not fired, credentials pending) or
+                unreachable; the tooltip names the reason. An operator must
                 never have to wonder which of the three they are looking at. */}
             <Pill
               tone={source === "live" ? "ok" : source === "cached" ? "warn" : "neutral"}
@@ -93,7 +95,7 @@ export default function AppShell({
                   : `${sourceNote ?? "Upstream unavailable."} ${frameCount} validated frames, ${measuredChannels} of 24 channels measured. Freshest observation: ${feedAgeLabel}.`
               }
             >
-              {source === "live" ? "Live" : source === "cached" ? "Cached" : "Snapshot"} ·{" "}
+              {source === "live" ? "Live" : source === "cached" ? "Cached" : "Waiting"} ·{" "}
               <span className="num">{frameCount}</span> frames · <span className="num">{measuredChannels}</span>/24 ·{" "}
               {feedAgeLabel}
             </Pill>

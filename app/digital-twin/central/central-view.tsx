@@ -121,33 +121,13 @@ export default function CentralView({ data }: { data: TrustedTelemetryDocument }
 
       {/* 1 — live strip, all validated telemetry ------------------------- */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
-        <KpiCard
-          label="Carriers inbound to this hub"
-          value={inbound.length}
-          tone="info"
-          hint={
-            inbound[0]?.etaMinutes != null
-              ? `Next arrival ${formatEta(inbound[0].etaMinutes)} · ${inbound[0].distanceKm} km out`
-              : "No moving carriers currently assigned to this hub"
-          }
-        />
-        <KpiCard
-          label="Packs assigned to this site"
-          value={sitePacks.length}
-          tone="neutral"
-          hint="Nearest-hub assignment from each pack's measured GPS fix"
-        />
-        <KpiCard
-          label="Fleet in service"
-          value={inService}
-          tone="ok"
-          hint={`${inService} carriers reporting speed > 0 across every hub`}
-        />
+        <KpiCard label="Carriers inbound to this hub" value={inbound.length} tone="info" />
+        <KpiCard label="Packs assigned to this site" value={sitePacks.length} tone="neutral" />
+        <KpiCard label="Fleet in service" value={inService} tone="ok" />
         <KpiCard
           label="Packs below reserve"
           value={belowReserve}
           tone={belowReserve > 0 ? "danger" : "ok"}
-          hint={`Under the ${SOC_CRITICAL}% dispatch reserve, fleet-wide`}
         />
         {/* Median Frame Age was homed on the Swap Station draft. That route is
             gone, but the metric is the single best read on ingest-loop health,
@@ -158,8 +138,6 @@ export default function CentralView({ data }: { data: TrustedTelemetryDocument }
           value={medianAgeHours === null ? null : Number(medianAgeHours.toFixed(1))}
           unit=" h"
           tone={medianAgeHours !== null && medianAgeHours > 24 ? "warn" : "ok"}
-          hint="Freshness of the median asset's last validated frame — ingest-loop health"
-          unavailableReason="No frame carries an observation timestamp in this document."
         />
       </div>
 
@@ -178,7 +156,6 @@ export default function CentralView({ data }: { data: TrustedTelemetryDocument }
           <CardHeader
             eyebrow="Arrivals"
             title="Inbound carriers"
-            description="Ordered by estimated arrival — distance from the measured fix at the fleet cruise assumption."
             actions={<Pill tone="neutral">{inbound.length} moving</Pill>}
           />
           <Hairline />

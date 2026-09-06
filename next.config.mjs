@@ -1,24 +1,41 @@
 /** @type {import('next').NextConfig} */
 
 /**
- * NO `/api/*` PROXY REWRITES — deliberately.
+ * `/api/*` ROUTING — one deployment, two runtimes.
  *
- * This config used to rewrite `/api/provision-site` and
- * `/api/provisioned-sites` to `BACKEND_URL`, defaulting to
- * `http://127.0.0.1:8000`. Nothing in the app has called either since the
- * legacy provisioning UI was removed, and on Vercel they are a live hazard: a
- * serverless function cannot reach localhost, so those routes could only ever
- * return 502 in production — a deployment blocker that no local test would
- * ever surface.
+ * The Python control plane (FastAPI, `api/index.py`) is built by Vercel as a
+ * serverless function inside THIS project. On Vercel, every `/api/*` request
+ * is rewritten onto that function; the destination carries the matched path
+ * so the function's ASGI wrapper (api/index.py) can recover the original
+ * route regardless of which path the platform hands it.
  *
- * The dashboard reaches the control plane through `lib/telemetry-source.ts`
- * (server-side, `TELEMETRY_API_URL`, credentials never in the browser). If a
- * provisioning UI returns, it should use that same documented path rather
- * than a rewrite pinned to a loopback address.
+ * Locally there is no Python function — the rewrite proxies to
+ * `uvicorn telemetry.main:app` (default :8000, override with
+ * TELEMETRY_PROXY_URL), so `npm run dev` behaves exactly like production,
+ * including the browser never seeing a second origin.
+ *
+ * The credentials for the database and the vendor API live only in the
+ * function's environment. The browser talks to `/api/*` on its own origin
+ * and never needs any of them.
  */
+
+const onVercel = process.env.VERCEL === "1";
 
 const nextConfig = {
   reactStrictMode: true,
+
+  async rewrites() {
+    const backend =
+      process.env.TELEMETRY_PROXY_URL ?? "http://127.0.0.1:8000";
+    return [
+      {
+        source: "/api/:path*",
+        destination: onVercel
+          ? "/api/index.py/:path*" // the Python serverless function, same deployment
+          : `${backend.replace(/\/+$/, "")}/api/:path*`, // local uvicorn
+      },
+    ];
+  },
 
   /**
    * ROOT CAUSE OF THE "EVERYTHING IS DEAD" BUG.

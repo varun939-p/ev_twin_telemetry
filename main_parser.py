@@ -15,7 +15,8 @@ Pipeline (AWS credits pending, so this stage is file -> file, no DB, no HTTP):
         -> normalise_envelope()   accept either payload shape (see below)
         -> VehiclesPayload        telemetry.schemas -- the ONLY gate to the data
         -> parse_payload()        per-field validation, `missing` / `field_errors`
-        -> trusted_vehicle_telemetry.json
+        -> document_from_parsed() telemetry.document -- the shared builder
+        -> trusted JSON            (serverless deploys skip this file entirely)
 
 Architecture rule honoured: nothing reaches the output (or, later, PostgreSQL)
 unless it came back out of `telemetry.schemas.parse_payload`.  This script owns
@@ -50,23 +51,17 @@ import os
 import sys
 import tempfile
 from collections import Counter
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Final
 from zoneinfo import ZoneInfo
 
-from telemetry.fields import COLUMN_NAMES, PARAM_SPECS, SPEC_BY_NAME
-from telemetry.schemas import (
-    VehiclesPayload,
-    ParsedVehicle,
-    ValidatedPayload,
-    parse_payload,
-)
+from telemetry.document import Provenance, document_from_parsed as build_output
+from telemetry.fields import PARAM_SPECS, SPEC_BY_NAME
+from telemetry.schemas import VehiclesPayload, parse_payload
 
 log = logging.getLogger("main_parser")
-
-SCHEMA_VERSION: Final = "1.0"
 
 # Used only when --input is omitted, so `python main_parser.py` works from the
 # repo root whether or not the capture has been moved into uploads/.
@@ -153,18 +148,6 @@ def extract_document(capture: RawCapture) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # stage 2 -- normalise to the upstream envelope shape
 # ---------------------------------------------------------------------------
-@dataclass(slots=True)
-class Provenance:
-    """Where the bytes came from -- recorded in the output for auditability."""
-
-    source_file: str
-    source_encoding: str
-    source_bytes: int
-    input_shape: str
-    upstream_request: dict[str, Any] | None = None
-    extra: dict[str, Any] = field(default_factory=dict)
-
-
 def normalise_envelope(document: dict[str, Any], capture: RawCapture) -> tuple[dict[str, Any], Provenance]:
     """Map either accepted input shape onto `{"ok": ..., "vehicles": {id: frame}}`.
 
@@ -233,140 +216,10 @@ def normalise_envelope(document: dict[str, Any], capture: RawCapture) -> tuple[d
 
 
 # ---------------------------------------------------------------------------
-# stage 3 -- presentation of the validated result
+# stage 3 -- write
 # ---------------------------------------------------------------------------
-def field_status(vehicle: ParsedVehicle, name: str, errored: set[str]) -> str:
-    """One status per parameter, straight off the validator's own bookkeeping."""
-    if name in errored:
-        return FIELD_ERROR
-    if name in vehicle.missing:
-        return ABSENT_UPSTREAM  # upstream never sent this key -> UI grays it out
-    if vehicle.values.get(name) is None:
-        return NULL_UPSTREAM    # key sent, value unusable/empty
-    return MEASURED
-
-
-def build_output(
-    result: ValidatedPayload,
-    provenance: Provenance,
-    *,
-    tz: ZoneInfo,
-    require_all_fields: bool,
-    generated_at: datetime,
-) -> dict[str, Any]:
-    """Shape the validated frames for the Next.js dashboard.
-
-    `values` always contains all 24 keys in product-spec order -- absent fields
-    are explicit `null`, never omitted -- so the frontend can render a fixed
-    grid and gray a tile from `field_status[key] != "measured"` without any
-    key-existence checks of its own.
-    """
-    measured_counts: Counter[str] = Counter()
-    status_counts: dict[str, Counter[str]] = {name: Counter() for name in COLUMN_NAMES}
-    vehicles_out: list[dict[str, Any]] = []
-    attention: list[dict[str, Any]] = []
-
-    for vehicle in result.ok:
-        errored = {err.field for err in vehicle.field_errors}
-        statuses = {name: field_status(vehicle, name, errored) for name in COLUMN_NAMES}
-        measured = [name for name in COLUMN_NAMES if statuses[name] == MEASURED]
-        measured_counts.update(measured)
-        for name in COLUMN_NAMES:
-            status_counts[name][statuses[name]] += 1
-
-        completeness = round(100.0 * len(measured) / len(COLUMN_NAMES), 1)
-        vehicles_out.append(
-            {
-                "vehicle_id": vehicle.vehicle_id,
-                "observed_at": vehicle.observed_at.isoformat() if vehicle.observed_at else None,
-                "observed_at_utc": vehicle.observed_at.isoformat() if vehicle.observed_at else None,
-                "trusted": True,  # reached here => it passed telemetry.schemas
-                "signature": vehicle.signature(),  # stable digest; dedupe/idempotency downstream
-                "measured_count": len(measured),
-                "completeness_pct": completeness,
-                # --- the three lists the Pipeline Health Toggle consumes ------
-                "missing_fields": list(vehicle.missing),  # absent upstream (the known 9)
-                "null_fields": [n for n in COLUMN_NAMES if statuses[n] == NULL_UPSTREAM],
-                "field_errors": [err.model_dump() for err in vehicle.field_errors],
-                # --- per-field flags, all 24 keys, spec order -----------------
-                "field_status": statuses,
-                # --- the readings themselves, all 24 keys, spec order ---------
-                "values": {name: vehicle.values.get(name) for name in COLUMN_NAMES},
-            }
-        )
-        if completeness < 50.0 or not vehicle.observed_at:
-            attention.append(
-                {
-                    "vehicle_id": vehicle.vehicle_id,
-                    "reason": "no usable frame timestamp" if not vehicle.observed_at else "low completeness",
-                    "measured_count": len(measured),
-                    "completeness_pct": completeness,
-                    "observed_at": vehicle.observed_at.isoformat() if vehicle.observed_at else None,
-                }
-            )
-
-    accepted = max(len(result.ok), 1)
-    parameters: list[dict[str, Any]] = []
-    for name in COLUMN_NAMES:
-        spec = SPEC_BY_NAME[name]
-        hits = measured_counts.get(name, 0)
-        parameters.append(
-            {
-                "field": name,
-                "label": spec.label,
-                "unit": spec.unit,
-                "logical_type": spec.kind,
-                "documented_upstream": spec.documented,
-                "vehicles_with_value": hits,
-                "coverage_pct": round(100.0 * hits / accepted, 1),
-                # A parameter the upstream never sent anywhere in this batch.
-                "status": "available" if hits else "unavailable_upstream",
-                "status_breakdown": dict(status_counts[name]),
-            }
-        )
-
-    available = [p for p in parameters if p["status"] == "available"]
-    unavailable = [p for p in parameters if p["status"] != "available"]
-    oldest = min((v["observed_at"] for v in vehicles_out if v["observed_at"]), default=None)
-    newest = max((v["observed_at"] for v in vehicles_out if v["observed_at"]), default=None)
-
-    return {
-        "schema_version": SCHEMA_VERSION,
-        "generated_at": generated_at.isoformat(),
-        "provenance": {
-            **asdict(provenance),
-            "validator": "telemetry.schemas.parse_payload",
-            "source_timezone": str(tz),
-            "require_all_fields": require_all_fields,
-            "database_written": False,  # local-file stage: nothing has touched PostgreSQL
-        },
-        "pipeline_health": {
-            "vehicles_seen": result.seen,
-            "vehicles_accepted": result.accepted,
-            "vehicles_quarantined": len(result.rejected),
-            "parameters_total": len(COLUMN_NAMES),
-            "parameters_available": len(available),
-            "parameters_unavailable_upstream": len(unavailable),
-            "fleet_completeness_pct": round(
-                100.0 * sum(v["measured_count"] for v in vehicles_out) / (accepted * len(COLUMN_NAMES)), 1
-            ),
-            "oldest_observed_at": oldest,
-            "newest_observed_at": newest,
-            "available_parameters": available,
-            # Parameters the frontend must gray out (coverage-driven), with labels/units.
-            "unavailable_parameters": unavailable,
-            "attention": attention,
-        },
-        "field_status_legend": {
-            MEASURED: "value present and passed validation -- render normally",
-            ABSENT_UPSTREAM: "upstream did not send this key -- gray out, 'awaiting upstream'",
-            NULL_UPSTREAM: "upstream sent the key with a null/empty value -- gray out, 'no reading'",
-            FIELD_ERROR: "value was rejected by validation and stored NULL -- gray out, show error",
-        },
-        "vehicles": vehicles_out,
-        "quarantined": [item.model_dump() for item in result.rejected],
-    }
-
+# Presentation lives in telemetry.document (shared with the serverless
+# control plane); this script only owns I/O and the CLI.
 
 def write_json(path: Path, document: dict[str, Any]) -> None:
     """Atomic write: a half-written file must never be what the frontend reads."""

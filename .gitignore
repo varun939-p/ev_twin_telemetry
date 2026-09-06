@@ -25,16 +25,34 @@ build/
 .DS_Store
 
 # Runtime artifacts
-# `uploads/` is the manual-ingestion drop zone written by
-# telemetry.main.ingest_upload; `trusted_vehicle_telemetry.json` is the default
-# output of `python main_parser.py`.  Neither is source.
+# `uploads/` holds manual capture files; `trusted_vehicle_telemetry.json` is
+# the (optional, offline-only) output of `python main_parser.py`.  Neither is
+# source -- production reads Neon, not files.
 uploads/
 /trusted_vehicle_telemetry.json
 *.tmp
 
 # NOTE: `blue_energy_response.json` is deliberately NOT ignored.  It is the
-# verified upstream capture that `python main_parser.py` consumes and the
-# recorded provenance source of `frontend/data/trusted_vehicle_telemetry.json`,
-# so a fresh clone must be able to regenerate the dashboard document from it.
-# (An earlier revision of this file tried to ignore it, but the lines had been
-# appended as UTF-16 and silently matched nothing -- see git history.)
+# verified upstream capture that `python main_parser.py` consumes for offline
+# validation work.  (An earlier revision of this file tried to ignore it, but
+# the lines had been appended as UTF-16 and silently matched nothing -- see
+# git history.)
+
+# ---------------------------------------------------------------------------
+# Next.js (the dashboard lives at the repository root since the serverless
+# refactor: one Vercel project = Next.js + api/index.py)
+# ---------------------------------------------------------------------------
+/node_modules
+/.pnp
+.pnp.*
+/.next/
+/out/
+/coverage
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+*.tsbuildinfo
+next-env.d.ts
+# scratch database used by tools/serverless_check.py
+/.serverless_check.db

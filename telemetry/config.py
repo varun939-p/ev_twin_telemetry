@@ -122,6 +122,27 @@ class Settings(BaseSettings):
     db_pool_recycle: int = Field(default=1800, ge=-1)
     db_echo: bool = False
     db_schema: str = "public"
+    db_nullpool: bool = Field(
+        default=False,
+        description="Use NullPool (no idle connections held between invocations). "
+        "Enabled automatically on Vercel/AWS Lambda; set DB_NULLPOOL=true to force it.",
+    )
+
+    # --------------------------------------------------- serverless control plane
+    cron_secret: str = Field(
+        default="",
+        description="Bearer secret required by POST /api/ingest/run and the Vercel cron "
+        "route GET /api/cron/ingest. Vercel sends `Authorization: Bearer $CRON_SECRET` "
+        "automatically when that env var is set; leave blank for local development.",
+    )
+    ingest_min_interval_seconds: float = Field(
+        default=45.0,
+        ge=0,
+        description="Minimum spacing between ingestion cycles per warm instance. A second "
+        "request inside this window answers 429 with the last cycle's summary instead of "
+        "hitting the upstream again -- which keeps a misbehaving client from turning into "
+        "a poll loop.",
+    )
 
     # ---------------------------------------------------------------- loop
     poll_interval_seconds: float = Field(default=60.0, gt=0)

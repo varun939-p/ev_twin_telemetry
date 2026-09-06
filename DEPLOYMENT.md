@@ -1,98 +1,160 @@
-# Deploying the Digital Twin dashboard to Vercel
+# Deploying the Digital Twin to Vercel
 
-> **Read this first.** This repository is a **Python project with a Next.js app
-> nested inside it**. Connecting it to Vercel without changing one setting will
-> fail the build every time, and no amount of frontend work will show up.
-
-## The one setting that matters
-
-```
-repository root/
-├── main_parser.py         <-- Python. No package.json here.
-├── telemetry/             <-- FastAPI control plane
-├── pyproject.toml
-└── frontend/              <-- THE NEXT.JS APP LIVES HERE
-    ├── package.json
-    ├── next.config.mjs
-    └── vercel.json
-```
-
-Vercel's **Root Directory** defaults to the repository root. There is no
-`package.json` there, so the build fails with:
+> **The architecture in one sentence:** one Vercel project serves the Next.js
+> dashboard AND a Python serverless function (`api/index.py`); every request
+> for `/api/*` is rewritten to that function, which reads/writes **Neon
+> PostgreSQL**; a Vercel Cron job pulls the fleet from Blue Energy Motors into
+> Neon on a schedule. There is no background process, no local file, and no
+> second deployment.
 
 ```
-Error: No Next.js version detected. Make sure your package.json has "next"
-in either "dependencies" or "devDependencies".
-Also check your Root Directory setting matches the directory of your package.json file.
+                     ┌──────────────────────────────────────────────────┐
+                     │  ONE VERCEL PROJECT (repository root)            │
+   browser ────────► │  Next.js 16 (app/, force-dynamic pages)          │
+                     │      │  rewrites /api/:path*  (next.config.mjs)  │
+                     │      ▼                                          │
+                     │  api/index.py  — Python serverless function      │
+                     │      │  telemetry.main.py (FastAPI)              │
+   Vercel Cron ────► │      │   GET  /api/cron/ingest  (Bearer secret)  │
+   (daily*, Pro: 5m) │      │   GET  /api/telemetry/trusted             │
+                     │      ▼                                          │
+                     │  Neon PostgreSQL  ◄── vendor pull on demand      │
+                     └──────────────────────────────────┬───────────────┘
+                                                        │
+                                        https://track.blueenergymotors.com
 ```
 
-**Root Directory cannot be set from `vercel.json`** — it is a project setting.
-Fix it once, in the dashboard:
+\* Shipped schedule is daily (07:13 UTC) — the most frequent Vercel's Hobby
+tier accepts. Pro users: see "Cron cadence" below for the 5-minute heartbeat.
 
-> **Vercel → your project → Settings → General → Root Directory → `frontend` → Save**
+---
 
-Then redeploy. Framework preset, build command and output directory are all
-detected correctly from that point on; `frontend/vercel.json` supplies the
-framework hint, the deployment region and the security headers.
+## Step 1 — Neon PostgreSQL
 
-Leave **"Include files outside the Root Directory"** OFF. The dashboard has no
-build-time dependency on the Python side — it talks to the control plane over
-HTTP at runtime.
+1. Create (or reuse) the project at [neon.tech](https://neon.tech).
+2. Copy the **pooled** connection string (it contains `-pooler`), e.g.
+   `postgresql+psycopg://user:password@ep-xxx-pooler.region.aws.neon.tech/twin?sslmode=require`.
+   Pooled is the right choice for serverless functions: hundreds of short-lived
+   connections would exhaust a direct endpoint.
+3. Initialize the schema — either:
 
-## Environment variables
+   ```bash
+   DATABASE_URL="postgresql+psycopg://…" python -m telemetry init-db
+   ```
 
-Set these in **Settings → Environment Variables** (Production + Preview). Full
-descriptions live in `frontend/.env.example`.
+   …or run `deploy/schema.sql` in the Neon SQL editor. **Already running the
+   previous schema?** Nothing to redo: `init-db` (and the control plane's
+   process start-up) runs the idempotent migration block — `provisioned_sites`
+   plus the three validator-verdict columns on `vehicle_state`
+   (`field_status`, `missing_fields`, `field_errors`). The function adds them
+   on first boot; you do not need to touch the database by hand.
+
+## Step 2 — Create the Vercel project
+
+1. Import the repository. **Root Directory stays at the repository root** —
+   the Next.js app lives at the root, and Vercel auto-detects it.
+
+   > ⚠️ **Migrating the pre-existing `ev-twin-telemetry` project?** Its Root
+   > Directory is still set to `frontend` — a directory this branch DELETES.
+   > Until you clear it, every deployment fails instantly and no config change
+   > helps. Fix it once:
+   > **Settings → General → Root Directory → Edit → clear the value (leave
+   > empty) → Save**, then **Deployments → latest → ⋯ → Redeploy**.
+   > (Confirmed via the Vercel GitHub app's status payload:
+   > `"rootDirectory": "frontend"`.)
+2. That's it for the build. `api/index.py` is discovered automatically and
+   built with the Python runtime; `api/requirements.txt` is its dependency
+   list (kept separate from the root `requirements.txt`, which also carries
+   dev tooling). Platform defaults cover the rest — on Hobby that is a 300 s
+   function ceiling and 2 GB memory, far above what one ingestion cycle needs
+   (~seconds, idempotent on retry). `vercel.json` registers the cron and sets
+   the security headers.
+
+## Step 3 — Environment variables
+
+Set in **Settings → Environment Variables** (Production + Preview):
 
 | Variable | Required | Notes |
 | --- | --- | --- |
-| `TELEMETRY_API_URL` | **yes** | PUBLIC origin of the control plane. A serverless function cannot reach `127.0.0.1`; leaving the default silently serves the committed snapshot. |
-| `TELEMETRY_API_SECRET_KEY` | if the control plane is authenticated | Exchanged for a 59-minute bearer token. |
-| `TELEMETRY_API_PASSCODE` | if the control plane is authenticated | Issued with the secret key. |
-| `TELEMETRY_REVALIDATE_SECONDS` | no (default 30) | Keep at or below the parser's poll interval. |
-| `TELEMETRY_TIMEOUT_MS` | no (default 6000) | Abort budget per request. |
-| `TELEMETRY_HEALTH_PATH` | no (default `/health`) | Uncached liveness probe backing the Live/Cached distinction. |
+| `DATABASE_URL` | **yes** | Neon pooled URL, `postgresql+psycopg://…?sslmode=require`. The function forces NullPool on Vercel — no socket outlives an invocation. |
+| `API_SECRET_KEY` | **yes** (ingestion) | Blue Energy Motors client key. |
+| `API_PASSCODE` | **yes** (ingestion) | Shown once when issued. |
+| `CRON_SECRET` | **yes** (ingestion) | Generate with `openssl rand -base64 32`. Vercel Cron sends `Authorization: Bearer $CRON_SECRET` automatically; external schedulers must send it explicitly. **The ingest routes fail closed without it.** |
+| `TELEMETRY_REVALIDATE_SECONDS` | no (default 30) | Document cache window for server renders. Keep ≤ the cron interval. |
+| `TELEMETRY_TIMEOUT_MS` | no (default 6000) | Abort budget for the document fetch + health probe. |
+| `TELEMETRY_API_URL` | no | Only when hosting the control plane somewhere else entirely. Unset = same origin (the default, and the point). |
 
-None of these are `NEXT_PUBLIC_*`, so none reach the browser.
+None of these are `NEXT_PUBLIC_*`, so none reach the browser bundle;
 `lib/telemetry-source.ts` is marked `server-only`, which turns an accidental
-client import into a build error rather than a leaked fleet credential.
+client import into a build error.
 
-## What a healthy deployment looks like
+## Step 4 — Cron cadence
 
-Open the dashboard and read the chip in the top-right of the header:
+`vercel.json` ships `"13 7 * * *"` on `/api/cron/ingest` — **once per day,
+07:13 UTC (≈13:13 IST)**. That is the most frequent schedule Vercel's Hobby
+plan accepts (Hobby hard-rejects any expression that fires more than once per
+day at deploy time, so a `*/5 * * * *` here breaks the build check — which is
+exactly what the first deployment attempt hit). The daily run keeps a demo
+warm; it is NOT the product's intended heartbeat. On-demand ingestion is
+unaffected: `POST /api/ingest/run` works at any time with the Bearer secret.
 
-* **`Live · 100 frames · 8/24 · 42 h old`** — the control plane answered. The
-  `8/24` is how many telemetry channels the upstream currently measures; it
-  rises on its own as the vendor provisions more, with no frontend change.
-* **`Cached`** — the control plane is not answering, but Next's data cache
-  still holds a document it served earlier, so the dashboard keeps working.
-  The readings are as old as the outage, and the tooltip says so. It returns
-  to `Live` on its own within one poll (~20 s) once the API recovers — nobody
-  has to refresh.
-* **`Snapshot`** — the control plane could not be reached. Hover it: the
-  tooltip names the exact reason (`Control plane unreachable`, a `4xx`
-  rejecting the credentials, or a timeout). The dashboard still renders every
-  page from the committed document, so a demo never shows a broken screen —
-  but it is not live data. **If you see this after deploying, check
-  `TELEMETRY_API_URL` first.**
+To get the real five-minute heartbeat:
 
-## Verified pre-flight
+- **Pro plan:** change the schedule in `vercel.json` to `"*/5 * * * *"`.
+  Cron hits only run against production deployments, never previews.
+- **Hobby plan (no upgrade):** delete the `crons` block and point any external
+  scheduler (cron-job.org, GitHub Actions, UptimeRobot) at the same route on
+  any cadence you want:
 
-Against the production build (`next build && next start`), not just dev:
+  ```
+  GET https://<your-app>.vercel.app/api/cron/ingest
+  Authorization: Bearer <CRON_SECRET>
+  ```
 
-* builds with **zero** environment variables set;
-* with the control plane unreachable, all three routes return **200 in ~0.1 s**
-  and render 99 register rows from the snapshot — no crash, no hang;
-* no horizontal overflow at 1024, 1280, 1440, 1600, 1920 or 2560 px;
-* live refresh polls every 20 s, pauses when the tab is hidden, and leaves no
-  interval behind after navigation (measured: 2 refreshes / 45 s visible,
-  0 while hidden);
-* every panel is wrapped in an error boundary — a synthetic fault in one panel
-  leaves the rest of the page rendering, with a retry.
+## Step 5 — Verify
 
-## Not deployed by Vercel
+Run the pre-flight **before** deploying (no Vercel account, no credentials —
+it uses the bundled mock upstream and a scratch store):
 
-`telemetry/` (FastAPI) and `main_parser.py` are **not** part of this Vercel
-project. Host them wherever the vendor API is reachable — the repo's
-`Dockerfile` and `docker-compose.yml` cover that — and point
-`TELEMETRY_API_URL` at the result.
+```bash
+make setup && make check
+```
+
+Then, against the deployed project:
+
+| Check | Expected |
+| --- | --- |
+| `curl https://<app>/api/health` | `{"status":"ok","database":"up",…}` |
+| `curl -H "Authorization: Bearer $CRON_SECRET" https://<app>/api/cron/ingest` | `{"ok":true,"summary":{"accepted":8,…}}` |
+| `curl https://<app>/api/telemetry/trusted` | document with `"vehicles"` populated (or the honest empty document on first boot) |
+| Open the dashboard, read the header chip | **`Live · 8 frames · 24/24 · <age> old`** |
+
+The chip's three states:
+
+* **`Live`** — the control plane answered this render and the database holds
+  ingested vehicles.
+* **`Cached`** — the function is unreachable, but Next's data cache still
+  holds the last good document; readings are as old as the outage and the
+  tooltip says so. It returns to `Live` on its own.
+* **`Waiting`** — there is no document yet (empty database, cron not fired,
+  credentials pending). The tooltip names the exact reason. **If you see this
+  after deploying, run the cron route once by hand and check the function
+  logs.**
+
+## What changed in the 2026-09 serverless migration
+
+| Before (broken on Vercel) | After |
+| --- | --- |
+| `python -m telemetry run` — a 24/7 polling loop | Vercel Cron + on-demand `POST /api/ingest/run`, each running **one** cycle. The loop still ships for Docker/dedicated servers. |
+| `trusted_vehicle_telemetry.json` rewritten on disk | Deleted from the data path. The document is rebuilt from `vehicle_state` on every read; per-field verdicts are persisted at ingest time. |
+| FastAPI serving a local file, Next pointing at `TELEMETRY_API_URL` | One deployment: `next.config.mjs` rewrites `/api/*` → `api/index.py` (same origin). `TELEMETRY_API_URL` remains as an override. |
+| Frontend falling back to a committed snapshot | Frontend falls back to an honestly-labeled **empty** document (`Waiting`), never to stale or fabricated data. |
+| File-backed site provisioning (`provisioned_sites.json`) | Append-only `provisioned_sites` table in Neon. |
+| `POST /api/ingest/upload` file drop-zone | Removed (`410 Gone`) — serverless filesystems are ephemeral. |
+
+## Self-hosted alternative (unchanged)
+
+`Dockerfile` + `docker-compose.yml` still run the engine as a long-lived
+poller (`python -m telemetry run`) with its own PostgreSQL — useful if you
+want sub-minute cadences without Vercel. Point `TELEMETRY_API_URL` at it and
+the same dashboard reads it over the same endpoint.

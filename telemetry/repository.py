@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Iterable, Sequence
 
 from sqlalchemy import and_, or_, select
@@ -26,6 +26,23 @@ from .schemas import ParsedVehicle
 from .models import Telemetry, Vehicle, VehicleState
 
 log = logging.getLogger(__name__)
+
+
+def _same_instant(a: datetime | None, b: datetime | None) -> bool:
+    """Timestamp equality that tolerates a database which drops the offset.
+
+    PostgreSQL TIMESTAMPTZ round-trips aware datetimes exactly; SQLite stores
+    the naive rendering and hands it back without tzinfo.  Treat naive values
+    as UTC -- the engine only ever writes UTC-aware timestamps -- so the
+    applied/stale bookkeeping is correct on both dialects.
+    """
+    if a is None or b is None:
+        return a == b
+    if a.tzinfo is None:
+        a = a.replace(tzinfo=timezone.utc)
+    if b.tzinfo is None:
+        b = b.replace(tzinfo=timezone.utc)
+    return a == b
 
 
 @dataclass(slots=True)
@@ -156,6 +173,9 @@ class TelemetryRepository:
             "last_updated": excluded.last_updated,
             "ingested_at": excluded.ingested_at,
             "raw_frame": excluded.raw_frame,
+            "field_status": excluded.field_status,
+            "missing_fields": excluded.missing_fields,
+            "field_errors": excluded.field_errors,
         }
 
         stmt = stmt.on_conflict_do_update(
@@ -181,7 +201,7 @@ class TelemetryRepository:
         )
         applied: list[str] = []
         for vehicle_id, stored in self.session.execute(stmt):
-            if stored == wanted[vehicle_id]:
+            if _same_instant(stored, wanted[vehicle_id]):
                 applied.append(vehicle_id)
         return applied
 
@@ -210,11 +230,21 @@ class TelemetryRepository:
     @staticmethod
     def _state_row(vehicle: ParsedVehicle, ingested_at: datetime) -> dict[str, Any]:
         """Row for `vehicle_state` (timestamp column is `last_updated`)."""
+        # Import here (not at module top) to keep the repository independent of
+        # the presentation layer in every other code path.
+        from .document import statuses_for
+
         row: dict[str, Any] = {
             "vehicle_id": vehicle.vehicle_id,
             "last_updated": vehicle.observed_at,
             "ingested_at": ingested_at,
             "raw_frame": vehicle.values,
+            # The validator's per-parameter verdicts travel with the frame so
+            # the dashboard document can be rebuilt from this table later
+            # without re-running (or approximating) validation.
+            "field_status": statuses_for(vehicle),
+            "missing_fields": list(vehicle.missing),
+            "field_errors": [err.model_dump() for err in vehicle.field_errors],
         }
         for name in COLUMN_NAMES:
             row[name] = vehicle.values.get(name)
