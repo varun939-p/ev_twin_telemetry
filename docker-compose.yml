@@ -47,7 +47,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://twin:twin@db:5432/twin
       API_BASE_URL: http://mock:8899
-      POLL_INTERVAL_SECONDS: "60"
+      POLL_INTERVAL_SECONDS: "300"
       METRICS_ENABLED: "true"
     ports:
       - "9464:9464"

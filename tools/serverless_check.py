@@ -2,18 +2,18 @@
 
     python tools/serverless_check.py
 
-Exercises, in one process, exactly the request flow production uses:
+Exercises the adapter/request contract in one process (not the Vercel gateway):
 
-    next.js rewrite (/api/:path* -> /api/index.py/:path*)
+    next.js rewrite (/api/:path* -> /api/index.py?__telemetry_path=:path*)
         -> path normalizer (api/index.py)
         -> FastAPI control plane (telemetry/main.py)
         -> mock upstream (tools/mock_server.py -- the vendor stand-in)
         -> PostgreSQL upsert (Neon in production; a local server here)
         -> trusted document rebuilt from vehicle_state
 
-Defaults to the local PostgreSQL from TEST_DATABASE_URL / DATABASE_URL, falls
-back to a SQLite file when neither is set.  Exit 0 = the deployment shape is
-healthy end to end.
+Defaults to its own scratch SQLite file. SERVERLESS_CHECK_DATABASE_URL can
+select a DISPOSABLE PostgreSQL database instead; never point it at production.
+Exit 0 validates the in-process flow, not deployed routing, credentials or cron.
 """
 
 from __future__ import annotations
@@ -78,17 +78,17 @@ def main() -> int:
     auth = {"Authorization": "Bearer preflight-secret"}
 
     # 1. liveness through the rewritten path
-    r = client.get("/api/index.py/health")
+    r = client.get("/api/index.py?__telemetry_path=health")
     check("health via /api/index.py rewrite", r.status_code == 200 and r.json()["status"] == "ok", str(r.status_code))
     check("health reports the database up", r.json().get("database") == "up", r.json().get("database", "?"))
 
     # 2. the document BEFORE any ingestion: valid, empty, honest
-    r = client.get("/api/index.py/api/telemetry/trusted")
+    r = client.get("/api/index.py?__telemetry_path=telemetry/trusted")
     check("empty document is a 200", r.status_code == 200, str(r.status_code))
     check("empty document carries zero vehicles", r.json().get("vehicles") == [])
 
     # 3. one ingestion cycle: vendor API -> validate -> upsert
-    r = client.post("/api/index.py/api/ingest/run", headers=auth)
+    r = client.post("/api/index.py?__telemetry_path=ingest/run", headers=auth)
     ok = r.status_code == 200
     check("cron-style ingestion cycle", ok, r.text[:160] if not ok else "")
     if ok:
@@ -97,7 +97,7 @@ def main() -> int:
         check("cycle wrote 8 snapshots", summary["states_written"] == 8, str(summary["states_written"]))
 
     # 4. the dashboard read, now populated
-    r = client.get("/api/index.py/api/telemetry/trusted")
+    r = client.get("/api/index.py?__telemetry_path=telemetry/trusted")
     check("trusted document after ingestion", r.status_code == 200, str(r.status_code))
     doc = r.json()
     check("document holds 8 vehicles", len(doc.get("vehicles", [])) == 8, str(len(doc.get("vehicles", []))))
@@ -114,11 +114,11 @@ def main() -> int:
     )
 
     # 5. auth: a wrong bearer must not pass
-    r = client.get("/api/index.py/api/cron/ingest", headers={"Authorization": "Bearer nope"})
+    r = client.get("/api/index.py?__telemetry_path=cron/ingest", headers={"Authorization": "Bearer nope"})
     check("wrong bearer rejected", r.status_code == 401, str(r.status_code))
 
     # 6. idempotence: a second cycle keeps one row per vehicle
-    r = client.post("/api/index.py/api/ingest/run", headers=auth)
+    r = client.post("/api/index.py?__telemetry_path=ingest/run", headers=auth)
     check("second cycle also succeeds", r.status_code == 200, str(r.status_code))
 
     upstream.shutdown()
@@ -126,7 +126,7 @@ def main() -> int:
     if failures:
         print(f"{len(failures)} check(s) failed: {', '.join(failures)}")
         return 1
-    print("all checks passed -- the serverless request flow is healthy end to end")
+    print("all checks passed -- in-process adapter, ingestion and DB flow (deployment not verified)")
     return 0
 
 

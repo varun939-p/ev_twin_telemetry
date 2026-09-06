@@ -169,6 +169,30 @@ class ProvisionedSite(Base):
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
+class IngestionRun(Base):
+    """Durable cycle journal shared by the worker, HTTP triggers and cold starts.
+
+    A committed ``running`` row survives a function timeout. It must never be
+    mistaken for a successful poll just because vehicle_state still has data.
+    The journal is bounded to 30 days by the cycle runner.
+    """
+
+    __tablename__ = "ingestion_runs"
+    __table_args__ = (
+        Index("ix_ingestion_runs_started_at", "started_at"),
+        Index("ix_ingestion_runs_status_started", "status", "started_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    trigger: Mapped[str] = mapped_column(String(24), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    summary: Mapped[dict | None] = mapped_column(_JSON, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 class Telemetry(Base):
     """Append-only history. One row per (vehicle_id, observed_at)."""
 

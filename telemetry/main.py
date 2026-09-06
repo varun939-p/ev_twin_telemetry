@@ -1,50 +1,24 @@
-"""FastAPI control plane -- the dashboard's read path and the ingestion trigger.
+"""DB-backed FastAPI app, shared by local uvicorn and Vercel's api/index.py.
 
-Serverless edition.  One deployment serves both the Next.js dashboard and this
-ASGI app (mounted by ``api/index.py`` on Vercel), and the app itself is
-stateless: every request reads or writes **Neon PostgreSQL**, never a local
-file.  The old design -- a background poller rewriting
-``trusted_vehicle_telemetry.json`` and this service serving that file -- cannot
-run on Vercel's ephemeral filesystem; the database is the only state here.
+    python -m uvicorn telemetry.main:app --host 0.0.0.0 --port 8000
 
-Run locally (needs DATABASE_URL, e.g. the bundled mock + PostgreSQL):
+Starting uvicorn serves HTTP only. For continuous local ingestion, ALSO run
+``python -m telemetry run``. Vercel instead invokes GET /api/cron/ingest every
+five minutes. Neither path needs an open browser tab. main_parser.py is an
+unrelated offline file converter, not an ASGI entry point.
 
-    uvicorn telemetry.main:app --host 0.0.0.0 --port 8000
+GET /api/telemetry/trusted and /api/ingest/status are read-only. All ingest
+routes (including the legacy /api/ingest/trigger alias) use CRON_SECRET; they
+fail closed on Vercel. Only unconfigured local development allows anonymous
+bootstrap. A read must never bypass cron authentication or block on upstream.
 
-Routes
-------
-    GET  /health                  liveness (probe-friendly, always cheap)
-    GET  /api/health              same, under /api for the same-origin rewrite
-    GET  /api/telemetry/trusted   THE dashboard read: the trusted document,
-                                  rebuilt from `vehicle_state` on every call.
-                                  AUTO-INGEST: if the DB is empty or data is
-                                  stale (>10 min), triggers an ingestion cycle
-                                  automatically before responding.
-    POST /api/provision-site      register a twin site (append-only table)
-    GET  /api/provisioned-sites   list what was provisioned
-    POST /api/ingest/run          one extraction cycle: vendor API -> validate
-                                  -> Neon upsert (Bearer-protected)
-    POST /api/ingest/trigger      dashboard-triggered ingestion (no CRON_SECRET
-                                  required, rate-limited to 1 per 2 min)
-    GET  /api/cron/ingest         the Vercel Cron entry point; same cycle
-    POST /api/ingest/upload       REMOVED -- 410 Gone (serverless filesystems
-                                  are ephemeral; ingest means "into Neon")
-
-Ingestion is authenticated with ``CRON_SECRET`` (Vercel sends
-``Authorization: Bearer $CRON_SECRET`` on managed cron invocations
-automatically).  On Vercel the ingest routes fail closed when the secret is
-unset -- an open endpoint that triggers upstream pulls is a quota leak.  Local
-development stays open when no secret is configured.
-
-Warm-instance state is deliberate and bounded: the upstream token, the
-unchanged-frame signatures and the resolved live-date are cached per process
-(cold starts re-authenticate; warm invocations reuse a live token), and a
-cooldown + single-flight lock stop overlapping requests from turning into an
-accidental poll loop against the vendor API.
+Vehicle data and cycle outcomes live in PostgreSQL. Only the upstream token,
+extractor signatures and per-instance single-flight/cooldown are cached here.
 """
 
 from __future__ import annotations
 
+import hmac
 import logging
 import os
 import threading
@@ -64,32 +38,29 @@ from .api import UpstreamClient
 from .config import Settings, get_settings
 from .db import build_engine, build_session_factory, init_schema
 from .document import document_from_state_rows, empty_document
-from .exceptions import AuthRejectedError, TelemetryError, UpstreamError
+from .exceptions import AuthRejectedError
 from .extractor import TelemetryExtractor
 from .models import ProvisionedSite, VehicleState
+from .ingestion import failure_detail, ingestion_health, run_recorded_cycle
+from .logging_setup import configure_logging
 from .schemas import (
     SiteProvisionRecord,
     SiteProvisionRequest,
     SiteProvisionResponse,
 )
 
-log = logging.getLogger("backend.control-plane")
-# uvicorn configures its own loggers and leaves the root at WARNING, so attach a
-# handler here to guarantee "payload reached Python" proofs print to console.
-if not log.handlers:
-    _handler = logging.StreamHandler()
-    _handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s :: %(message)s"))
-    log.addHandler(_handler)
-    log.setLevel(logging.INFO)
-    log.propagate = False
+# Include extractor/date-probe events under uvicorn as well as the CLI.
+configure_logging(get_settings())
+log = logging.getLogger("telemetry.control_plane")
 
 app = FastAPI(
     title="Digital Twin Control Plane",
-    version="2.0.0",
+    version="2.1.0",
+    redirect_slashes=False,
     description=(
         "Reads the validated telemetry snapshot out of Neon PostgreSQL and "
         "triggers ingestion cycles from the Blue Energy Motors API. "
-        "Serverless: no local files, no background loop."
+        "HTTP is read/trigger only; polling is owned by the worker or cron."
     ),
 )
 
@@ -195,243 +166,73 @@ def _mask_url(url: str) -> str:
 # ---------------------------------------------------------------------------
 @app.get("/health")
 @app.get("/api/health")
-def health() -> dict[str, Any]:
-    """Liveness probe. Always cheap; never throws.
-
-    ``database`` answers one of: ``not-configured`` / ``up`` / ``down`` -- a
-    fast ``SELECT 1`` so the dashboard can distinguish "the function is up but
-    the database is not" from a plain outage.  A failed probe still returns
-    200: this endpoint reports the process, not the data path.
-    """
+def health() -> JSONResponse:
+    """Process liveness plus uncached DB/poller health; never calls upstream."""
     settings = _settings()
     database = "not-configured"
+    diagnostic: dict[str, Any] = {
+        "state": "unknown", "detail": "Database is not configured; ingestion health is unknown.",
+        "expected_interval_seconds": settings.poll_interval_seconds,
+        "last_attempt": None, "last_success_at": None, "newest_observed_at": None,
+    }
     if settings.database_url:
         database = "down"
         try:
-            factory = _session_factory()
-            probe = factory()
-            try:
-                probe.execute(text("SELECT 1")).scalar()
-            finally:
-                probe.close()
-            database = "up"
-        except Exception:
-            log.warning("health probe: database unreachable", exc_info=True)
-
-    last = _state.get("last_cycle")
-    return {
-        "status": "ok",
-        "service": "digital-twin-control-plane",
-        "version": app.version,
-        "database": database,
-        "database_url": _mask_url(settings.database_url) if settings.database_url else None,
-        "serverless": bool(os.getenv("VERCEL") or os.getenv("AWS_LAMBDA_FUNCTION_NAME")),
-        "last_cycle": last.get("finished_at") if isinstance(last, dict) else None,
-        "time": datetime.now(timezone.utc).isoformat(),
-    }
-
-
-# ---------------------------------------------------------------------------
-# the dashboard read
-# ---------------------------------------------------------------------------
-def _maybe_auto_ingest(settings: Settings, row_count: int) -> bool:
-    """Run an ingestion cycle if the DB is empty or data is very stale.
-
-    This is what makes the dashboard show real data on first visit: when the
-    operator deploys with credentials configured, the first dashboard load
-    triggers an ingestion cycle automatically instead of showing an empty
-    "Waiting" state forever.
-
-    Returns True if an ingestion cycle ran (data may now be in the DB).
-    Returns False if no ingestion was needed or it could not run.
-    """
-    # Only auto-ingest if credentials are configured
-    if not settings.api_secret_key or not settings.api_passcode:
-        return False
-
-    # Check if we need to trigger ingestion
-    should_ingest = False
-
-    # Case 1: DB is completely empty (first deploy)
-    if row_count == 0:
-        should_ingest = True
-        log.info("auto-ingest: database empty, triggering ingestion cycle")
-
-    # Case 2: Last cycle was more than 10 minutes ago (data is very stale)
-    else:
-        last = _state.get("last_cycle")
-        if isinstance(last, dict):
-            finished_at = last.get("finished_at")
-            if finished_at:
-                try:
-                    last_time = datetime.fromisoformat(finished_at)
-                    age_seconds = (datetime.now(timezone.utc) - last_time).total_seconds()
-                    if age_seconds > 600:  # 10 minutes
-                        should_ingest = True
-                        log.info("auto-ingest: data is %.0f seconds stale, triggering refresh", age_seconds)
-                except (ValueError, TypeError):
-                    pass
-        else:
-            # No cycle has run on this instance yet, and DB has data from a previous instance
-            # Check if we've been up for a while without running a cycle
-            last_started = _state.get("last_started", 0.0)
-            if last_started == 0.0:
-                # This instance hasn't run any cycle yet — trigger one
-                should_ingest = True
-                log.info("auto-ingest: no cycle run on this instance yet, triggering fresh data")
-
-    if not should_ingest:
-        return False
-
-    # Respect the cooldown
-    cooldown = max(settings.ingest_min_interval_seconds, 0.0)
-    with _cycle_lock:
-        last_started = float(_state.get("last_started") or 0.0)
-    if cooldown and last_started and (time.monotonic() - last_started) < cooldown:
-        log.debug("auto-ingest: skipped (cooldown %.0fs)", time.monotonic() - last_started)
-        return False
-
-    # Try to run an ingestion cycle (non-blocking if another is already running)
-    if not _ingest_lock.acquire(blocking=False):
-        log.debug("auto-ingest: skipped (another cycle is running)")
-        return False
-
-    try:
-        log.info("auto-ingest: starting ingestion cycle")
-        factory = _session_factory()
-        session = factory()
-        try:
             _ensure_schema_once()
-            client, tokens, extractor = _ingest_components(settings)
-            report = extractor.run_cycle(session)
-            log.info("auto-ingest: %s", report.summary())
-            # Update the cycle state
-            cycle = {
-                "ok": True,
-                "trigger": "auto-read",
-                "cycle_seconds": report.duration_ms / 1000.0,
-                "summary": {
-                    "seen": report.seen,
-                    "accepted": report.accepted,
-                    "rejected": report.rejected,
-                    "states_written": report.write.states_written,
-                    "history_written": report.write.history_written,
-                    "unchanged_skipped": report.write.skipped_unchanged,
-                    "stale_skipped": report.write.states_skipped_stale,
-                    "detail_ok": report.detail_ok,
-                    "detail_failed": report.detail_failed,
-                    "resolved_date": report.resolved_date,
-                    "date_source": report.date_source,
-                    "date_probes": report.date_probes,
-                },
-                "report_line": report.summary(),
-                "finished_at": datetime.now(timezone.utc).isoformat(),
-            }
-            with _cycle_lock:
-                _state["last_cycle"] = cycle
-            return True
-        except AuthRejectedError as exc:
-            _reset_ingest_components()
-            log.error("auto-ingest: auth rejected: %s", exc)
-            return False
+            with _session_factory()() as probe:
+                probe.execute(text("SELECT 1")).scalar()
+                diagnostic = ingestion_health(probe, settings)
+            database = "up"
         except Exception as exc:
-            log.warning("auto-ingest: cycle failed: %s: %s", exc.__class__.__name__, exc)
-            return False
-        finally:
-            session.close()
-    finally:
-        _ingest_lock.release()
+            log.warning("health probe: database unavailable (%s)", type(exc).__name__)
+            diagnostic["detail"] = "Database unreachable; ingestion health is unknown. Check Neon connectivity."
+    return JSONResponse({
+        "status": "ok", "service": "digital-twin-control-plane", "version": app.version,
+        "database": database,
+        "serverless": bool(os.getenv("VERCEL") or os.getenv("AWS_LAMBDA_FUNCTION_NAME")),
+        "last_cycle": diagnostic.get("last_attempt", {}).get("finished_at") if diagnostic.get("last_attempt") else None,
+        "ingestion": diagnostic,
+        "time": datetime.now(timezone.utc).isoformat(),
+    }, headers={"Cache-Control": "no-store"})
 
 
-@app.get(
-    "/api/telemetry/trusted",
-    summary="Serve the latest validated telemetry document, rebuilt from Neon.",
-)
+@app.get("/api/ingest/status", summary="Durable ingestion diagnostics (read-only).")
+def ingest_status(db: Session = Depends(get_db)) -> JSONResponse:
+    _ensure_schema_once()
+    return JSONResponse(ingestion_health(db, _settings()), headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/telemetry/trusted", summary="Latest validated telemetry document, rebuilt from Neon.")
 def trusted_telemetry(db: Session = Depends(get_db)) -> JSONResponse:
-    """The dashboard's single read endpoint.
-
-    The document is assembled from ``vehicle_state`` -- the table the
-    extraction engine upserts on every cycle -- so the freshest committed
-    snapshot is what the dashboard renders.  Per-parameter verdicts
-    (``field_status``) were persisted at ingest time by the validator; nothing
-    is re-invented or re-validated here, and no local file is involved.
-
-    AUTO-INGEST: When the database is empty or data is very stale (>10 min),
-    this endpoint automatically triggers an ingestion cycle to pull fresh
-    data from the upstream API. This ensures the dashboard shows real data
-    on first visit without waiting for the cron job.
-
-    ``no-store`` because the whole point is that a cycle five seconds ago is
-    already stale; the Next.js layer applies its own short revalidate window.
-    """
+    """Read committed snapshots only; never turn a dashboard visit into a poll."""
     settings = _settings()
     generated_at = datetime.now(timezone.utc)
     try:
         _ensure_schema_once()
         rows = list(db.execute(select(VehicleState)).scalars())
-    except HTTPException:
-        raise
+        diagnostic = ingestion_health(db, settings, now=generated_at)
     except SQLAlchemyError as exc:
-        raise HTTPException(status_code=503, detail=f"Database unreachable: {exc}") from exc
-
-    row_count = len(rows)
-
-    # AUTO-INGEST: If DB is empty or data is stale, trigger ingestion
-    auto_ingested = False
-    if settings.database_url:  # Only if DB is configured
-        try:
-            auto_ingested = _maybe_auto_ingest(settings, row_count)
-            # If we ran an ingestion, re-read from DB to get the fresh data.
-            # Expire the session's state first to ensure we see the newly committed data
-            # (the auto-ingest ran in a separate session and committed its changes).
-            if auto_ingested:
-                db.expire_all()
-                rows = list(db.execute(select(VehicleState)).scalars())
-                row_count = len(rows)
-                log.info("auto-ingest: re-read %d vehicles from DB after ingestion", row_count)
-        except Exception as exc:
-            # Auto-ingest must never break the read endpoint
-            log.warning("auto-ingest: failed safely: %s", exc)
+        raise HTTPException(status_code=503, detail=failure_detail(exc)[1]) from exc
 
     if not rows:
-        reason = (
-            "No vehicles in the database yet. "
-            + ("Ingestion was attempted but returned no data. " if auto_ingested else "")
-            + "Check API_SECRET_KEY, API_PASSCODE, and API_BASE_URL are configured correctly. "
-            + "The cron job and auto-ingest work together to keep data fresh."
-        )
         payload = empty_document(
-            settings_tz=settings.tz,
-            require_all_fields=settings.require_all_fields,
-            reason=reason,
+            settings_tz=settings.tz, require_all_fields=settings.require_all_fields,
+            reason="No vehicles have been ingested yet. " + diagnostic["detail"],
             generated_at=generated_at,
         )
     else:
         payload = document_from_state_rows(
-            rows,
-            settings_tz=settings.tz,
-            require_all_fields=settings.require_all_fields,
-            generated_at=generated_at,
-            database_url_masked=_mask_url(settings.database_url),
-            last_cycle=_last_cycle_summary(),
+            rows, settings_tz=settings.tz, require_all_fields=settings.require_all_fields,
+            generated_at=generated_at, database_url_masked=_mask_url(settings.database_url),
+            last_cycle=diagnostic["last_attempt"],
         )
-
-    return JSONResponse(
-        content=payload,
-        headers={
-            "Cache-Control": "no-store",
-            # Lets the caller log ingest lag without parsing the body.
-            "X-Document-Generated-At": generated_at.isoformat(),
-            "X-Document-Vehicles": str(len(payload.get("vehicles", []))),
-            "X-Auto-Ingest": "true" if auto_ingested else "false",
-        },
-    )
-
-
-def _last_cycle_summary() -> dict[str, Any] | None:
-    with _cycle_lock:
-        last = _state.get("last_cycle")
-        return dict(last) if isinstance(last, dict) else None
+    payload["pipeline_health"]["ingestion"] = diagnostic
+    return JSONResponse(content=payload, headers={
+        "Cache-Control": "no-store",
+        "X-Document-Generated-At": generated_at.isoformat(),
+        "X-Document-Vehicles": str(len(rows)),
+        "X-Auto-Ingest": "false",
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -530,6 +331,8 @@ def _ingest_components(settings: Settings) -> tuple[UpstreamClient, TokenManager
 
 def _reset_ingest_components() -> None:
     global _ingest_client, _ingest_tokens, _ingest_extractor
+    if _ingest_client is not None:
+        _ingest_client.session.close()
     _ingest_client = None
     _ingest_tokens = None
     _ingest_extractor = None
@@ -543,7 +346,7 @@ def _authorize_ingest(request: Request) -> None:
         header = request.headers.get("authorization", "")
         if header.lower().startswith("bearer "):
             provided = header[7:].strip()
-        if provided != expected:
+        if not hmac.compare_digest(provided.encode(), expected.encode()):
             raise HTTPException(status_code=401, detail="Invalid or missing ingestion secret.")
         return
     if os.getenv("VERCEL") or os.getenv("AWS_LAMBDA_FUNCTION_NAME"):
@@ -572,47 +375,9 @@ def cron_ingest(request: Request) -> dict[str, Any]:
     return _ingest_endpoint(trigger="cron")
 
 
-# Rate limit state for the dashboard trigger endpoint
-_trigger_rate_limit = {"last_trigger": 0.0}
-_TRIGGER_COOLDOWN_SECONDS = 120.0  # 2 minutes between dashboard triggers
-
-
-@app.post(
-    "/api/ingest/trigger",
-    summary="Dashboard-triggered ingestion (no CRON_SECRET required, rate-limited).",
-)
+@app.post("/api/ingest/trigger", summary="Legacy dashboard alias; same authorization as /api/ingest/run.")
 def trigger_ingest(request: Request) -> dict[str, Any]:
-    """Lightweight ingestion trigger for the dashboard UI.
-
-    Unlike POST /api/ingest/run, this endpoint does NOT require CRON_SECRET.
-    It is rate-limited to one trigger per 2 minutes per serverless instance
-    to prevent abuse. This is what the dashboard's auto-ingest UI calls when
-    it detects the "waiting" state (empty database on first deploy).
-
-    The actual ingestion runs inline (same as /api/ingest/run), so the response
-    is slow (10-30 seconds) but the dashboard shows a loading state.
-    """
-    settings = _settings()
-
-    # Rate limit check
-    now = time.monotonic()
-    if (now - _trigger_rate_limit["last_trigger"]) < _TRIGGER_COOLDOWN_SECONDS:
-        remaining = _TRIGGER_COOLDOWN_SECONDS - (now - _trigger_rate_limit["last_trigger"])
-        raise HTTPException(
-            status_code=429,
-            detail=f"Ingestion was triggered recently. Wait {remaining:.0f}s before trying again.",
-        )
-
-    # Validate that credentials are configured
-    try:
-        settings.validate_required()
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-    # Mark that we're triggering (for rate limiting)
-    _trigger_rate_limit["last_trigger"] = now
-
-    # Run the ingestion cycle
+    _authorize_ingest(request)
     return _ingest_endpoint(trigger="dashboard")
 
 
@@ -632,82 +397,34 @@ def ingest_upload_gone() -> JSONResponse:
 
 def _ingest_endpoint(*, trigger: str) -> dict[str, Any]:
     settings = _settings()
-    try:
-        settings.validate_required()
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-    cooldown = _cooldown_seconds()
-    with _cycle_lock:
-        last_started = float(_state.get("last_started") or 0.0)
-    if cooldown and last_started and (time.monotonic() - last_started) < cooldown:
-        raise HTTPException(
-            status_code=429,
-            detail=(
-                f"An ingestion cycle ran {time.monotonic() - last_started:.0f}s ago "
-                f"(cooldown {cooldown:.0f}s). Reuse the last result below instead of "
-                "polling the vendor API."
-            ),
-        )
-
     if not _ingest_lock.acquire(blocking=False):
-        raise HTTPException(
-            status_code=409,
-            detail="An ingestion cycle is already running on this instance. Retry shortly.",
-        )
-
-    started = time.monotonic()
-    with _cycle_lock:
-        _state["last_started"] = started
-    factory = _session_factory()
-    session = factory()
+        raise HTTPException(status_code=409, detail="An ingestion cycle is already running on this instance. Retry shortly.")
+    # EVERYTHING after acquiring the lock is protected by finally, including
+    # factory/schema construction. A DB failure must not wedge this instance.
     try:
+        cooldown = _cooldown_seconds()
+        with _cycle_lock:
+            last_started = float(_state.get("last_started") or 0.0)
+            if cooldown and last_started and time.monotonic() - last_started < cooldown:
+                raise HTTPException(status_code=429, detail=f"Ingestion cooldown is {cooldown:.0f}s. Wait before trying again.")
+            _state["last_started"] = time.monotonic()
         _ensure_schema_once()
-        client, tokens, extractor = _ingest_components(settings)
-        report = extractor.run_cycle(session)
-    except AuthRejectedError as exc:
-        # Credentials are wrong or the client was disabled. Re-authenticating
-        # will not help until the operator fixes the secret, but the cached
-        # token must go: keep the instance alive and honest.
-        _reset_ingest_components()
-        log.error("ingest auth rejected: %s", exc)
-        raise HTTPException(status_code=502, detail=f"Upstream rejected our credentials: {exc}") from exc
-    except UpstreamError as exc:
-        raise HTTPException(status_code=502, detail=f"Upstream API failure: {exc}") from exc
-    except TelemetryError as exc:
-        raise HTTPException(status_code=502, detail=f"Extraction failed: {exc}") from exc
-    except SQLAlchemyError as exc:
-        raise HTTPException(status_code=503, detail=f"Database write failed: {exc}") from exc
+        _, _, extractor = _ingest_components(settings)
+        result = run_recorded_cycle(settings, _session_factory(), extractor, trigger=trigger)
+        with _cycle_lock:
+            _state["last_cycle"] = result.payload
+        return result.payload
+    except HTTPException:
+        raise
+    except Exception as exc:
+        if isinstance(exc, AuthRejectedError):
+            _reset_ingest_components()
+        code, detail = failure_detail(exc)
+        log.error("ingest trigger=%s error_code=%s error_type=%s", trigger, code, type(exc).__name__)
+        status = 503 if code in {"database_error", "configuration_error"} else 502
+        raise HTTPException(status_code=status, detail=detail) from exc
     finally:
-        session.close()
         _ingest_lock.release()
-
-    summary = {
-        "seen": report.seen,
-        "accepted": report.accepted,
-        "rejected": report.rejected,
-        "states_written": report.write.states_written,
-        "history_written": report.write.history_written,
-        "unchanged_skipped": report.write.skipped_unchanged,
-        "stale_skipped": report.write.states_skipped_stale,
-        "detail_ok": report.detail_ok,
-        "detail_failed": report.detail_failed,
-        "resolved_date": report.resolved_date,
-        "date_source": report.date_source,
-        "date_probes": report.date_probes,
-    }
-    cycle = {
-        "ok": True,
-        "trigger": trigger,
-        "cycle_seconds": round(time.monotonic() - started, 3),
-        "summary": summary,
-        "report_line": report.summary(),
-        "finished_at": datetime.now(timezone.utc).isoformat(),
-    }
-    with _cycle_lock:
-        _state["last_cycle"] = cycle
-    log.info("ingest (%s): %s", trigger, report.summary())
-    return cycle
 
 
 # ---------------------------------------------------------------------------
@@ -718,3 +435,9 @@ async def _http_exception_handler(request: Request, exc: HTTPException):  # noqa
     from fastapi.responses import JSONResponse as _JSONResponse
 
     return _JSONResponse(status_code=exc.status_code, content={"ok": False, "detail": exc.detail})
+
+
+@app.exception_handler(SQLAlchemyError)
+async def _database_exception_handler(request: Request, exc: SQLAlchemyError):
+    log.error("database request failed (%s)", type(exc).__name__)
+    return JSONResponse(status_code=503, content={"ok": False, "detail": failure_detail(exc)[1]})

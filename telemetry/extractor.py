@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import logging
 import time
-from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -46,7 +45,7 @@ class DateResolution:
     today, IST).  When the configured date -- or the server default -- returns
     an empty or dead batch, the resolver probes for the freshest date that
     actually holds a live fleet and remembers the decision here so later
-    cycles go straight to it instead of re-probing every poll.
+    cycles can retain it while checking for newer reporting dates.
 
     `source` values:
       * `configured`     -- `API_DATE` as given carried a live batch;
@@ -65,6 +64,7 @@ class DateResolution:
     probes: int
     satisfied: bool
     resolved_at: float
+    probe_errors: int = 0
 
 
 @dataclass(slots=True)
@@ -87,6 +87,11 @@ class CycleReport:
     resolved_date: str | None = None
     date_source: str = ""
     date_probes: int = 0
+    date_probe_errors: int = 0
+    date_satisfied: bool = True
+    active_vehicles: int = 0
+    newest_observed_at: datetime | None = None
+    missing_timestamps: int = 0
 
     @property
     def ok(self) -> bool:
@@ -102,7 +107,8 @@ class CycleReport:
         if self.date_source:
             base += (
                 f" | date={self.resolved_date or '<server default>'} "
-                f"({self.date_source}, {self.date_probes} probe(s))"
+                f"({self.date_source}, {self.date_probes} probe(s), {self.date_probe_errors} errors, "
+                f"active={self.active_vehicles}, satisfied={self.date_satisfied})"
             )
         return base
 
@@ -142,6 +148,9 @@ class TelemetryExtractor:
             report.resolved_date = self._date_plan.resolved_date
             report.date_source = self._date_plan.source
             report.date_probes = self._date_plan.probes
+            report.date_probe_errors = self._date_plan.probe_errors
+            report.date_satisfied = self._date_plan.satisfied
+            report.active_vehicles = self._date_plan.active_vehicles
         payload = self._validate_envelope(raw)
         payload, report.detail_ok, report.detail_failed = self._enrich_with_details(payload)
         validated = self._validate_vehicles(payload, ingested_at)
@@ -150,6 +159,12 @@ class TelemetryExtractor:
         report.accepted = validated.accepted
         report.rejected = len(validated.rejected)
         report.rejected_ids = [r.vehicle_id for r in validated.rejected][:20]
+        # Ingest-time fallbacks may key history, but are not evidence that the
+        # upstream sent a new observation. Keep them out of freshness diagnostics.
+        timestamped = [v for v in validated.ok if v.observed_at is not None
+                       and not any(e.field == "last_updated" for e in v.field_errors)]
+        report.missing_timestamps = len(validated.ok) - len(timestamped)
+        report.newest_observed_at = max((v.observed_at for v in timestamped), default=None)
 
         self._report_quality(validated, report)
 
@@ -168,67 +183,26 @@ class TelemetryExtractor:
 
     # -------------------------------------------------------------- private
     def _fetch(self) -> dict[str, Any]:
-        """GET the tier-1 fleet summary, re-authenticating once if the token died.
+        """Check the current feed every poll; never pin a healthy archive forever.
 
-        Wraps the live-date resolution: a batch that carries fewer active
-        vehicles than `Settings.live_date_min_vehicles` triggers a bounded
-        probe for the freshest date that does hold a live fleet (`API_DATE`
-        omitted or stale must never mean an empty ingest).  The winning
-        decision is cached in `self._date_plan` so steady-state polls send a
-        single tier-1 GET, exactly as before this existed.
+        Explicit API_DATE remains an intentional filter. With fallback enabled,
+        a historical winner is re-resolved each cycle so newer data can win even
+        while yesterday's fleet is still healthy. Only *best-effort* full
+        searches are throttled by LIVE_DATE_REPROBE_SECONDS.
         """
         now = time.monotonic()
-        plan = self._date_plan
-        if plan is None:
-            if not self.settings.live_date_fallback:
-                # Opt-out: behave exactly like the pre-resolution engine -- one
-                # tier-1 GET with whatever API_DATE says, dead batch or not.
-                raw = self._fetch_date(self.settings.api_date)
-                active = count_active_vehicles(raw)
-                self._date_plan = DateResolution(
-                    configured_date=self.settings.api_date,
-                    resolved_date=self.settings.api_date,
-                    source="configured",
-                    active_vehicles=active,
-                    probes=1,
-                    satisfied=active >= self.settings.live_date_min_vehicles,
-                    resolved_at=now,
-                )
-                return raw
-            raw, self._date_plan = self._resolve_live_date(now)
-            return raw
         if not self.settings.live_date_fallback:
-            return self._fetch_date(plan.resolved_date, label="vehicles")
-        raw = self._fetch_date(plan.resolved_date, label="vehicles")
-        active = count_active_vehicles(raw)
-        if active >= self.settings.live_date_min_vehicles:
+            raw = self._fetch_date(self.settings.api_date)
+            active = count_active_vehicles(raw)
             self._date_plan = DateResolution(
-                configured_date=plan.configured_date,
-                resolved_date=plan.resolved_date,
-                source=plan.source,
-                active_vehicles=active,
-                probes=1,
-                satisfied=True,
+                configured_date=self.settings.api_date,
+                resolved_date=self.settings.api_date,
+                source="configured" if self.settings.api_date else "server-default",
+                active_vehicles=active, probes=1,
+                satisfied=active >= self.settings.live_date_min_vehicles,
                 resolved_at=now,
             )
             return raw
-        if plan.satisfied:
-            log.warning(
-                "live-date: cached date %s degraded to %d active vehicle(s) -- re-resolving",
-                plan.resolved_date or "<server default>",
-                active,
-            )
-        elif now - plan.resolved_at < self.settings.live_date_reprobe_seconds:
-            # The last resolution already spent its probe budget and found
-            # nothing better; re-probing every poll would be a probe storm.
-            log.debug(
-                "live-date: reusing best-effort batch (%d active) inside the %.0fs reprobe window",
-                active,
-                self.settings.live_date_reprobe_seconds,
-            )
-            return raw
-        else:
-            log.info("live-date: reprobe window elapsed -- looking for a fresher batch")
         raw, self._date_plan = self._resolve_live_date(now)
         return raw
 
@@ -241,125 +215,90 @@ class TelemetryExtractor:
         )
 
     def _resolve_live_date(self, now: float) -> tuple[dict[str, Any], DateResolution]:
-        """Find the freshest tier-1 batch that holds a live fleet.
+        """Bounded, newest-first search, counting FAILED attempts in the budget.
 
-        Probe tiers, newest first, bounded by `live_date_max_probes`:
-
-        1. the configured `API_DATE` (when set), then the upstream's own
-           server-default (date omitted) -- the two cheapest, most likely hits;
-        2. dates read off the fleet's `last_updated` values of any batch seen
-           so far (`report_dates`) -- the upstream telling us where its data is;
-        3. a walk back from today (source-local) over `live_date_probe_days`.
-
-        The first batch reaching `live_date_min_vehicles` active vehicles wins.
-        If nothing reaches it, the batch with the *most* active vehicles wins
-        anyway: ingesting a thin batch and reporting the gap honestly beats
-        returning -- and persisting -- an empty payload.  A probe that fails
-        outright (4xx, exhausted 5xx retries) is skipped, never fatal: one bad
-        date must not cost the cycle.  If *every* probe fails, the last
-        transport error is re-raised so the orchestrator handles it as the
-        upstream outage it is.
+        Try the explicit filter (if set), then the server default. Merge recent
+        calendar days and reporting hints in descending date order. Reserve the
+        final probe for the newest known reporting hint/cached date if a small
+        budget would otherwise never reach it. The outcome is the freshest
+        qualifying batch *examined*, not a claim to have searched every date.
         """
         settings = self.settings
         threshold = settings.live_date_min_vehicles
         configured = settings.api_date
-
-        queue: deque[tuple[str | None, str]] = deque()
-        queue.append((configured, "configured" if configured else "server-default"))
-        if configured:
-            queue.append((None, "server-default"))
+        previous = self._date_plan
+        today = datetime.now(settings.tz).date()
         tried: set[str | None] = set()
-        walkback_queued = False
+        hints: set[str] = set()
+        if previous and previous.resolved_date:
+            hints.add(previous.resolved_date)
         best: tuple[dict[str, Any], str | None, str, int] | None = None
         last_error: UpstreamError | None = None
-        probes = 0
+        probes = errors = 0
 
-        while queue and probes < settings.live_date_max_probes:
-            date, source = queue.popleft()
-            if date in tried:
-                continue
+        def probe(date: str | None, source: str) -> bool:
+            nonlocal probes, errors, best, last_error
+            if date in tried or probes >= settings.live_date_max_probes:
+                return False
             tried.add(date)
+            probes += 1  # errors cost upstream requests too
             try:
                 raw = self._fetch_date(date)
             except UpstreamError as exc:
-                # Includes RetryableUpstreamError after its own retries: skip
-                # this candidate and let the remaining tiers answer.
                 last_error = exc
-                log.warning(
-                    "live-date: probe date=%s (%s) failed: %s -- skipping candidate",
-                    date or "<server default>",
-                    source,
-                    exc,
-                )
-                continue
-            probes += 1
+                errors += 1
+                log.warning("live-date: date=%s via %s failed (%s, HTTP %s)",
+                            date or "<server default>", source, type(exc).__name__, exc.status_code)
+                return False
             active = count_active_vehicles(raw)
-            log.info(
-                "live-date: date=%s via %s -> %d active vehicle(s) (threshold %d)",
-                date or "<server default>",
-                source,
-                active,
-                threshold,
-            )
-            if best is None or active > best[3]:
+            log.info("live-date: date=%s via %s -> %d active vehicle(s) (threshold %d, probe %d/%d)",
+                     date or "<server default>", source, active, threshold, probes, settings.live_date_max_probes)
+            # Preserve the richest thin batch if no candidate reaches the threshold.
+            if best is None or active > best[3] or active >= threshold:
                 best = (raw, date, source, active)
-            if active >= threshold:
-                resolution = DateResolution(
-                    configured_date=configured,
-                    resolved_date=date,
-                    source=source,
-                    active_vehicles=active,
-                    probes=probes,
-                    satisfied=True,
-                    resolved_at=now,
-                )
-                log.info(
-                    "live-date: resolved to %s via %s -- %d active vehicle(s) in %d probe(s)",
-                    date or "<server default>",
-                    source,
-                    active,
-                    probes,
-                )
-                return raw, resolution
+            hints.update(d for d in report_dates(raw, settings.tz) if d <= today.isoformat())
+            return active >= threshold
 
-            # Tier 2: the batch's own reporting dates, newest first.  Inserted
-            # ahead of the walk-back tier because a date the fleet actually
-            # reports is a stronger hint than calendar arithmetic.
-            for report_date in report_dates(raw, settings.tz):
-                if report_date not in tried:
-                    queue.appendleft((report_date, "report-date"))
-            # Tier 3: walk back from today (source-local), newest first.
-            if not walkback_queued:
-                walkback_queued = True
-                today = datetime.now(settings.tz).date()
-                for offset in range(settings.live_date_probe_days):
-                    queue.append(((today - timedelta(days=offset)).isoformat(), "walkback"))
+        def finish(*, reused: bool = False) -> tuple[dict[str, Any], DateResolution]:
+            if best is None:
+                raise last_error or UpstreamError("live-date resolution made no successful request")
+            raw, date, source, active = best
+            plan = DateResolution(
+                configured_date=configured, resolved_date=date, source=source,
+                active_vehicles=active, probes=probes, probe_errors=errors,
+                satisfied=active >= threshold,
+                resolved_at=previous.resolved_at if reused and previous else now,
+            )
+            log.log(logging.INFO if plan.satisfied else logging.WARNING,
+                    "live-date: resolved=%s source=%s active=%d satisfied=%s probes=%d errors=%d%s",
+                    date or "<server default>", source, active, plan.satisfied, probes, errors,
+                    " (best-effort cooldown)" if reused else "")
+            return raw, plan
 
-        if best is None:
-            # Every candidate errored: surface the last transport failure so
-            # the orchestrator's retry/backoff policy applies unchanged.
-            raise last_error or UpstreamError("live-date resolution made no successful request")
+        if configured and probe(configured, "configured"):
+            return finish()
+        if probe(None, "server-default"):
+            return finish()
 
-        raw, date, source, active = best
-        resolution = DateResolution(
-            configured_date=configured,
-            resolved_date=date,
-            source=source,
-            active_vehicles=active,
-            probes=probes,
-            satisfied=False,
-            resolved_at=now,
-        )
-        log.warning(
-            "live-date: no date reached %d active vehicle(s) in %d probe(s) -- "
-            "ingesting the best batch seen (date=%s via %s, %d active) instead of an empty payload",
-            threshold,
-            probes,
-            date or "<server default>",
-            source,
-            active,
-        )
-        return raw, resolution
+        # Even while a full best-effort search is cooling down, today was
+        # checked above. A newly available current fleet is never hidden by it.
+        if previous and not previous.satisfied and now - previous.resolved_at < settings.live_date_reprobe_seconds:
+            if previous.resolved_date not in tried:
+                probe(previous.resolved_date, previous.source)
+            return finish(reused=True)
+
+        days = {(today - timedelta(days=i)).isoformat() for i in range(settings.live_date_probe_days)}
+        while probes < settings.live_date_max_probes:
+            remaining = (days | hints) - tried
+            if not remaining:
+                break
+            known = hints - tried
+            # Don't discard a known fleet just because the archive is beyond
+            # the current budget. Newer candidates still get every earlier slot.
+            date = max(known) if settings.live_date_max_probes - probes == 1 and known else max(remaining)
+            if probe(date, "report-date" if date in hints else "walkback"):
+                return finish()
+        return finish()
 
     def _fetch_detail(self, vehicle_id: str) -> dict[str, Any]:
         """GET one vehicle's tier-2 live diagnostic frame (runs in a worker thread)."""
@@ -403,10 +342,9 @@ class TelemetryExtractor:
                 except Exception as exc:  # noqa: BLE001 -- one truck must not sink the fleet
                     failed += 1
                     log.warning(
-                        "%s: tier-2 detail fetch failed (%s: %s) -- keeping fleet-summary frame",
+                        "%s: tier-2 detail fetch failed (%s) -- keeping fleet-summary frame",
                         vehicle_id,
                         exc.__class__.__name__,
-                        exc,
                     )
                     continue
                 payload.vehicles[vehicle_id] = merge_vehicle_frames(payload.vehicles[vehicle_id], detail)

@@ -375,11 +375,12 @@ disable without risking duplicates.
 
 ## 10. Operations
 
-* **Startup is fail-fast.** Missing env vars or a bad first authentication exit
-  with code 2 immediately, rather than 60 seconds into a container restart loop.
+* **Configuration is fail-fast.** Missing required env vars stop the CLI.
+  Authentication happens inside a recorded cycle; failures are journaled and
+  the worker retries after `AUTH_BACKOFF_SECONDS`, without needing a browser.
 * **`SIGTERM` finishes the in-flight cycle, commits, and exits 0** — so a
   Kubernetes rollout or `docker stop` never truncates a transaction.
-* **`pool_pre_ping=True`** because the poller idles ~60 s between writes and
+* **`pool_pre_ping=True`** because the poller idles ~300 s between writes and
   Postgres (or the firewall in between) will drop that socket; pre-ping turns a
   03:00 `OperationalError` into a transparent reconnect.
 * **Prometheus metrics** (`METRICS_ENABLED=true`) expose the one alert that
@@ -404,11 +405,12 @@ request. The refactor keeps every line of engine code and changes only the
 *scheduling* and the *delivery*:
 
 * **Scheduling:** Vercel Cron (`vercel.json`) calls `GET /api/cron/ingest`
-  once a day — the most frequent schedule the Hobby tier accepts; Pro can set
-  `*/5 * * * *` and external schedulers can hit the route at any cadence.
+  every five minutes (`*/5 * * * *`). This requires sub-daily Cron support;
+  Hobby deployments must replace it with an external five-minute scheduler.
+  A daily cron plus browser visits is not a reliable polling mechanism.
   `POST /api/ingest/run` triggers the same single cycle on
-  demand. Each call runs `TelemetryExtractor.run_cycle()` exactly once — the
-  same method the loop calls — so validation, unchanged-frame skipping and
+  demand. Each uses `run_recorded_cycle` around `TelemetryExtractor.run_cycle()` —
+  the same runner the independent `python -m telemetry run` worker uses — so validation, unchanged-frame skipping and
   live-date resolution behave identically in both worlds. Per-warm-instance
   state (the 55-minute token, the unchanged signatures, the resolved date)
   survives across invocations on the same container; a cold start simply
@@ -419,10 +421,13 @@ request. The refactor keeps every line of engine code and changes only the
   per-parameter verdicts are persisted on the snapshot row at ingest time
   (`vehicle_state.field_status`), so a DB-sourced document is byte-for-byte as
   honest as a parse-sourced one. No file exists in the path.
-* **Routing:** `next.config.mjs` rewrites `/api/:path*` onto `api/index.py`
+* **Routing:** `next.config.mjs` rewrites `/api/:path*` onto the exact
+  `/api/index.py?__telemetry_path=:path*` function URL (a suffix after `.py` is
+  not a deployed Vercel route).
   (same deployment, so same-origin: no CORS, no second host). The ASGI wrapper
-  in `api/index.py` normalizes the scope path — the platform may deliver the
-  original path or the rewritten destination depending on runtime version —
+  in `api/index.py` restores the scope path from the routing query parameter
+  when the platform delivers the bare function destination, or retains an
+  original path preserved by the runtime —
   and FastAPI itself runs with `redirect_slashes=False` because Vercel's proxy
   does not replay 307s reliably.
 * **Database:** on Vercel the engine swaps to `NullPool` + `pool_pre_ping`
@@ -432,7 +437,13 @@ request. The refactor keeps every line of engine code and changes only the
 * **Security:** ingestion is Bearer-gated by `CRON_SECRET`. Fail closed on
   Vercel when unset, open locally so `make api` needs no configuration. The
   document endpoint is read-only over the public internet by design — it holds
-  no secrets because it needs none.
+  no secrets because it needs none. Reads never trigger vendor requests. The
+  legacy `/api/ingest/trigger` alias has the same bearer gate as manual/cron.
+* **Diagnostics:** `ingestion_runs` stores each start and its success/partial/
+  failure outcome for 30 days; unfinished rows reveal killed functions. The
+  dashboard probes DB health and this journal uncached, independently of the
+  cached vehicle document, so upstream staleness and a stopped poller differ.
+  See `DEPLOYMENT.md` for state meanings and production verification.
 
 ---
 

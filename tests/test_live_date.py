@@ -241,10 +241,12 @@ def test_dead_default_resolves_through_the_fleets_report_date():
     extractor = make_extractor(settings, client)
 
     raw = extractor._fetch()
-    assert client.calls == [None, "2026-08-28"]
+    assert client.calls[0] is None
+    assert client.calls[-1] == "2026-08-28"  # final slot reserved for the known fleet
+    assert len(client.calls) == settings.live_date_max_probes
     plan = extractor.date_resolution
     assert plan is not None and plan.source == "report-date" and plan.satisfied
-    assert plan.resolved_date == "2026-08-28" and plan.probes == 2
+    assert plan.resolved_date == "2026-08-28" and plan.probes == len(client.calls)
     assert count_active_vehicles(raw) == 6
 
 
@@ -262,7 +264,7 @@ def test_dead_default_resolves_through_the_walkback_tier():
     extractor = make_extractor(settings, client)
 
     extractor._fetch()
-    assert client.calls == [None, "2025-01-01", today_ist(), live]
+    assert client.calls == [None, today_ist(), live]  # newer dates before an old reporting hint
     plan = extractor.date_resolution
     assert plan is not None and plan.source == "walkback" and plan.satisfied
     assert plan.resolved_date == live
@@ -315,7 +317,7 @@ def test_best_effort_reuses_its_batch_inside_the_reprobe_window():
     extractor._fetch()
     spent = len(client.calls)
     extractor._fetch()
-    assert len(client.calls) == spent + 1, "cached best-effort batch must not re-probe every poll"
+    assert client.calls[spent:] == [None, "2026-08-28"], "check today and cached best-effort, not the entire search"
 
     settings_fast = make_settings(live_date_max_probes=3, live_date_reprobe_seconds=0)
     client_fast = FakeClient(
@@ -358,14 +360,16 @@ def test_failing_probe_is_skipped_not_fatal():
             today_ist(): dead_batch(2),
             live: active_batch(6),
         },
-        errors={"2026-08-28": UpstreamClientError("bad date", status_code=400)},
+        errors={today_ist(): UpstreamClientError("bad date", status_code=400)},
     )
     extractor = make_extractor(settings, client)
 
     extractor._fetch()
     plan = extractor.date_resolution
     assert plan is not None and plan.satisfied and plan.resolved_date == live
-    assert "2026-08-28" in client.calls  # probed, failed, skipped
+    assert today_ist() in client.calls  # probed, failed, skipped
+    assert plan.probe_errors == 1
+    assert plan.probes == len(client.calls)
 
 
 def test_every_probe_failing_surfaces_the_transport_error():
@@ -464,3 +468,63 @@ def test_merge_keeps_summary_values_when_detail_battery_carries_nulls():
     assert values["charging_status"] == 0
     assert values["battery_temp_c"] == 31.2
     assert values["soc"] == 55
+
+
+# Regression: a healthy historical winner used to be cached indefinitely.
+def test_a_new_current_fleet_wins_next_poll_even_when_cached_archive_is_healthy():
+    old = days_ago_ist(2)
+    client = FakeClient({None: dead_batch(2, f"{old} 10:00:00"), old: active_batch(6, f"{old} 10:00:00")})
+    extractor = make_extractor(make_settings(), client)
+    extractor._fetch()
+    assert extractor.date_resolution.resolved_date == old
+    spent = len(client.calls)
+    client.batches[None] = active_batch(6, f"{today_ist()} 10:00:00")
+    extractor._fetch()
+    assert client.calls[spent:] == [None]
+    assert extractor.date_resolution.source == "server-default"
+    assert extractor.date_resolution.resolved_date is None
+
+
+def test_a_newer_archive_wins_next_poll_while_old_archive_still_has_a_full_fleet():
+    old, newer = days_ago_ist(3), days_ago_ist(1)
+    client = FakeClient({None: dead_batch(2, f"{old} 10:00:00"), old: active_batch(6, f"{old} 10:00:00")})
+    extractor = make_extractor(make_settings(), client)
+    extractor._fetch()
+    assert extractor.date_resolution.resolved_date == old
+    client.batches[newer] = active_batch(6, f"{newer} 10:00:00")
+    extractor._fetch()
+    assert extractor.date_resolution.resolved_date == newer
+
+
+def test_reporting_hints_are_never_reversed_oldest_first():
+    newer, older = days_ago_ist(2), days_ago_ist(4)
+    client = FakeClient({None: batch(dead_frame(f"{newer} 10:00:00"), dead_frame(f"{older} 10:00:00")),
+                         newer: active_batch(6), older: active_batch(6)})
+    extractor = make_extractor(make_settings(live_date_probe_days=1), client)
+    extractor._fetch()
+    assert extractor.date_resolution.resolved_date == newer
+    assert older not in client.calls
+
+
+def test_failed_requests_count_against_the_hard_probe_budget():
+    client = FakeClient({}, error_all=True)
+    extractor = make_extractor(make_settings(live_date_max_probes=3), client)
+    with pytest.raises(RetryableUpstreamError):
+        extractor._fetch()
+    assert len(client.calls) == 3
+
+
+def test_best_effort_cooldown_does_not_hide_new_current_data():
+    old = days_ago_ist(2)
+    client = FakeClient({None: dead_batch(2, f"{old} 10:00:00"), old: active_batch(3)})
+    extractor = make_extractor(make_settings(live_date_reprobe_seconds=3600), client)
+    extractor._fetch()
+    assert not extractor.date_resolution.satisfied
+    client.batches[None] = active_batch(6)
+    extractor._fetch()
+    assert extractor.date_resolution.satisfied
+    assert extractor.date_resolution.resolved_date is None
+
+
+def test_blank_date_means_the_default_not_an_empty_pinned_filter():
+    assert make_settings(api_date="  ").api_date is None

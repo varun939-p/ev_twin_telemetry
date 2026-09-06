@@ -25,6 +25,7 @@ build/
 .DS_Store
 
 # Runtime artifacts
+/.cache/
 # `uploads/` holds manual capture files; `trusted_vehicle_telemetry.json` is
 # the (optional, offline-only) output of `python main_parser.py`.  Neither is
 # source -- production reads Neon, not files.

@@ -127,7 +127,7 @@ def pg_session(pg_url):
     with engine.begin() as conn:
         from sqlalchemy import text
 
-        conn.execute(text("TRUNCATE telemetry, vehicle_state, vehicles, provisioned_sites RESTART IDENTITY CASCADE"))
+        conn.execute(text("TRUNCATE ingestion_runs, telemetry, vehicle_state, vehicles, provisioned_sites RESTART IDENTITY CASCADE"))
     factory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
     session = factory()
     yield session

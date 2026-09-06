@@ -70,9 +70,9 @@ class Settings(BaseSettings):
     # or as a couple of dead roster entries, while a fresher batch is sitting
     # one query parameter away.  When a tier-1 batch carries fewer active
     # vehicles than `live_date_min_vehicles`, the engine probes for the
-    # freshest date that actually holds a live fleet (the fleet's own
-    # `last_updated` dates first, then a walk back over recent days) and
-    # ingests that instead of nothing.  See `telemetry.extractor`.
+    # freshest qualifying fleet among the candidates examined (recent calendar
+    # days and reporting hints, newest first) instead of ingesting nothing.
+    # The search is bounded; see `telemetry.extractor`.
     live_date_fallback: bool = Field(
         default=True,
         description="Probe for a fresher reporting date when a tier-1 batch is empty/dead.",
@@ -92,12 +92,12 @@ class Settings(BaseSettings):
         default=8,
         ge=1,
         le=32,
-        description="Hard cap on tier-1 GETs spent per date resolution.",
+        description="Hard cap on date-candidate attempts per resolution, including failures. Each candidate still uses the HTTP retry policy.",
     )
     live_date_reprobe_seconds: float = Field(
         default=900.0,
         ge=0,
-        description="Cooldown before re-probing when the last resolution ended best-effort.",
+        description="Cooldown before a full date search when the last resolution ended best-effort. The current default date is still checked each cycle.",
     )
 
     # ------------------------------------------------------- token lifetime
@@ -139,13 +139,18 @@ class Settings(BaseSettings):
         default=45.0,
         ge=0,
         description="Minimum spacing between ingestion cycles per warm instance. A second "
-        "request inside this window answers 429 with the last cycle's summary instead of "
+        "request inside this window answers 429 instead of "
         "hitting the upstream again -- which keeps a misbehaving client from turning into "
         "a poll loop.",
     )
 
     # ---------------------------------------------------------------- loop
-    poll_interval_seconds: float = Field(default=60.0, gt=0)
+    poll_interval_seconds: float = Field(default=300.0, gt=0)
+    ingest_running_timeout_seconds: float = Field(
+        default=60.0, gt=0,
+        description="A journal entry still running after this long is reported as stalled. "
+        "This is a diagnostic threshold, not cancellation; Vercel's maxDuration is the hard limit.",
+    )
     shutdown_grace_seconds: float = Field(default=10.0, ge=0)
     # Pauses after a failed cycle.  The credential pause is long on purpose:
     # retrying a bad secret_key every 60 s is how an API client gets disabled.
@@ -175,6 +180,11 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------ metrics
     metrics_enabled: bool = False
     metrics_port: int = Field(default=9464, ge=1, le=65535)
+
+    @field_validator("api_date", "api_vehicle_filter", mode="before")
+    @classmethod
+    def _empty_filter(cls, value: str | None) -> str | None:
+        return value.strip() or None if isinstance(value, str) else value
 
     @field_validator("api_base_url")
     @classmethod
