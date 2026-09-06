@@ -71,7 +71,7 @@ same port shown in that instance's startup output.
 ```text
 browser → Next.js → /api/* rewrite → api/index.py → telemetry.main.app → Neon
                                                   ↑
-                         five-minute authenticated cron
+                    scheduled authenticated cron (Hobby: once-daily)
                                                   ↓
                                      Blue Energy Motors API
 ```
@@ -143,7 +143,7 @@ Preview so manual preview tests do not mutate the production snapshot.
 | `API_SECRET_KEY`, `API_PASSCODE` | Required. Use the **new rotated pair** from the operator's secure store. Never recover them from captures, branches, old logs or chat. |
 | `API_BASE_URL` | `https://track.blueenergymotors.com` (also the code default). |
 | `CRON_SECRET` | Required on Vercel. Generate/store securely; do not paste into chat. All ingest routes fail closed without it. |
-| `POLL_INTERVAL_SECONDS` | `300`. Worker cadence and the expected cadence shown in diagnostics. **Does not configure Vercel's scheduler.** |
+| `POLL_INTERVAL_SECONDS` | Worker cadence. `300` for a continuous worker/real-time external scheduler; set `86400` on Vercel when using the Hobby once-daily cron so diagnostics do not label it overdue. **Does not configure Vercel's scheduler.** |
 | `TELEMETRY_REVALIDATE_SECONDS` | `30`. Server document cache window. |
 | `TELEMETRY_TIMEOUT_MS` | `6000`. Read timeout, not the ingestion-function timeout. |
 | `TELEMETRY_API_URL` | **Leave unset** for same-project deployment. Only set for a separately hosted control plane. |
@@ -162,21 +162,30 @@ status **does not prove** that these values are present, rotated, or correct.
 Only a successful authorized upstream pull proves that the configured pair
 works; the operator must confirm it is the rotated pair.
 
-### 4. Five-minute scheduling (required independently of dashboard visits)
+### 4. Scheduling (Hobby → once-daily; real-time requires an external scheduler)
 
-`vercel.json` registers:
+The shipped `vercel.json` uses a **Hobby-compatible once-daily** cron so the
+deployment is accepted on the free plan:
 
 ```json
-{ "path": "/api/cron/ingest", "schedule": "*/5 * * * *" }
+{ "path": "/api/cron/ingest", "schedule": "0 18 * * *" }
 ```
 
-**This cadence requires a Vercel plan supporting sub-daily Cron (e.g. Pro).
-Hobby's once-daily cron cannot meet the five-minute requirement and rejects
-this schedule.** Confirm the plan before deploying this configuration.
+`0 18 * * *` runs once a day at 18:00 UTC (23:30 IST). A **sub-daily** cron
+(e.g. `*/5 * * * *`) requires a Vercel plan supporting sub-daily Cron (e.g.
+Pro) and is **rejected on Hobby** — this is the single change that made the
+deployment fail under the previous `*/5` configuration. On Hobby, do **not**
+re-add a `*/5` managed cron.
 
-On Hobby, remove the managed `crons` entry **only when replacing it** with an
-external five-minute scheduler or a supervised dedicated worker. Do not fall
-back to a daily schedule and call it real-time. An external scheduler calls:
+Because a daily cron only ingests once a day, set `POLL_INTERVAL_SECONDS` to
+`86400` in the **Vercel environment** so the dashboard does not permanently
+label the healthy daily cron as "Ingestion overdue". Keep the local worker at
+`300` for real-time development.
+
+If you later want true real-time data (up to about five minutes old) on
+Hobby, do **not** switch to a paid plan just for that — instead point an
+**external five-minute scheduler** (GitHub Actions, a free cron service) at
+the ingestion route. An external scheduler calls:
 
 ```text
 GET https://<your-app>/api/cron/ingest

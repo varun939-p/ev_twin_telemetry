@@ -41,11 +41,19 @@ def test_explicit_nullpool_locally():
         engine.dispose()
 
 
-def test_shipped_cron_matches_five_minute_default():
+def test_shipped_cron_matches_hobby_daily_schedule():
+    """The shipped cron must be a Hobby-compatible once-daily schedule.
+
+    A sub-daily schedule (e.g. */5 in the five-minute cadence the engine
+    prefers) is rejected by Vercel on the Hobby plan, so shipping it would
+    make the deployment fail. The daily schedule here is intentional: on
+    Hobby, real-time ingestion therefore requires the external five-minute
+    scheduler described in DEPLOYMENT.md, never a managed sub-daily cron.
+    """
     root = Path(__file__).resolve().parents[1]
     deployment = json.loads((root / "vercel.json").read_text())
     cron = deployment["crons"]
     assert Settings(_env_file=None).ingest_running_timeout_seconds == deployment["functions"]["api/index.py"]["maxDuration"]
-    assert cron == [{"path": "/api/cron/ingest", "schedule": "*/5 * * * *"}]
+    assert cron == [{"path": "/api/cron/ingest", "schedule": "0 18 * * *"}]
     assert Settings(_env_file=None).poll_interval_seconds == 300
     assert "POLL_INTERVAL_SECONDS=300" in (root / ".env.example").read_text()

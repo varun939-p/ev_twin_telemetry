@@ -342,10 +342,13 @@ reports `Connected`, `Cached` or `Waiting` (with the reason) so nobody mistakes
 stale or missing data for current data.
 
 Ingestion is scheduled independently: Vercel Cron (`vercel.json`) calls
-`GET /api/cron/ingest` **every five minutes**. **This requires a plan supporting
-sub-daily Cron (e.g. Pro); on Hobby, replace the managed cron with an external
-five-minute scheduler. A once-daily schedule does not meet the requirement.**
-`POLL_INTERVAL_SECONDS=300` does not configure Vercel's scheduler by itself.
+`GET /api/cron/ingest`. The shipped schedule is **once-daily** (`0 18 * * *`),
+which is accepted on the free **Hobby** plan. A five-minute cadence
+(`*/5 * * * *`) requires a plan supporting sub-daily Cron (e.g. Pro); on Hobby
+use an external five-minute scheduler instead if you need data fresher than a
+day. Set `POLL_INTERVAL_SECONDS=86400` in the Vercel environment to match the
+daily cadence so diagnostics don't label it overdue. `POLL_INTERVAL_SECONDS`
+does not configure Vercel's scheduler by itself.
 
 Each call runs one recorded extraction cycle — vendor API → validation →
 PostgreSQL upsert — and returns a summary. `POST /api/ingest/run` and the legacy
