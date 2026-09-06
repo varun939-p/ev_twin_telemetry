@@ -1,33 +1,17 @@
-"""Vercel Python Serverless Function entrypoint.
+"""Vercel ASGI adapter for the SAME FastAPI app used by local uvicorn.
 
-Vercel's official pattern for a Python backend inside a Next.js deployment:
-this file is auto-built as an ASGI serverless function, and the Next.js layer
-(``next.config.mjs``) rewrites ``/api/:path*`` onto it, so the dashboard talks
-to FastAPI on its own origin with zero CORS and zero extra infrastructure.
+Next rewrites /api/:path* to /api/index.py?__telemetry_path=:path*.
+Vercel resolves the exact Python function URL, NOT /api/index.py/<suffix>
+(the latter is an HTML Next.js 404 on the deployed routing layer).
 
-    next.js request                this function
-    /api/telemetry/trusted  ───►  FastAPI route /api/telemetry/trusted
-                                   (telemetry.main -- DB-backed control plane)
+The adapter restores the intended /api/... route and strips its internal
+query parameter before invoking telemetry.main.app. It accepts the original
+path, either bare function alias (/api/index.py or /api/index), and the legacy
+suffix shape for local tooling. This is path adaptation only: ingestion,
+authorization, schema, reads and cycle diagnostics all live in telemetry/.
 
-Why the wrapper
----------------
-Vercel delivers the rewritten request with a path that has historically varied
-between runtimes: sometimes the ORIGINAL browser path (``/api/...``), sometimes
-the rewritten destination (``/api/index.py/...``).  Instead of betting on one
-behaviour, the middleware below normalises every variant onto the canonical
-route before FastAPI sees it:
-
-    /api/telemetry/trusted              (original)        -> /api/telemetry/trusted
-    /api/index.py/telemetry/trusted     (destination)     -> /api/telemetry/trusted
-    /api/index.py                       (bare entrypoint) -> /api
-
-Trailing slashes are tolerated (``redirect_slashes`` is off on the app --
-Vercel's proxy does not replay FastAPI's 307 redirects reliably), and anything
-unmatched gets a JSON 404, never an HTML error page.
-
-The engine package (``telemetry/``) lives at the repository root and is traced
-into the function bundle by Vercel's Python builder; runtime dependencies come
-from ``api/requirements.txt``.
+The app export is ASGI. telemetry/** is included by vercel.json and runtime
+dependencies come from api/requirements.txt. No background loop runs here.
 """
 
 from __future__ import annotations
@@ -35,6 +19,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qsl, urlencode
 
 # Make the repository-root `telemetry` package importable regardless of how
 # the platform lays out the bundle: entry at <bundle>/api/index.py with the
@@ -54,28 +39,28 @@ for candidate in _CANDIDATES:
 
 from telemetry.main import app as _control_plane  # noqa: E402  (path set up first)
 
-_MOUNT = "/api/index.py"
+_MOUNTS = ("/api/index.py", "/api/index")
+_ROUTE_QUERY = "__telemetry_path"
 
 
-def _canonical_path(raw: str) -> str:
-    """Map any path variant the platform may hand us onto a real FastAPI route."""
-    if not raw:
-        return "/"
-    path = raw.split("?", 1)[0]
-    if path.startswith(_MOUNT):
-        rest = path[len(_MOUNT):]
-        # /api/index.py/api/telemetry/...  ->  /api/telemetry/...
-        # /api/index.py/telemetry/...      ->  /api/telemetry/... (be liberal)
-        if rest.startswith("/api"):
-            path = rest
-        elif rest:
-            path = f"/api{rest}"
+def _canonical_path(raw: str, forwarded_route: str | None = None) -> str:
+    """Map original/destination variants onto the canonical FastAPI route.
+
+    Only a bare function destination uses the forwarded query route. An
+    original /api/health path always wins over a caller-supplied query value.
+    Bearer protection still applies after routing; this is not an auth bypass.
+    """
+    path = (raw or "/").split("?", 1)[0].rstrip("/") or "/"
+    for mount in _MOUNTS:
+        if path == mount:
+            rest = "/" + forwarded_route.lstrip("/") if forwarded_route else ""
+        elif path.startswith(mount + "/"):
+            rest = path[len(mount):]
         else:
-            path = "/api"
-    # One trailing slash is tolerated everywhere except the root.
-    if len(path) > 1 and path.endswith("/"):
-        path = path.rstrip("/") or "/"
-    return path or "/"
+            continue
+        path = rest if rest == "/api" or rest.startswith("/api/") else f"/api{rest}"
+        break
+    return path.rstrip("/") or "/"
 
 
 class PathNormalizer:
@@ -86,9 +71,12 @@ class PathNormalizer:
 
     async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
         if scope.get("type") in {"http", "websocket"}:
-            scope["path"] = _canonical_path(scope.get("path", ""))
-            # FastAPI routing uses root_path + path; keep root_path empty so the
-            # canonical path is matched verbatim.
+            scope = dict(scope)
+            query = parse_qsl(scope.get("query_string", b"").decode("latin-1"), keep_blank_values=True)
+            forwarded = next((value for key, value in query if key == _ROUTE_QUERY), None)
+            scope["path"] = _canonical_path(scope.get("path", ""), forwarded)
+            scope["raw_path"] = scope["path"].encode("utf-8")
+            scope["query_string"] = urlencode([(key, value) for key, value in query if key != _ROUTE_QUERY]).encode("ascii")
             scope["root_path"] = ""
         await self._app(scope, receive, send)
 

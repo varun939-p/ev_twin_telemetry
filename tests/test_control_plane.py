@@ -25,7 +25,6 @@ from __future__ import annotations
 import threading
 import time
 from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -36,6 +35,7 @@ from telemetry import main as control_plane
 from telemetry.document import ABSENT_UPSTREAM, MEASURED
 from telemetry.fields import PARAM_SPECS
 from telemetry.models import Base
+from telemetry.extractor import CycleReport
 from telemetry.repository import TelemetryRepository
 from telemetry.schemas import FieldError, ParsedVehicle
 
@@ -121,6 +121,7 @@ def client(tmp_path, monkeypatch):
     settings = control_plane._settings().model_copy(
         update={
             "database_url": f"sqlite:///{db_file}",
+            "api_base_url": "http://unused.invalid",
             "api_secret_key": "sk_test_secret",
             "api_passcode": "test-passcode",
             "cron_secret": "",
@@ -131,6 +132,13 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(control_plane, "_session_factory", lambda: factory)
     monkeypatch.setattr(control_plane, "_schema_ready", threading.Event())
     monkeypatch.setattr(control_plane, "_state", {"last_cycle": None, "last_started": 0.0})
+    monkeypatch.setattr(control_plane, "_ingest_lock", threading.Lock())
+    monkeypatch.setattr(control_plane, "_ingest_client", None)
+    monkeypatch.setattr(control_plane, "_ingest_tokens", None)
+    monkeypatch.setattr(control_plane, "_ingest_extractor", None)
+    monkeypatch.delenv("VERCEL", raising=False)
+    monkeypatch.delenv("AWS_LAMBDA_FUNCTION_NAME", raising=False)
+    monkeypatch.delenv("CRON_SECRET", raising=False)
 
     with TestClient(control_plane.app) as test_client:
         yield test_client
@@ -325,7 +333,9 @@ def test_ingest_accepts_the_correct_bearer_secret(client, monkeypatch):
             def run_cycle(session):
                 ran["cycle"] = True
                 session.commit()
-                return SimpleNamespace(
+                return CycleReport(
+                    started_at=datetime.now(timezone.utc),
+                    ingested_at=datetime.now(timezone.utc),
                     seen=8,
                     accepted=8,
                     rejected=0,
@@ -335,7 +345,6 @@ def test_ingest_accepts_the_correct_bearer_secret(client, monkeypatch):
                     detail_ok=8,
                     detail_failed=0,
                     write=WriteResult(vehicles=8, states_written=8, history_written=8),
-                    summary=lambda: "fake cycle",
                 )
 
         return object(), object(), FakeExtractor()
@@ -378,3 +387,129 @@ def test_ingest_without_required_configuration_is_a_503(client, monkeypatch):
     response = client.post("/api/ingest/run")
     assert response.status_code == 503
     assert "API_SECRET_KEY" in response.json()["detail"]
+
+
+@pytest.mark.parametrize("path", ["/api/telemetry/trusted", "/api/health", "/api/ingest/status"])
+def test_reads_never_trigger_vendor_requests(client, monkeypatch, path):
+    def no_upstream(_settings):
+        pytest.fail("a dashboard read must not initiate upstream ingestion")
+    monkeypatch.setattr(control_plane, "_ingest_components", no_upstream)
+    response = client.get(path)
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.parametrize("method,path", [
+    ("post", "/api/ingest/run"), ("post", "/api/ingest/trigger"), ("get", "/api/cron/ingest"),
+])
+def test_all_ingest_routes_fail_closed_in_serverless(client, monkeypatch, method, path):
+    monkeypatch.setenv("VERCEL", "1")
+    assert getattr(client, method)(path).status_code == 401
+
+
+def test_factory_failure_does_not_leak_the_single_flight_lock(client, monkeypatch):
+    from sqlalchemy.exc import OperationalError
+    factory = control_plane._session_factory
+
+    def broken():
+        raise OperationalError("sensitive SQL and credentials", {}, Exception("connection failed"))
+
+    monkeypatch.setattr(control_plane, "_session_factory", broken)
+    response = client.post("/api/ingest/run")
+    assert response.status_code == 503
+    assert not control_plane._ingest_lock.locked()
+    assert "sensitive SQL" not in response.text
+    monkeypatch.setattr(control_plane, "_session_factory", factory)
+    assert client.get("/api/ingest/status").status_code == 200
+
+
+def test_health_reports_database_down_without_exposing_connection_errors(client, monkeypatch):
+    def broken():
+        raise RuntimeError("private rotated credentials")
+    monkeypatch.setattr(control_plane, "_session_factory", broken)
+    response = client.get("/api/health")
+    assert response.status_code == 200  # process liveness, not data availability
+    assert response.json()["database"] == "down"
+    assert response.json()["ingestion"]["state"] == "unknown"
+    assert "private rotated" not in response.text
+
+
+def test_vercel_entrypoint_wraps_exactly_the_local_fastapi_app(client):
+    from api.index import app as wrapped, control_plane as local
+    assert local is control_plane.app
+    with TestClient(wrapped) as vercel:
+        for path in ["/api/health", "/api/index.py/health", "/api/index.py/api/health/",
+                     "/api/index.py?__telemetry_path=health", "/api/index?__telemetry_path=health"]:
+            response = vercel.get(path)
+            assert response.status_code == 200, path
+            assert response.json()["database"] == "up"
+        missing = vercel.get("/api/index.py/not-a-route")
+        assert missing.status_code == 404
+        assert missing.headers["content-type"].startswith("application/json")
+
+
+def test_ingest_time_fallback_is_not_reported_as_a_fresh_source_observation(client):
+    old = datetime.now(timezone.utc) - timedelta(hours=72)
+    _seed(control_plane._session_factory(), [
+        _parsed_vehicle("SOURCE01", observed=old),
+        _parsed_vehicle("NOTIME01", observed=datetime.now(timezone.utc), errors=[
+            FieldError(field="last_updated", raw=None, error="missing; keyed on ingest time"),
+        ]),
+    ])
+    doc = client.get("/api/telemetry/trusted").json()
+    missing = next(v for v in doc["vehicles"] if v["vehicle_id"] == "NOTIME01")
+    assert missing["observed_at"] is None
+    assert doc["pipeline_health"]["newest_observed_at"].startswith(old.strftime("%Y-%m-%dT%H:%M:%S"))
+    assert doc["pipeline_health"]["ingestion"]["newest_observed_at"] == old.isoformat()
+
+
+@pytest.mark.parametrize("database_state", ["populated", "empty", "unavailable"])
+def test_trusted_endpoint_never_reads_a_bundled_json_fallback(client, monkeypatch, tmp_path, database_state):
+    """A tempting fixture must not become telemetry, even when the DB fails.
+
+    This tests the read boundary with an isolated SQLite stand-in, not the
+    identity or provenance of any production Neon database.
+    """
+    import builtins
+    import io
+    from pathlib import Path
+    from fastapi import HTTPException
+
+    if database_state == "populated":
+        _seed(control_plane._session_factory(), [
+            _parsed_vehicle("DBONLY01", observed=datetime(2026, 9, 6, 12, tzinfo=timezone.utc)),
+        ])
+    elif database_state == "unavailable":
+        def unavailable():
+            raise HTTPException(status_code=503, detail="Database unavailable")
+        monkeypatch.setattr(control_plane, "_session_factory", unavailable)
+
+    poison = '{"vehicles":[{"vehicle_id":"BUNDLED-FIXTURE-MUST-NOT-APPEAR"}]}'
+    for name in ("trusted_vehicle_telemetry.json", "data/trusted_vehicle_telemetry.json",
+                 "blue_energy_response.json", "live_capture.json"):
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(poison)
+    monkeypatch.chdir(tmp_path)
+
+    json_reads = []
+
+    def guarded_open(original):
+        def wrapped(file, mode="r", *args, **kwargs):
+            if isinstance(file, (str, bytes, Path)) and str(file).lower().endswith(".json") and ("r" in mode or "+" in mode):
+                json_reads.append(str(file))
+                raise AssertionError("The telemetry read path must not open a JSON file")
+            return original(file, mode, *args, **kwargs)
+        return wrapped
+
+    monkeypatch.setattr(builtins, "open", guarded_open(builtins.open))
+    monkeypatch.setattr(io, "open", guarded_open(io.open))  # also guards Path.open/read_text
+    response = client.get("/api/telemetry/trusted")
+    assert json_reads == []
+    assert "BUNDLED-FIXTURE-MUST-NOT-APPEAR" not in response.text
+    if database_state == "unavailable":
+        assert response.status_code == 503
+    else:
+        assert response.status_code == 200
+        ids = [v["vehicle_id"] for v in response.json()["vehicles"]]
+        assert ids == (["DBONLY01"] if database_state == "populated" else [])

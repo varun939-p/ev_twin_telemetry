@@ -57,17 +57,24 @@ See `docs/ARCHITECTURE.md` §7.
 
 ### Live date resolution
 
-The upstream keys every batch on `date` (default: today, IST). An unset or
-stale `API_DATE` can therefore answer with an empty fleet — or a couple of
-dead roster entries — while a live batch sits one query parameter away. When a
-tier-1 batch carries fewer than `LIVE_DATE_MIN_VEHICLES` active vehicles, the
-engine probes, newest first: the fleet's own `last_updated` dates, then a walk
-back over `LIVE_DATE_PROBE_DAYS` recent days (bounded by
-`LIVE_DATE_MAX_PROBES`), and ingests the freshest batch that holds a live
-fleet. If nothing reaches the threshold, the richest batch seen is ingested
-and reported — never an empty payload. The decision is cached, so steady-state
-polls still send exactly one tier-1 GET. `LIVE_DATE_FALLBACK=false` restores
-the strict one-request behaviour.
+The upstream keys every batch on `date` (default: today, IST). When a batch
+has fewer than `LIVE_DATE_MIN_VEHICLES` active vehicles, the engine checks the
+current default, recent calendar days and reporting hints, newest first.
+`LIVE_DATE_PROBE_DAYS=14` bounds the calendar horizon;
+`LIVE_DATE_MAX_PROBES=8` bounds **date-candidate attempts, including failures**
+(each candidate separately uses the HTTP retry policy).
+A final probe slot may be reserved for a known older fleet. If no batch reaches
+the threshold, the richest examined batch is retained and labeled best-effort.
+
+A healthy current feed takes one tier-1 GET. Historical winners are checked
+against newer dates **every cycle**, even while the old fleet remains healthy.
+`LIVE_DATE_REPROBE_SECONDS=900` throttles full best-effort searches; the current
+default is still checked each poll. The dashboard reports probe errors and
+thin batches as incomplete, not "upstream has nothing newer". This is a bounded
+search, not proof that every upstream date was examined.
+
+Leave `API_DATE` unset for live monitoring. A healthy explicit date is an
+intentional filter; `LIVE_DATE_FALLBACK=false` disables searching altogether.
 
 ---
 
@@ -90,6 +97,31 @@ python -m telemetry run
 ```
 
 Or with make: `make setup && make initdb && make run`.
+
+### Run the dashboard and HTTP API too
+
+The worker above polls continuously **without a browser**. Starting the HTTP
+API by itself does **not** start that worker. In two additional terminals:
+
+```bash
+# Same activated venv; from the repository root
+python -m uvicorn telemetry.main:app --host 0.0.0.0 --port 8000  # npm run dev:backend
+npm ci && npm run dev                                        # dashboard on :3000
+```
+
+`telemetry/main.py` contains `app = FastAPI(...)`. Vercel's `api/index.py`
+wraps this same app. **`main_parser.py` is an offline converter, not an ASGI
+entry point.** `npm run dev:ingest` is an alias for the independent worker.
+
+Local `/api/*` calls proxy to `BACKEND_URL` (default `http://127.0.0.1:8000`).
+If Python uses `--port 8001`, change that variable to `http://127.0.0.1:8001`
+and restart Next. Browser code always uses relative URLs, not loopback hosts.
+
+Before starting Next, check existing Node processes and ports 3000/3001/3002
+(`Get-Process node` + `Get-NetTCPConnection` on Windows, `ps` + `ss`/`lsof`
+on Unix). `npm run dev` pins :3000 and fails rather than silently using :3001.
+Stop only the verified process for this checkout. Full commands and Vercel
+setup: **[DEPLOYMENT.md](DEPLOYMENT.md)**.
 
 ### Try it with zero credentials
 
@@ -144,7 +176,7 @@ list in `.env.example`. The important ones:
 | `API_BASE_URL` | `https://track.blueenergymotors.com` | no trailing slash; set only for staging or the mock |
 | `API_SECRET_KEY` / `API_PASSCODE` | — | **required**; shown once by the admin endpoint |
 | `DATABASE_URL` | — | **required**; `postgresql+psycopg://…` (psycopg **3**) |
-| `POLL_INTERVAL_SECONDS` | `60` | |
+| `POLL_INTERVAL_SECONDS` | `300` | worker interval; expected cron cadence in diagnostics |
 | `TOKEN_REFRESH_INTERVAL` | `3300` | 55 min; the server's token lives 3540 s |
 | `TOKEN_EXPIRY_SAFETY_MARGIN` | `240` | headroom kept before expiry |
 | `HTTP_MAX_RETRIES` | `5` | 5xx / timeouts only — never 400/401/403/404 |
@@ -168,6 +200,7 @@ list in `.env.example`. The important ones:
 | `vehicles` | one row per vehicle | fleet dimension: first/last seen, ingest count |
 | `vehicle_state` | one row per vehicle | **the dashboard**: current SOC, SOH, charging, position |
 | `telemetry` | one row per (vehicle, reading) | history: trends, SOH curves, audits |
+| `ingestion_runs` | one row per ingestion attempt; 30-day retention | durable poll health across cold starts, including failures/timeouts |
 
 ```sql
 -- what the dashboard shows
@@ -305,19 +338,33 @@ more. The Next.js server fetches it from its own origin through the
 `/api/*` rewrite in `next.config.mjs`, with an abort budget, structural
 validation and an honestly-labeled empty document as the only fallback.
 Credentials are server-side only — see `.env.example`. The header chip
-reports `Live`, `Cached` or `Waiting` (with the reason) so nobody mistakes
+reports `Connected`, `Cached` or `Waiting` (with the reason) so nobody mistakes
 stale or missing data for current data.
 
-Ingestion is pull-based and stateless, exactly as a serverless platform
-requires: the Vercel Cron job (`vercel.json`) calls `GET /api/cron/ingest`
-once a day — the tightest schedule Vercel's Hobby tier accepts, which keeps
-the deployment check green; on Pro, set the schedule to `*/5 * * * *` (or
-point any external scheduler at the route on any cadence, see
-`DEPLOYMENT.md`). Each call runs ONE extraction cycle — vendor API →
-validation → Neon upsert — and returns its summary. `POST /api/ingest/run`
-does the same on demand with the same Bearer secret. The old
-`python -m telemetry run` loop still exists for
-dedicated-server/Docker deployments, sharing every line of engine code.
+Ingestion is scheduled independently: Vercel Cron (`vercel.json`) calls
+`GET /api/cron/ingest` **every five minutes**. **This requires a plan supporting
+sub-daily Cron (e.g. Pro); on Hobby, replace the managed cron with an external
+five-minute scheduler. A once-daily schedule does not meet the requirement.**
+`POLL_INTERVAL_SECONDS=300` does not configure Vercel's scheduler by itself.
+
+Each call runs one recorded extraction cycle — vendor API → validation →
+PostgreSQL upsert — and returns a summary. `POST /api/ingest/run` and the legacy
+`/api/ingest/trigger` alias require the same bearer secret. HTTP **reads never
+trigger ingestion**. The browser's first-run auto-trigger is a local-only
+convenience; production waits for its scheduler, even with every tab closed.
+
+The independent `python -m telemetry run` worker and Vercel share the same
+cycle runner, validation and diagnostics. Every attempt writes an
+`ingestion_runs` journal entry and logs timestamp, fleet counts, date selection,
+probe failures and outcome. A killed function leaves an unfinished attempt,
+not a false success. `GET /api/ingest/status` reads the durable evidence.
+
+The header separates **Connected / Cached / Waiting** from observation age.
+The visible ingestion banner distinguishes **Upstream data is old** (a recent
+complete poll returned older observations) from **Ingestion failed/overdue**,
+**Ingestion incomplete** and a backend/DB outage. A bounded date probe does not
+prove that all upstream dates are empty. See the deployment runbook for the
+manual-ingest and closed-browser verification checklist.
 
 Because every view iterates `PARAM_ORDER` and reads `field_status`, unlocking
 a channel upstream populates the dashboard with **no frontend change** — this

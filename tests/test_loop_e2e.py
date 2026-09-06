@@ -70,7 +70,7 @@ def pg_engine(pg_url):
 
     Base.metadata.create_all(engine)
     with engine.begin() as conn:
-        conn.execute(text("TRUNCATE telemetry, vehicle_state, vehicles RESTART IDENTITY CASCADE"))
+        conn.execute(text("TRUNCATE ingestion_runs, telemetry, vehicle_state, vehicles RESTART IDENTITY CASCADE"))
     yield engine
     engine.dispose()
 

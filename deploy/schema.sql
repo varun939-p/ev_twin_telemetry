@@ -7,7 +7,7 @@
 -- versioned and reversible.
 --
 -- SERVERLESS TOPOLOGY (2026-09): the Vercel cron / on-demand route
--- (`POST /api/ingest.run`) writes here; `GET /api/telemetry/trusted`
+-- (`POST /api/ingest/run`) writes here; `GET /api/telemetry/trusted`
 -- reads `vehicle_state` straight into the dashboard document. There is
 -- no intermediate JSON file any more.
 --
@@ -147,3 +147,18 @@ CREATE INDEX IF NOT EXISTS ix_provisioned_sites_received_at ON provisioned_sites
 ALTER TABLE vehicle_state ADD COLUMN IF NOT EXISTS field_status JSONB;
 ALTER TABLE vehicle_state ADD COLUMN IF NOT EXISTS missing_fields JSONB;
 ALTER TABLE vehicle_state ADD COLUMN IF NOT EXISTS field_errors JSONB;
+
+
+-- Durable ingestion journal: cold starts/timeouts must not erase poll health.
+CREATE TABLE IF NOT EXISTS ingestion_runs (
+    id VARCHAR(36) PRIMARY KEY,
+    trigger VARCHAR(24) NOT NULL,
+    started_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    finished_at TIMESTAMP WITH TIME ZONE,
+    status VARCHAR(16) NOT NULL,
+    summary JSONB,
+    error_code VARCHAR(40),
+    error_detail TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_ingestion_runs_started_at ON ingestion_runs (started_at);
+CREATE INDEX IF NOT EXISTS ix_ingestion_runs_status_started ON ingestion_runs (status, started_at);

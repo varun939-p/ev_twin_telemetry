@@ -34,6 +34,7 @@ from .config import Settings
 from .exceptions import AuthRejectedError, RetryableUpstreamError, TelemetryError, UpstreamError
 from .extractor import TelemetryExtractor
 from .metrics import Metrics, start_metrics_server
+from .ingestion import failure_detail, run_recorded_cycle
 
 log = logging.getLogger(__name__)
 
@@ -88,16 +89,8 @@ class TelemetryOrchestrator:
 
         self._log_banner()
 
-        # Fail fast on a bad first authentication instead of discovering it
-        # 60 seconds into a container restart loop.
-        try:
-            self.tokens.get_token(force=True)
-        except TelemetryError as exc:
-            log.critical("initial authentication failed: %s", exc)
-            if metrics_server:
-                metrics_server.shutdown()
-            return 2
-
+        # Authentication belongs to the recorded cycle, so a failure has a
+        # durable outcome and retries after the configured auth backoff.
         next_tick = time.monotonic()
         try:
             while not self._stop.is_set():
@@ -132,12 +125,7 @@ class TelemetryOrchestrator:
 
     def run_once(self) -> bool:
         """Single cycle, no loop. True on success."""
-        try:
-            self.tokens.get_token()
-        except TelemetryError as exc:
-            log.error("authentication failed: %s", exc)
-            return False
-        return self._run_one_cycle()
+        return self._run_one_cycle(trigger="cli")
 
     def run_once_and_report(self):
         """Like `run_once`, but hands back the CycleReport.
@@ -150,10 +138,10 @@ class TelemetryOrchestrator:
         return self.last_report
 
     # -------------------------------------------------------------- private
-    def _run_one_cycle(self) -> bool:
-        session = self.session_factory()
+    def _run_one_cycle(self, *, trigger: str = "worker") -> bool:
         try:
-            self.last_report = self.extractor.run_cycle(session)
+            result = run_recorded_cycle(self.settings, self.session_factory, self.extractor, trigger=trigger)
+            self.last_report = result.report
             self.cycles += 1
             self.last_success_at = datetime.now(timezone.utc)
             self.metrics.set_gauge("twin_auth_total", self.tokens.auth_count)
@@ -169,17 +157,15 @@ class TelemetryOrchestrator:
             # A DB outage is not the upstream's fault and not ours; keep trying.
             self._fail(exc, pause=self.settings.error_backoff_seconds, label="database")
         except Exception as exc:  # noqa: BLE001 - the loop must never die
-            log.exception("unexpected error in extraction cycle: %s", exc)
+            log.error("unexpected error in extraction cycle (%s)", type(exc).__name__)
             self._fail(exc, pause=self.settings.error_backoff_seconds, label="unexpected")
-        finally:
-            session.close()
         return False
 
     def _fail(self, exc: Exception, *, pause: float, level: int = logging.ERROR, label: str = "cycle") -> None:
         self.failures += 1
         self.last_report = None
         self.metrics.inc("twin_cycles_failed_total")
-        log.log(level, "%s failed (%s): %s -- pausing %.0fs", label, exc.__class__.__name__, exc, pause)
+        log.log(level, "%s failed (%s): %s -- pausing %.0fs", label, exc.__class__.__name__, failure_detail(exc)[1], pause)
         if pause:
             self._stop.wait(timeout=pause)
 

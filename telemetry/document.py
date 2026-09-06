@@ -92,6 +92,18 @@ def statuses_for(vehicle: ParsedVehicle) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 # vehicle blocks -- the parts shared by both sources
 # ---------------------------------------------------------------------------
+def source_observed_at(value: datetime | None, errors: Sequence[dict[str, Any]] | None) -> datetime | None:
+    """Ingest-time history keys are not source observations.
+
+    The validator records a last_updated error when it falls back to ingest
+    time. Honor that existing verdict rather than making the age badge fresh
+    just because our worker ran. This does not alter stored history keys.
+    """
+    if any(error.get("field") == "last_updated" for error in (errors or [])):
+        return None
+    return value
+
+
 def _vehicle_entry(
     vehicle_id: str,
     values: dict[str, Any],
@@ -103,6 +115,7 @@ def _vehicle_entry(
     """One entry of ``document.vehicles``, all 24 keys present, spec order."""
     measured = [name for name in COLUMN_NAMES if statuses[name] == MEASURED]
     completeness = round(100.0 * len(measured) / len(COLUMN_NAMES), 1)
+    observed_at = source_observed_at(observed_at, field_errors)
     observed_iso = observed_at.isoformat() if observed_at else None
     signature = _signature(vehicle_id, observed_iso, values)
     return {

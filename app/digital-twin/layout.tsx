@@ -36,7 +36,7 @@ import { feedFreshnessLabel, loadTelemetry, measuredChannelCount } from "@/lib/d
 export const dynamic = "force-dynamic";
 
 export default async function DigitalTwinLayout({ children }: { children: ReactNode }) {
-  const { doc, source, note } = await loadTelemetry();
+  const { doc, source, note, ingestion } = await loadTelemetry();
 
   return (
     <AppShell
@@ -45,6 +45,8 @@ export default async function DigitalTwinLayout({ children }: { children: ReactN
       measuredChannels={measuredChannelCount(doc)}
       source={source}
       sourceNote={note}
+      ingestion={ingestion}
+      canBootstrap={process.env.NODE_ENV === "development" && process.env.VERCEL !== "1" && !process.env.CRON_SECRET}
     >
       {/* Re-runs the server render on an interval so upstream changes appear
           without a reload. Pauses while the tab is hidden or offline. */}

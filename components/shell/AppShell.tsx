@@ -5,6 +5,8 @@ import { useState, type ReactNode } from "react";
 
 import AutoIngestTrigger from "@/components/shell/AutoIngestTrigger";
 import LiveClock from "@/components/shell/LiveClock";
+import IngestionStatus from "@/components/shell/IngestionStatus";
+import type { IngestionHealth } from "@/lib/ingestion-status";
 import Sidebar, { NAV_ITEMS } from "@/components/shell/Sidebar";
 import { Pill } from "@/components/ui/Pill";
 import type { TelemetrySource } from "@/lib/trusted-telemetry";
@@ -27,6 +29,8 @@ export default function AppShell({
   measuredChannels,
   source,
   sourceNote,
+  ingestion,
+  canBootstrap = false,
 }: {
   children: ReactNode;
   feedAgeLabel: string;
@@ -37,6 +41,8 @@ export default function AppShell({
   source: TelemetrySource;
   /** Why we fell back, when we did. Never hidden from the operator. */
   sourceNote: string | null;
+  ingestion: IngestionHealth | null;
+  canBootstrap?: boolean;
 }) {
   const pathname = usePathname();
   // The drawer closes from `onNavigate` (fired by every nav Link and by the
@@ -92,11 +98,11 @@ export default function AppShell({
               className="hidden md:inline-flex"
               title={
                 source === "live"
-                  ? `Live from the control plane. ${frameCount} validated frames, ${measuredChannels} of 24 channels measured. Freshest observation: ${feedAgeLabel}.`
+                  ? `Connected to the control plane (not a freshness guarantee). ${frameCount} validated frames, ${measuredChannels} of 24 channels measured. Freshest observation: ${feedAgeLabel}.`
                   : `${sourceNote ?? "Upstream unavailable."} ${frameCount} validated frames, ${measuredChannels} of 24 channels measured. Freshest observation: ${feedAgeLabel}.`
               }
             >
-              {source === "live" ? "Live" : source === "cached" ? "Cached" : "Waiting"} ·{" "}
+              {source === "live" ? "Connected" : source === "cached" ? "Cached" : "Waiting"} ·{" "}
               <span className="num">{frameCount}</span> frames · <span className="num">{measuredChannels}</span>/24 ·{" "}
               {feedAgeLabel}
             </Pill>
@@ -107,11 +113,14 @@ export default function AppShell({
         {/* The 1920px ceiling is a no-op on every standard monitor and stops
             an ultrawide display stretching cards and prose to unreadable
             line lengths. */}
-        <main className="mx-auto w-full min-w-0 max-w-[1920px] flex-1 px-4 py-5 lg:px-6 lg:py-6">{children}</main>
+        <main className="mx-auto w-full min-w-0 max-w-[1920px] flex-1 px-4 py-5 lg:px-6 lg:py-6">
+          <IngestionStatus health={ingestion} />
+          {children}
+        </main>
       </div>
 
-      {/* Auto-trigger ingestion when dashboard has no data */}
-      <AutoIngestTrigger source={source} sourceNote={sourceNote} />
+      {/* Local bootstrap only; production is scheduled independently. */}
+      <AutoIngestTrigger source={source} sourceNote={sourceNote} enabled={canBootstrap} />
     </div>
   );
 }

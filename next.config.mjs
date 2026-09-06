@@ -5,13 +5,14 @@
  *
  * The Python control plane (FastAPI, `api/index.py`) is built by Vercel as a
  * serverless function inside THIS project. On Vercel, every `/api/*` request
- * is rewritten onto that function; the destination carries the matched path
- * so the function's ASGI wrapper (api/index.py) can recover the original
- * route regardless of which path the platform hands it.
+ * is rewritten onto the EXACT function URL. A path suffix such as
+ * /api/index.py/health is not a deployed Vercel function and produces Next's
+ * HTML 404. Carry the matched route in a query parameter for the ASGI adapter
+ * instead; no credentials or browser-side second origin are involved.
  *
  * Locally there is no Python function — the rewrite proxies to
  * `uvicorn telemetry.main:app` (default :8000, override with
- * TELEMETRY_PROXY_URL), so `npm run dev` behaves exactly like production,
+ * BACKEND_URL), so `npm run dev` behaves exactly like production,
  * including the browser never seeing a second origin.
  *
  * The credentials for the database and the vendor API live only in the
@@ -26,12 +27,12 @@ const nextConfig = {
 
   async rewrites() {
     const backend =
-      process.env.BACKEND_URL ?? "http://127.0.0.1:8000";
+      process.env.BACKEND_URL?.trim() || "http://127.0.0.1:8000";
     return [
       {
         source: "/api/:path*",
         destination: onVercel
-          ? "/api/index.py/:path*" // the Python serverless function, same deployment
+          ? "/api/index.py?__telemetry_path=:path*" // exact function URL; adapter restores the route
           : `${backend.replace(/\/+$/, "")}/api/:path*`, // local uvicorn
       },
     ];

@@ -1,6 +1,8 @@
 import "server-only";
 
 import { headers } from "next/headers";
+import { cache } from "react";
+import { parseIngestionHealth, unavailableIngestion, type IngestionHealth } from "@/lib/ingestion-status";
 import {
   PARAM_ORDER,
   normalizeDocument,
@@ -53,7 +55,6 @@ import {
 /* ------------------------------------------------------------------ config */
 
 interface SourceConfig {
-  baseUrl: string;
   docPath: string;
   healthPath: string;
   revalidateSeconds: number;
@@ -67,7 +68,6 @@ function readConfig(): SourceConfig {
     // Python function in the same Vercel project. In local development the
     // absolute URL points at `next start` itself, whose rewrite proxies the
     // call on to `uvicorn telemetry.main:app`.
-    baseUrl: "", // resolved per request in resolveBaseUrl()
     docPath: env.TELEMETRY_DOC_PATH ?? "/api/telemetry/trusted",
     healthPath: env.TELEMETRY_HEALTH_PATH ?? "/api/health",
     // How long a rendered page may serve a cached document. 30s keeps the
@@ -95,7 +95,11 @@ function positiveInt(raw: string | undefined, fallback: number): number {
  * address; the dev rewrite proxies /api/* to the local control plane.
  */
 async function resolveBaseUrl(): Promise<string> {
-  const configured = process.env.TELEMETRY_API_URL ?? process.env.BACKEND_URL ?? "";
+  // BACKEND_URL is LOCAL ONLY. Copying .env to Vercel must not send an SSR
+  // fetch to a loopback service that cannot exist inside the deployment.
+  const configured = process.env.TELEMETRY_API_URL?.trim()
+    || (process.env.VERCEL === "1" ? "" : process.env.BACKEND_URL?.trim())
+    || "";
   if (configured) return configured.replace(/\/+$/, "");
 
   try {
@@ -134,7 +138,12 @@ async function resolveBaseUrl(): Promise<string> {
  *   * it runs INSIDE the same serverless invocation, so it adds no extra
  *     function calls — only one small round trip we already have a socket for.
  */
-async function probeLiveness(cfg: SourceConfig): Promise<boolean> {
+interface HealthProbe {
+  available: boolean;
+  ingestion: IngestionHealth | null;
+}
+
+async function probeLiveness(cfg: SourceConfig): Promise<HealthProbe> {
   try {
     const baseUrl = await resolveBaseUrl();
     const res = await fetchWithTimeout(
@@ -142,9 +151,18 @@ async function probeLiveness(cfg: SourceConfig): Promise<boolean> {
       { cache: "no-store", headers: { Accept: "application/json" } },
       Math.min(cfg.timeoutMs, 2_500),
     );
-    return res.ok;
+    if (!res.ok) throw new Error("health endpoint did not answer");
+    const body: unknown = await res.json();
+    if (!isRecord(body) || body.status !== "ok") throw new Error("invalid health response");
+    // /health intentionally returns HTTP 200 even if Neon is down. The body,
+    // not HTTP liveness alone, must decide whether to label this a live read.
+    if (body.database !== "up") return {
+      available: false,
+      ingestion: unavailableIngestion("database_unreachable", "The backend is responding but the database is unavailable or not configured. Ingestion health is unknown."),
+    };
+    return { available: true, ingestion: parseIngestionHealth(body.ingestion) };
   } catch {
-    return false;
+    return { available: false, ingestion: unavailableIngestion("backend_unreachable", "Backend unreachable. Showing any cached observations; check the control plane and proxy configuration.") };
   }
 }
 
@@ -197,6 +215,8 @@ export interface TelemetrySnapshot {
   note: string | null;
   /** Epoch ms the document entered this process. */
   fetchedAt: number;
+  /** Uncached, database-backed cycle evidence, independent of document age. */
+  ingestion: IngestionHealth | null;
 }
 
 /**
@@ -245,8 +265,8 @@ const EMPTY_DOCUMENT: TrustedTelemetryDocument = normalizeDocument({
   quarantined: [],
 } as unknown as TrustedTelemetryDocument);
 
-function waitingResult(note: string): TelemetrySnapshot {
-  return { doc: EMPTY_DOCUMENT, source: "waiting", note, fetchedAt: Date.now() };
+function waitingResult(note: string, ingestion: IngestionHealth | null): TelemetrySnapshot {
+  return { doc: EMPTY_DOCUMENT, source: "waiting", note, fetchedAt: Date.now(), ingestion };
 }
 
 /* ----------------------------------------------------------------- loading */
@@ -271,8 +291,11 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
  * revalidate window shares one upstream response across every concurrent
  * viewer.
  */
-export async function loadTelemetry(): Promise<TelemetrySnapshot> {
+// React cache dedupes the ENTIRE boundary within a render (layout + page).
+// Passing an AbortController signal opts fetch out of its own memoization.
+export const loadTelemetry = cache(async function loadTelemetry(): Promise<TelemetrySnapshot> {
   const cfg = readConfig();
+  const healthPromise = probeLiveness(cfg);
 
   try {
     const baseUrl = await resolveBaseUrl();
@@ -291,7 +314,7 @@ export async function loadTelemetry(): Promise<TelemetrySnapshot> {
         isRecord(detail) && typeof detail.detail === "string"
           ? ` The control plane says: ${detail.detail}`
           : "";
-      return waitingResult(`Control plane returned ${res.status} for ${cfg.docPath}.${sentence}`);
+      return waitingResult(`Control plane returned ${res.status} for ${cfg.docPath}.${sentence}`, (await healthPromise).ingestion);
     }
 
     const payload: unknown = await res.json();
@@ -299,7 +322,7 @@ export async function loadTelemetry(): Promise<TelemetrySnapshot> {
 
     // The document may have come from the data cache rather than the wire, so
     // ask the control plane directly whether it is up before claiming "Live".
-    const alive = await probeLiveness(cfg);
+    const health = await healthPromise;
 
     // The same normaliser every document goes through, so a live document and
     // the empty one are indistinguishable to every component downstream and
@@ -309,27 +332,32 @@ export async function loadTelemetry(): Promise<TelemetrySnapshot> {
       return {
         doc,
         source: "waiting",
-        note: "The database is reachable but no vehicle has been ingested yet. The cron job (or POST /api/ingest/run) will fill this in.",
+        note: health.available
+          ? "The database has no telemetry yet. Start the polling worker or configure the ingestion cron."
+          : health.ingestion?.detail ?? "Control plane unavailable.",
         fetchedAt: Date.now(),
+        ingestion: health.ingestion,
       };
     }
 
     return {
       doc,
-      source: alive ? "live" : "cached",
-      note: alive
+      source: health.available ? "live" : "cached",
+      note: health.available
         ? null
-        : "Control plane is not responding. Showing the last document it served — these readings are as old as the outage.",
+        : health.ingestion?.detail ?? "Control plane unavailable. Showing the last document it served.",
       fetchedAt: Date.now(),
+      ingestion: health.ingestion,
     };
   } catch (err) {
     const reason =
       err instanceof Error && err.name === "AbortError"
         ? `Control plane did not respond within ${cfg.timeoutMs} ms.`
         : `Control plane unreachable (${describe(err)}).`;
-    return waitingResult(reason);
+    const health = await healthPromise;
+    return waitingResult(reason, health.available ? unavailableIngestion("unknown", reason) : health.ingestion);
   }
-}
+});
 
 /**
  * Coverage of the live feed, for the shell chip.

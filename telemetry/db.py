@@ -7,6 +7,7 @@ import os
 from typing import Final, Iterator
 
 from sqlalchemy import Engine, create_engine, event, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool
 
@@ -32,7 +33,7 @@ def build_engine(settings: Settings | None = None) -> Engine:
     url = settings.database_url
     kwargs: dict = {"echo": settings.db_echo, "future": True}
 
-    if url.split(":", 1)[0] in _POOLABLE:
+    if make_url(url).get_backend_name() in _POOLABLE:
         if settings.db_nullpool or os.getenv("VERCEL") or os.getenv("AWS_LAMBDA_FUNCTION_NAME"):
             kwargs.update(poolclass=NullPool, pool_pre_ping=True)
         else:
