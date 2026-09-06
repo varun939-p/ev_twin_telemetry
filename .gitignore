@@ -60,4 +60,6 @@ next-env.d.ts
 /frontend/node_modules/
 /frontend/.next/
 .vercel
-.env*
+# NOTE: do NOT add a bare `.env*` here. `.env` and `.env.*` are already ignored
+# at the top of this file with an explicit `!.env.example` negation; a later
+# `.env*` rule wins over that negation and silently re-ignores the template.

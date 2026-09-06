@@ -3,9 +3,10 @@
     python -m uvicorn telemetry.main:app --host 0.0.0.0 --port 8000
 
 Starting uvicorn serves HTTP only. For continuous local ingestion, ALSO run
-``python -m telemetry run``. Vercel instead invokes GET /api/cron/ingest every
-five minutes. Neither path needs an open browser tab. main_parser.py is an
-unrelated offline file converter, not an ASGI entry point.
+``python -m telemetry run``. Vercel instead invokes GET /api/cron/ingest on the
+schedule in vercel.json (once daily on the Hobby plan). Neither path needs an
+open browser tab. main_parser.py is an unrelated offline file converter, not an
+ASGI entry point.
 
 GET /api/telemetry/trusted and /api/ingest/status are read-only. All ingest
 routes (including the legacy /api/ingest/trigger alias) use CRON_SECRET; they

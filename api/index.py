@@ -108,5 +108,15 @@ async def _error_app(scope: dict, receive: Any, send: Any) -> None:
 
 
 _handler = PathNormalizer(_control_plane) if _control_plane is not None else _error_app
+
+# VERCEL BUILD CONTRACT -- do not move `app` into an if/else, try/except, or
+# function. Vercel's builder detection (@vercel/fs-detectors ->
+# @vercel/python-analysis `findAppOrHandler`) statically parses this file and
+# only accepts a MODULE-LEVEL `app = ...` / `app: T = ...` / `def app` /
+# `from x import app`. Any other shape means api/index.py is not registered as
+# a Serverless Function and the build aborts with:
+#   Error: The pattern "api/index.py" defined in `functions` doesn't match any
+#   Serverless Functions.
+# tests/test_vercel_adapter.py::test_app_is_a_module_level_assignment guards this.
 app = _handler
 control_plane = _control_plane

@@ -112,6 +112,21 @@ async function resolveBaseUrl(): Promise<string> {
   // fetches must hit the public HTTPS domain so Vercel's edge routes /api/* to
   // the Python serverless function (api/index.py).
   if (process.env.VERCEL === "1") {
+    // PRODUCTION: always self-fetch through the project's production domain,
+    // never through the host the viewer typed. Vercel's default "Standard"
+    // Deployment Protection leaves the production domain open but puts every
+    // generated deployment URL (<project>-<hash>-<team>.vercel.app — the link
+    // GitHub's deployment status points at) behind Vercel SSO. A viewer who is
+    // logged in to Vercel sees the page render, but the server-side probe to
+    // `${x-forwarded-host}/api/health` carries no SSO cookie, receives the
+    // login HTML, and the dashboard reports "Backend unreachable" although the
+    // Python function is healthy. VERCEL_PROJECT_PRODUCTION_URL is a system
+    // variable Vercel injects on every deployment; nothing to configure.
+    const productionHost = process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim();
+    if (process.env.VERCEL_ENV === "production" && productionHost) {
+      return `https://${productionHost.replace(/^https?:\/\//, "").replace(/\/+$/, "")}`;
+    }
+
     try {
       const h = await headers();
       const forwardedHost = h.get("x-forwarded-host")?.split(",")[0]?.trim();

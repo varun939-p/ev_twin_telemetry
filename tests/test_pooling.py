@@ -55,5 +55,18 @@ def test_shipped_cron_matches_hobby_daily_schedule():
     cron = deployment["crons"]
     assert Settings(_env_file=None).ingest_running_timeout_seconds == deployment["functions"]["api/index.py"]["maxDuration"]
     assert cron == [{"path": "/api/cron/ingest", "schedule": "0 18 * * *"}]
+    # Hobby rejects any schedule more frequent than once per day.
+    minute, hour, *_ = cron[0]["schedule"].split()
+    assert "*" not in minute and "/" not in minute and "*" not in hour and "/" not in hour
     assert Settings(_env_file=None).poll_interval_seconds == 300
     assert "POLL_INTERVAL_SECONDS=300" in (root / ".env.example").read_text()
+
+
+def test_function_region_is_colocated_with_the_neon_database():
+    """Every read opens a fresh NullPool connection to Neon (us-east-2). Running
+    the function in Mumbai added ~200 ms x (TLS + auth + query) per hop and was
+    the difference between a 6 s SSR probe passing and timing out on cold start.
+    cle1 is Vercel's us-east-2 region."""
+    root = Path(__file__).resolve().parents[1]
+    deployment = json.loads((root / "vercel.json").read_text())
+    assert deployment["regions"] == ["cle1"]

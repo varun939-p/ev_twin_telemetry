@@ -225,7 +225,7 @@ def ingestion_health(
     # One interval + a small scheduling/HTTP grace, not a many-hour freshness threshold.
     if age > settings.poll_interval_seconds + 30:
         return {**result, "state": "overdue",
-                "detail": "No recent ingestion cycle. Check that the worker or five-minute cron is running; upstream freshness is unknown."}
+                "detail": "No recent ingestion cycle. Check that the worker or scheduled cron is running; upstream freshness is unknown."}
     if latest.status == "partial":
         summary = latest.summary or {}
         return {**result, "state": "partial", "detail": (

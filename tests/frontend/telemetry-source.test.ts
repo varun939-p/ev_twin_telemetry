@@ -90,3 +90,30 @@ it("safely handles HTML error responses without unhandled SyntaxError", async ()
   expect(result.note).toContain("non-JSON");
 });
 
+
+it("self-fetches through the production domain on Vercel production, not the SSO-protected deployment host", async () => {
+  // The GitHub deployment status links to <project>-<hash>-<team>.vercel.app,
+  // which Vercel's default Deployment Protection puts behind SSO. A server-side
+  // probe to that host gets the login page, never JSON -> "Backend unreachable".
+  vi.stubEnv("VERCEL", "1");
+  vi.stubEnv("VERCEL_ENV", "production");
+  vi.stubEnv("VERCEL_PROJECT_PRODUCTION_URL", "ev-twin-telemetry.vercel.app");
+  const fetcher = vi.fn(async (url: string) => Response.json(url.endsWith("/health") ? { status: "ok", database: "up", ingestion } : doc));
+  vi.stubGlobal("fetch", fetcher);
+  const result = await loadTelemetry();
+  expect(result.source).toBe("live");
+  expect(fetcher.mock.calls.map(([url]) => url).sort()).toEqual([
+    "https://ev-twin-telemetry.vercel.app/api/health",
+    "https://ev-twin-telemetry.vercel.app/api/telemetry/trusted",
+  ]);
+});
+
+it("keeps using the forwarded host for Vercel preview deployments", async () => {
+  vi.stubEnv("VERCEL", "1");
+  vi.stubEnv("VERCEL_ENV", "preview");
+  vi.stubEnv("VERCEL_PROJECT_PRODUCTION_URL", "ev-twin-telemetry.vercel.app");
+  const fetcher = vi.fn(async (url: string) => Response.json(url.endsWith("/health") ? { status: "ok", database: "up", ingestion } : doc));
+  vi.stubGlobal("fetch", fetcher);
+  await loadTelemetry();
+  expect(fetcher.mock.calls.every(([url]) => url.startsWith("https://fleet.example.test/api/"))).toBe(true);
+});

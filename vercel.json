@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "regions": ["bom1"],
+  "regions": ["cle1"],
   "functions": {
     "api/index.py": {
       "runtime": "@vercel/python@4.7.0",

@@ -114,6 +114,27 @@ runtime dependencies are in `api/requirements.txt`. `vercel.json` includes
 `telemetry/**` in the Python bundle. `api/index.py:app` is ASGI, not a separate
 business-logic handler or a `BaseHTTPRequestHandler`.
 
+**How Vercel decides `api/index.py` is a function.** The build does a static
+AST scan of every `api/**/*.py` (`@vercel/python-analysis`) and registers the
+file only if it binds `app`, `application` or a `handler` class **at module
+level**. `app = ...` inside `if/else`, `try/except` or a function is invisible
+to that scan, the file is treated as a plain asset, and the `functions` entry
+in `vercel.json` then has nothing to attach to:
+
+```text
+Error: The pattern "api/index.py" defined in `functions` doesn't match any Serverless Functions.
+```
+
+That message is about the **contents** of `api/index.py`, not its path. Keep the
+final `app = _handler` line unconditional; `tests/test_vercel_adapter.py`
+fails if it is ever nested again.
+
+**Function region.** `regions` is `cle1` (us-east-2), the same AWS region as
+the Neon pooler host (`...us-east-2.aws.neon.tech`). Every read opens a fresh
+NullPool connection, so a cross-continent hop multiplies TLS + auth + query
+latency and pushes cold-start SSR probes past the dashboard's 6 s budget. If
+the database moves, move the function with it.
+
 **Route to the exact function URL:** production rewrites use
 `/api/index.py?__telemetry_path=:path*`, not `/api/index.py/:path*`. A suffix
 after `.py` is not a deployed function route and yields Next's HTML 404. The
@@ -146,7 +167,7 @@ Preview so manual preview tests do not mutate the production snapshot.
 | `POLL_INTERVAL_SECONDS` | Worker cadence. `300` for a continuous worker/real-time external scheduler; set `86400` on Vercel when using the Hobby once-daily cron so diagnostics do not label it overdue. **Does not configure Vercel's scheduler.** |
 | `TELEMETRY_REVALIDATE_SECONDS` | `30`. Server document cache window. |
 | `TELEMETRY_TIMEOUT_MS` | `6000`. Read timeout, not the ingestion-function timeout. |
-| `TELEMETRY_API_URL` | **Leave unset** for same-project deployment. Only set for a separately hosted control plane. |
+| `TELEMETRY_API_URL` | **Leave unset** for same-project deployment. Only set for a separately hosted control plane. Setting it to this deployment's own URL is harmless but redundant: production SSR already self-fetches through `VERCEL_PROJECT_PRODUCTION_URL`. |
 | `BACKEND_URL` | **Leave unset on Vercel.** Local-only; ignored by production routing/SSR even if accidentally copied. |
 | `DB_NULLPOOL` | Optional. Vercel/Lambda force NullPool regardless of `false`. |
 | `LIVE_DATE_FALLBACK`, `LIVE_DATE_MIN_VEHICLES` | `true`, `5`; tune the threshold if intentionally monitoring a smaller fleet. |
@@ -301,3 +322,17 @@ curl -sS "$APP_URL/api/telemetry/trusted"
 Production env checks, plan/cadence confirmation and a successful live ingest
 must be performed against the deployment; passing mock tests or reading
 `vercel.json` is not a substitute.
+
+### "Backend unreachable" on a deployment URL that renders fine
+
+Test against the **production domain** (`https://<project>.vercel.app` or the
+custom domain), not the per-deployment URL that GitHub's deployment status
+links to (`<project>-<hash>-<team>.vercel.app`). Vercel's default Deployment
+Protection puts the latter behind Vercel SSO: your browser has the cookie, so
+the page renders, but the server-side probe to `/api/health` on that host has
+no cookie, receives the login HTML, and the dashboard honestly reports
+"Backend unreachable" while `api/index.py` is healthy. Production SSR therefore
+pins its self-fetch to `VERCEL_PROJECT_PRODUCTION_URL`; preview deployments
+still use the request host, so either disable Deployment Protection for
+Preview or verify previews with `curl -H "Authorization: Bearer ..."` against
+the Python routes directly.
