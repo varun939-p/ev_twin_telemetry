@@ -45,16 +45,7 @@ export default function BatteryKpiStrip({
 
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      <KpiCard
-        label="Total battery assets"
-        value={packs.length}
-        hint={
-          packs.length === totalPacks
-            ? `${totalPacks} packs reporting validated pack telemetry`
-            : `${packs.length} of ${totalPacks} packs match the current filters`
-        }
-        tone="neutral"
-      />
+      <KpiCard label="Total battery assets" value={packs.length} tone="neutral" />
 
       {/* The old click-through target (/digital-twin/swap-station) was removed
           with the draft routes, so this card no longer pretends to navigate. */}
