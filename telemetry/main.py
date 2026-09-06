@@ -167,7 +167,12 @@ def _mask_url(url: str) -> str:
 @app.get("/health")
 @app.get("/api/health")
 def health() -> JSONResponse:
-    """Process liveness plus uncached DB/poller health; never calls upstream."""
+    """Process liveness plus uncached DB/poller health; never calls upstream.
+
+    Intentionally skips _ensure_schema_once() so the cold-start critical path
+    is: Python import → FastAPI → first DB connect → SELECT 1. DDL (create_all
+    + ALTER TABLE) runs only during an ingest cycle, not on every health probe.
+    """
     settings = _settings()
     database = "not-configured"
     diagnostic: dict[str, Any] = {
@@ -178,11 +183,15 @@ def health() -> JSONResponse:
     if settings.database_url:
         database = "down"
         try:
-            _ensure_schema_once()
             with _session_factory()() as probe:
                 probe.execute(text("SELECT 1")).scalar()
-                diagnostic = ingestion_health(probe, settings)
-            database = "up"
+                database = "up"
+                try:
+                    diagnostic = ingestion_health(probe, settings)
+                except Exception:
+                    # journal_entry table may not exist yet (before first ingest).
+                    # Database is still reachable -- report "up" with default diagnostic.
+                    pass
         except Exception as exc:
             log.warning("health probe: database unavailable (%s)", type(exc).__name__)
             diagnostic["detail"] = "Database unreachable; ingestion health is unknown. Check Neon connectivity."
@@ -204,11 +213,15 @@ def ingest_status(db: Session = Depends(get_db)) -> JSONResponse:
 
 @app.get("/api/telemetry/trusted", summary="Latest validated telemetry document, rebuilt from Neon.")
 def trusted_telemetry(db: Session = Depends(get_db)) -> JSONResponse:
-    """Read committed snapshots only; never turn a dashboard visit into a poll."""
+    """Read committed snapshots only; never turn a dashboard visit into a poll.
+
+    Skips _ensure_schema_once() -- DDL runs during ingest, not on every read.
+    If vehicle_state doesn't exist yet (pre-first-ingest), the SQLAlchemyError
+    is caught and returned as 503, which the dashboard renders as 'waiting'.
+    """
     settings = _settings()
     generated_at = datetime.now(timezone.utc)
     try:
-        _ensure_schema_once()
         rows = list(db.execute(select(VehicleState)).scalars())
         diagnostic = ingestion_health(db, settings, now=generated_at)
     except SQLAlchemyError as exc:

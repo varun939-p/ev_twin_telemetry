@@ -80,8 +80,9 @@ function readConfig(): SourceConfig {
     // dashboard at most one cron window behind, and 100 concurrent viewers
     // cost one function invocation.
     revalidateSeconds: positiveInt(env.TELEMETRY_REVALIDATE_SECONDS, 30),
-    // A dashboard that hangs is worse than one showing a stale document.
-    timeoutMs: positiveInt(env.TELEMETRY_TIMEOUT_MS, 6000),
+    // A dashboard that hangs is worse than one showing a stale document, but
+    // serverless cold starts need adequate headroom.
+    timeoutMs: positiveInt(env.TELEMETRY_TIMEOUT_MS, 12000),
   };
 }
 
@@ -200,7 +201,8 @@ async function probeLiveness(cfg: SourceConfig): Promise<HealthProbe> {
       ingestion: unavailableIngestion("database_unreachable", "The backend is responding but the database is unavailable or not configured. Ingestion health is unknown."),
     };
     return { available: true, ingestion: parseIngestionHealth(body.ingestion) };
-  } catch {
+  } catch (err) {
+    console.warn(`[probeLiveness] liveness probe failed: ${err instanceof Error ? err.message : String(err)}`);
     return { available: false, ingestion: unavailableIngestion("backend_unreachable", "Backend unreachable. Showing any cached observations; check the control plane and proxy configuration.") };
   }
 }

@@ -41,11 +41,9 @@ class Settings(BaseSettings):
     # Tier 1: `/api/v1/vehicles` returns a high-level fleet summary in which
     #         every vehicle frame carries `"battery": null`.
     # Tier 2: `/api/v1/vehicles/{vehicle_id}` returns the complete live
-    #         diagnostic frame, including the battery block, under the
-    #         abbreviated v1 keys (batt_v, chg_status, batt_temp, ...).
-    # `/api/dashboard-parameters` is retired and blocked upstream.  Override
-    # VEHICLES_PATH only for a staging upstream that mounts the contract
-    # elsewhere; the detail path is always derived from it.
+    #         diagnostic frame, including the battery block.
+    # When available upstream, `/api/dashboard-parameters` is automatically checked
+    # for full 24-channel telemetry across the fleet in a single request.
     vehicles_path: str = "/api/v1/vehicles"
     request_timeout: float = Field(default=20.0, gt=0)
 

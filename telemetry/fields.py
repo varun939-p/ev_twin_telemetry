@@ -102,7 +102,7 @@ PARAM_SPECS: Final[tuple[ParamSpec, ...]] = (
     # 12  Vehicle Speed (km/h)
     _f("speed_kmh", "Vehicle Speed", "km/h", "speed", "vehicle_speed", "spd", minimum=0, maximum=250, documented=True),
     # 13  Total Power Consumption (kWh)
-    _f("total_power_kwh", "Total Power Consumption", "kWh", "total_power_consumption_kwh", "tot_power_kwh", "tot_kwh", "power_kwh", "energy_kwh", minimum=0),
+    _f("total_power_kwh", "Total Power Consumption", "kWh", "total_power_consumption_kwh", "tot_power_kwh", "total_kwh", "tot_kwh", "power_kwh", "energy_kwh", minimum=0),
     # 14  Charging Status (0/1)  -- `chg_status` confirmed in the live v1 frame
     _i("charging_status", "Charging Status", "0/1", "chg_status", "charge_status", "chg_sts", "is_charging", minimum=0, maximum=1, documented=True),
     # 15  Battery Average Temperature (degC)
@@ -110,22 +110,22 @@ PARAM_SPECS: Final[tuple[ParamSpec, ...]] = (
     # 16  Battery Total Voltage (V)  -- `batt_v` confirmed in the live v1 frame
     _f("battery_total_v", "Battery Total Voltage", "V", "batt_v", "batt_volt", "total_v", "pack_v", "batt_total_v", "battery_voltage", minimum=0, maximum=1500, documented=True),
     # 17  Battery Current (A)  -- can be negative (regen/discharge convention)
-    _f("battery_current_a", "Battery Current", "A", "batt_a", "batt_cur", "batt_current", "batt_amp", "pack_current_a", minimum=-3000, maximum=3000),
+    _f("battery_current_a", "Battery Current", "A", "batt_a", "batt_curr", "batt_cur", "batt_current", "batt_amp", "pack_current_a", minimum=-3000, maximum=3000),
     # 18  Maximum Cell Voltage Cell Number
-    _i("max_cell_v_cell_no", "Max Cell Voltage Cell Number", "", "max_cell_v_cell_number", "max_cell_no", "max_v_cell_no", "mx_cell_no", minimum=0, maximum=4096),
+    _i("max_cell_v_cell_no", "Max Cell Voltage Cell Number", "", "max_cell_v_cell_number", "max_cv_cell", "max_cell_no", "max_v_cell_no", "mx_cell_no", minimum=0, maximum=4096),
     # 19  Minimum Cell Voltage Battery Number
-    _i("min_cell_v_pack_no", "Min Cell Voltage Battery Number", "", "min_cell_v_battery_number", "min_pack_no", "min_v_pack_no", "mn_pack_no", minimum=0, maximum=64),
+    _i("min_cell_v_pack_no", "Min Cell Voltage Battery Number", "", "min_cell_v_battery_number", "min_cv_batt", "min_pack_no", "min_v_pack_no", "mn_pack_no", minimum=0, maximum=64),
     # 20  Minimum Cell Voltage Cell Number
-    _i("min_cell_v_cell_no", "Min Cell Voltage Cell Number", "", "min_cell_v_cell_number", "min_cell_no", "min_v_cell_no", "mn_cell_no", minimum=0, maximum=4096),
+    _i("min_cell_v_cell_no", "Min Cell Voltage Cell Number", "", "min_cell_v_cell_number", "min_cv_cell", "min_cell_no", "min_v_cell_no", "mn_cell_no", minimum=0, maximum=4096),
     # 21  Maximum Temperature Battery Number
-    _i("max_temp_pack_no", "Max Temperature Battery Number", "", "max_temp_battery_number", "max_pack_no", "max_t_pack", "max_t_pack_no", "mx_t_pack", minimum=0, maximum=64),
+    _i("max_temp_pack_no", "Max Temperature Battery Number", "", "max_temp_battery_number", "max_temp_batt", "max_pack_no", "max_t_pack", "max_t_pack_no", "mx_t_pack", minimum=0, maximum=64),
     # 22  Vehicle Work Status  -- upstream type unknown, stored verbatim as text
     ParamSpec(
         name="work_status",
         label="Vehicle Work Status",
         unit="",
         kind="str",
-        aliases=("work_status", "work_sts", "vehicle_work_status", "wrk_status", "veh_work_status", "workstate"),
+        aliases=("work_status", "workst", "work_sts", "vehicle_work_status", "wrk_status", "veh_work_status", "workstate"),
         nullable=True,
     ),
     # 23  Latitude
