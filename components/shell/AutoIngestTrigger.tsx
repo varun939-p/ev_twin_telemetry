@@ -60,8 +60,9 @@ export default function AutoIngestTrigger({
     setMessage("Fetching live data from upstream API...");
     sessionStorage.setItem(TRIGGER_KEY, Date.now().toString());
 
-    // Trigger ingestion via the dashboard-specific endpoint (no CRON_SECRET needed)
-    fetch("/api/ingest/trigger", {
+    // Trigger ingestion via the FastAPI control plane endpoint.
+    // POST /api/ingest/run — defined in telemetry/main.py, proxied via next.config.mjs rewrites.
+    fetch("/api/ingest/run", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

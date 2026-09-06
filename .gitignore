@@ -56,3 +56,5 @@ yarn-error.log*
 next-env.d.ts
 # scratch database used by tools/serverless_check.py
 /.serverless_check.db
+/frontend/node_modules/
+/frontend/.next/

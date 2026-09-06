@@ -26,7 +26,7 @@ const nextConfig = {
 
   async rewrites() {
     const backend =
-      process.env.TELEMETRY_PROXY_URL ?? "http://127.0.0.1:8000";
+      process.env.BACKEND_URL ?? "http://127.0.0.1:8000";
     return [
       {
         source: "/api/:path*",
