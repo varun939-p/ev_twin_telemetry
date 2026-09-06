@@ -456,8 +456,37 @@ export function fleetSummary(doc: TrustedTelemetryDocument, now: Date = new Date
   };
 }
 
+/**
+ * Parse an ISO-8601 instant to epoch milliseconds, resolving timezone
+ * DETERMINISTICALLY (the hydration-mismatch root cause).
+ *
+ * The control plane stamps every timestamp as a UTC instant. On Neon
+ * (TIMESTAMPTZ) those values round-trip carrying an explicit `+00:00` offset,
+ * but on the SQLite dev store they lose the offset and arrive as *naive*
+ * strings like `2026-09-06T06:17:57`. `Date.parse()` treats a zone-less
+ * string as LOCAL time, so the exact same value parses to a DIFFERENT epoch
+ * in a UTC runtime (Vercel SSR) than in an IST browser (Hyderabad) — a 5.5 h
+ * gap that shows up as the classic "Median frame age 1.8 (server) vs 7.3
+ * (client)" hydration crash, and also yields wrong ages for any viewer not in
+ * the server's timezone.
+ *
+ * Fix: when a string carries no zone designator we treat it as UTC (matching
+ * how the data layer produced it) so every runtime — server or client, any
+ * machine timezone — computes the identical epoch. Explicitly-offset strings
+ * (`…Z`, `…+05:30`) are left untouched and parsed exactly as written.
+ */
+export function parseTimestampMs(iso: string): number {
+  // Has an explicit zone designator (…Z or …±HH:MM)? Leave it verbatim.
+  const hasZone = /(?:Z|[+-]\d{2}:?\d{2})\s*$/i.test(iso);
+  // Naive full datetime (…THH:MM…): append Z so it is read as UTC, not local.
+  const naiveFull = !hasZone && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(iso);
+  const text = naiveFull ? `${iso.replace(/\s*$/, "")}Z` : iso;
+  const ms = Date.parse(text);
+  return Number.isFinite(ms) ? ms : Number.NaN;
+}
+
 export function frameAgeHours(iso: string, now: Date = new Date()): number {
-  const then = Date.parse(iso);
+  const then = parseTimestampMs(iso);
   return Number.isFinite(then) ? (now.getTime() - then) / 3_600_000 : Number.NaN;
 }
 
