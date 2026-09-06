@@ -338,10 +338,10 @@ export function normalizeDocument(doc: TrustedTelemetryDocument): TrustedTelemet
 
 /** Human copy for each non-measured verdict, mirrored from `field_status_legend`. */
 export const STATUS_COPY: Record<FieldStatus, { short: string; detail: string }> = {
-  measured: { short: "Live", detail: "Value present and passed schema validation." },
-  absent_upstream: { short: "Awaiting upstream", detail: "The upstream API never sent this key. Quarantined as NULL by the data layer -- not a zero." },
-  null_upstream: { short: "No reading", detail: "The key arrived with a null/empty value. Stored NULL by the data layer -- not a zero." },
-  field_error: { short: "Rejected", detail: "The value failed a range/type gate and was stored NULL. See the field error detail." },
+  measured: { short: "Live", detail: "Value is being measured and has passed validation." },
+  absent_upstream: { short: "Awaiting upstream", detail: "This parameter has not been received from the vehicle yet." },
+  null_upstream: { short: "No reading", detail: "The vehicle reported this parameter but with no value." },
+  field_error: { short: "Rejected", detail: "The value was outside acceptable range or failed validation." },
 };
 
 /* --------------------------------------------------------------- selectors */

@@ -3,6 +3,7 @@
 import { usePathname } from "next/navigation";
 import { useState, type ReactNode } from "react";
 
+import AutoIngestTrigger from "@/components/shell/AutoIngestTrigger";
 import LiveClock from "@/components/shell/LiveClock";
 import Sidebar, { NAV_ITEMS } from "@/components/shell/Sidebar";
 import { Pill } from "@/components/ui/Pill";
@@ -108,6 +109,9 @@ export default function AppShell({
             line lengths. */}
         <main className="mx-auto w-full min-w-0 max-w-[1920px] flex-1 px-4 py-5 lg:px-6 lg:py-6">{children}</main>
       </div>
+
+      {/* Auto-trigger ingestion when dashboard has no data */}
+      <AutoIngestTrigger source={source} sourceNote={sourceNote} />
     </div>
   );
 }

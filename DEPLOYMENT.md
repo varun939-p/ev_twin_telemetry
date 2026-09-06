@@ -16,16 +16,15 @@
                      │  api/index.py  — Python serverless function      │
                      │      │  telemetry.main.py (FastAPI)              │
    Vercel Cron ────► │      │   GET  /api/cron/ingest  (Bearer secret)  │
-   (daily*, Pro: 5m) │      │   GET  /api/telemetry/trusted             │
+   (daily, Pro: *)   │      │   GET  /api/telemetry/trusted             │
+                     │      │   ↑ AUTO-INGEST: triggers ingestion if    │
+                     │      │   DB is empty or data is >10 min stale    │
                      │      ▼                                          │
                      │  Neon PostgreSQL  ◄── vendor pull on demand      │
                      └──────────────────────────────────┬───────────────┘
                                                         │
                                         https://track.blueenergymotors.com
 ```
-
-\* Shipped schedule is daily (07:13 UTC) — the most frequent Vercel's Hobby
-tier accepts. Pro users: see "Cron cadence" below for the 5-minute heartbeat.
 
 ---
 
@@ -88,28 +87,61 @@ None of these are `NEXT_PUBLIC_*`, so none reach the browser bundle;
 `lib/telemetry-source.ts` is marked `server-only`, which turns an accidental
 client import into a build error.
 
-## Step 4 — Cron cadence
+## Step 4 — Cron cadence & auto-ingest
 
-`vercel.json` ships `"13 7 * * *"` on `/api/cron/ingest` — **once per day,
-07:13 UTC (≈13:13 IST)**. That is the most frequent schedule Vercel's Hobby
-plan accepts (Hobby hard-rejects any expression that fires more than once per
-day at deploy time, so a `*/5 * * * *` here breaks the build check — which is
-exactly what the first deployment attempt hit). The daily run keeps a demo
-warm; it is NOT the product's intended heartbeat. On-demand ingestion is
-unaffected: `POST /api/ingest/run` works at any time with the Bearer secret.
+`vercel.json` ships `"13 7 * * *"` on `/api/cron/ingest` — **once per day at
+07:13 UTC (≈12:43 IST)**. This is compatible with all Vercel plans including
+Hobby (which rejects any cron expression that fires more than once per day).
 
-To get the real five-minute heartbeat:
+> **Why once per day?** The **auto-ingest mechanism** (below) is the primary
+> way data stays fresh — it triggers automatically whenever the dashboard is
+> loaded and the data is >10 minutes stale. The cron job is a safety net that
+> keeps the database warm even when no one is viewing the dashboard.
 
-- **Pro plan:** change the schedule in `vercel.json` to `"*/5 * * * *"`.
-  Cron hits only run against production deployments, never previews.
-- **Hobby plan (no upgrade):** delete the `crons` block and point any external
-  scheduler (cron-job.org, GitHub Actions, UptimeRobot) at the same route on
-  any cadence you want:
+### Auto-ingest (the primary data freshness mechanism)
 
-  ```
-  GET https://<your-app>.vercel.app/api/cron/ingest
-  Authorization: Bearer <CRON_SECRET>
-  ```
+The dashboard now **automatically triggers ingestion** when it detects:
+- The database is empty (first deploy, no data yet)
+- Data is stale (>10 minutes old)
+
+This means:
+1. **First visit after deploy:** Dashboard loads → auto-ingest pulls data from
+   upstream API → shows live metrics within seconds. No waiting for cron.
+2. **Subsequent visits:** Dashboard reads from DB. If data is >10 min stale,
+   auto-ingest triggers a fresh pull before responding.
+3. **Cron backup:** The daily cron job keeps data warm when no one is viewing.
+
+The auto-ingest has a **45-second cooldown** to prevent rapid-fire requests to
+the upstream API. This ensures the dashboard is never more than ~10 minutes
+behind, even with a daily cron schedule.
+
+### Upgrading to a more frequent cron (Pro plan only)
+
+If you are on the **Vercel Pro plan** ($20/month), you can change the cron
+schedule in `vercel.json` to `"*/5 * * * *"` (every 5 minutes) or even
+`"* * * * *"` (every minute). Hobby plans will reject these at deploy time.
+
+### External schedulers (all plans)
+
+For more frequent updates on any plan, point an external scheduler at the
+ingestion endpoint:
+
+```
+GET https://<your-app>.vercel.app/api/cron/ingest
+Authorization: Bearer <CRON_SECRET>
+```
+
+Services like [cron-job.org](https://cron-job.org) (free), GitHub Actions, or
+UptimeRobot can hit this endpoint on any cadence.
+
+### Manual ingestion
+
+On-demand ingestion is always available:
+- `POST /api/ingest/run` (requires `Authorization: Bearer $CRON_SECRET`)
+- `POST /api/ingest/trigger` (no secret required, rate-limited to 1 per 2 min)
+
+The dashboard UI also shows a "Fetching live data..." toast when auto-ingest
+is running, so the operator knows data is being pulled.
 
 ## Step 5 — Verify
 

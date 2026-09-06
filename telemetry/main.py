@@ -16,11 +16,16 @@ Routes
     GET  /health                  liveness (probe-friendly, always cheap)
     GET  /api/health              same, under /api for the same-origin rewrite
     GET  /api/telemetry/trusted   THE dashboard read: the trusted document,
-                                  rebuilt from `vehicle_state` on every call
+                                  rebuilt from `vehicle_state` on every call.
+                                  AUTO-INGEST: if the DB is empty or data is
+                                  stale (>10 min), triggers an ingestion cycle
+                                  automatically before responding.
     POST /api/provision-site      register a twin site (append-only table)
     GET  /api/provisioned-sites   list what was provisioned
     POST /api/ingest/run          one extraction cycle: vendor API -> validate
                                   -> Neon upsert (Bearer-protected)
+    POST /api/ingest/trigger      dashboard-triggered ingestion (no CRON_SECRET
+                                  required, rate-limited to 1 per 2 min)
     GET  /api/cron/ingest         the Vercel Cron entry point; same cycle
     POST /api/ingest/upload       REMOVED -- 410 Gone (serverless filesystems
                                   are ephemeral; ingest means "into Neon")
@@ -229,6 +234,115 @@ def health() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # the dashboard read
 # ---------------------------------------------------------------------------
+def _maybe_auto_ingest(settings: Settings, row_count: int) -> bool:
+    """Run an ingestion cycle if the DB is empty or data is very stale.
+
+    This is what makes the dashboard show real data on first visit: when the
+    operator deploys with credentials configured, the first dashboard load
+    triggers an ingestion cycle automatically instead of showing an empty
+    "Waiting" state forever.
+
+    Returns True if an ingestion cycle ran (data may now be in the DB).
+    Returns False if no ingestion was needed or it could not run.
+    """
+    # Only auto-ingest if credentials are configured
+    if not settings.api_secret_key or not settings.api_passcode:
+        return False
+
+    # Check if we need to trigger ingestion
+    should_ingest = False
+
+    # Case 1: DB is completely empty (first deploy)
+    if row_count == 0:
+        should_ingest = True
+        log.info("auto-ingest: database empty, triggering ingestion cycle")
+
+    # Case 2: Last cycle was more than 10 minutes ago (data is very stale)
+    else:
+        last = _state.get("last_cycle")
+        if isinstance(last, dict):
+            finished_at = last.get("finished_at")
+            if finished_at:
+                try:
+                    last_time = datetime.fromisoformat(finished_at)
+                    age_seconds = (datetime.now(timezone.utc) - last_time).total_seconds()
+                    if age_seconds > 600:  # 10 minutes
+                        should_ingest = True
+                        log.info("auto-ingest: data is %.0f seconds stale, triggering refresh", age_seconds)
+                except (ValueError, TypeError):
+                    pass
+        else:
+            # No cycle has run on this instance yet, and DB has data from a previous instance
+            # Check if we've been up for a while without running a cycle
+            last_started = _state.get("last_started", 0.0)
+            if last_started == 0.0:
+                # This instance hasn't run any cycle yet — trigger one
+                should_ingest = True
+                log.info("auto-ingest: no cycle run on this instance yet, triggering fresh data")
+
+    if not should_ingest:
+        return False
+
+    # Respect the cooldown
+    cooldown = max(settings.ingest_min_interval_seconds, 0.0)
+    with _cycle_lock:
+        last_started = float(_state.get("last_started") or 0.0)
+    if cooldown and last_started and (time.monotonic() - last_started) < cooldown:
+        log.debug("auto-ingest: skipped (cooldown %.0fs)", time.monotonic() - last_started)
+        return False
+
+    # Try to run an ingestion cycle (non-blocking if another is already running)
+    if not _ingest_lock.acquire(blocking=False):
+        log.debug("auto-ingest: skipped (another cycle is running)")
+        return False
+
+    try:
+        log.info("auto-ingest: starting ingestion cycle")
+        factory = _session_factory()
+        session = factory()
+        try:
+            _ensure_schema_once()
+            client, tokens, extractor = _ingest_components(settings)
+            report = extractor.run_cycle(session)
+            log.info("auto-ingest: %s", report.summary())
+            # Update the cycle state
+            cycle = {
+                "ok": True,
+                "trigger": "auto-read",
+                "cycle_seconds": report.duration_ms / 1000.0,
+                "summary": {
+                    "seen": report.seen,
+                    "accepted": report.accepted,
+                    "rejected": report.rejected,
+                    "states_written": report.write.states_written,
+                    "history_written": report.write.history_written,
+                    "unchanged_skipped": report.write.skipped_unchanged,
+                    "stale_skipped": report.write.states_skipped_stale,
+                    "detail_ok": report.detail_ok,
+                    "detail_failed": report.detail_failed,
+                    "resolved_date": report.resolved_date,
+                    "date_source": report.date_source,
+                    "date_probes": report.date_probes,
+                },
+                "report_line": report.summary(),
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+            }
+            with _cycle_lock:
+                _state["last_cycle"] = cycle
+            return True
+        except AuthRejectedError as exc:
+            _reset_ingest_components()
+            log.error("auto-ingest: auth rejected: %s", exc)
+            return False
+        except Exception as exc:
+            log.warning("auto-ingest: cycle failed: %s: %s", exc.__class__.__name__, exc)
+            return False
+        finally:
+            session.close()
+    finally:
+        _ingest_lock.release()
+
+
 @app.get(
     "/api/telemetry/trusted",
     summary="Serve the latest validated telemetry document, rebuilt from Neon.",
@@ -241,6 +355,11 @@ def trusted_telemetry(db: Session = Depends(get_db)) -> JSONResponse:
     snapshot is what the dashboard renders.  Per-parameter verdicts
     (``field_status``) were persisted at ingest time by the validator; nothing
     is re-invented or re-validated here, and no local file is involved.
+
+    AUTO-INGEST: When the database is empty or data is very stale (>10 min),
+    this endpoint automatically triggers an ingestion cycle to pull fresh
+    data from the upstream API. This ensures the dashboard shows real data
+    on first visit without waiting for the cron job.
 
     ``no-store`` because the whole point is that a cycle five seconds ago is
     already stale; the Next.js layer applies its own short revalidate window.
@@ -255,14 +374,36 @@ def trusted_telemetry(db: Session = Depends(get_db)) -> JSONResponse:
     except SQLAlchemyError as exc:
         raise HTTPException(status_code=503, detail=f"Database unreachable: {exc}") from exc
 
+    row_count = len(rows)
+
+    # AUTO-INGEST: If DB is empty or data is stale, trigger ingestion
+    auto_ingested = False
+    if settings.database_url:  # Only if DB is configured
+        try:
+            auto_ingested = _maybe_auto_ingest(settings, row_count)
+            # If we ran an ingestion, re-read from DB to get the fresh data.
+            # Expire the session's state first to ensure we see the newly committed data
+            # (the auto-ingest ran in a separate session and committed its changes).
+            if auto_ingested:
+                db.expire_all()
+                rows = list(db.execute(select(VehicleState)).scalars())
+                row_count = len(rows)
+                log.info("auto-ingest: re-read %d vehicles from DB after ingestion", row_count)
+        except Exception as exc:
+            # Auto-ingest must never break the read endpoint
+            log.warning("auto-ingest: failed safely: %s", exc)
+
     if not rows:
+        reason = (
+            "No vehicles in the database yet. "
+            + ("Ingestion was attempted but returned no data. " if auto_ingested else "")
+            + "Check API_SECRET_KEY, API_PASSCODE, and API_BASE_URL are configured correctly. "
+            + "The cron job and auto-ingest work together to keep data fresh."
+        )
         payload = empty_document(
             settings_tz=settings.tz,
             require_all_fields=settings.require_all_fields,
-            reason=(
-                "No vehicles in the database yet. Trigger an ingestion cycle "
-                "(POST /api/ingest/run, or wait for the cron job) to pull the fleet."
-            ),
+            reason=reason,
             generated_at=generated_at,
         )
     else:
@@ -282,6 +423,7 @@ def trusted_telemetry(db: Session = Depends(get_db)) -> JSONResponse:
             # Lets the caller log ingest lag without parsing the body.
             "X-Document-Generated-At": generated_at.isoformat(),
             "X-Document-Vehicles": str(len(payload.get("vehicles", []))),
+            "X-Auto-Ingest": "true" if auto_ingested else "false",
         },
     )
 
@@ -428,6 +570,50 @@ def ingest_run(request: Request) -> dict[str, Any]:
 def cron_ingest(request: Request) -> dict[str, Any]:
     _authorize_ingest(request)
     return _ingest_endpoint(trigger="cron")
+
+
+# Rate limit state for the dashboard trigger endpoint
+_trigger_rate_limit = {"last_trigger": 0.0}
+_TRIGGER_COOLDOWN_SECONDS = 120.0  # 2 minutes between dashboard triggers
+
+
+@app.post(
+    "/api/ingest/trigger",
+    summary="Dashboard-triggered ingestion (no CRON_SECRET required, rate-limited).",
+)
+def trigger_ingest(request: Request) -> dict[str, Any]:
+    """Lightweight ingestion trigger for the dashboard UI.
+
+    Unlike POST /api/ingest/run, this endpoint does NOT require CRON_SECRET.
+    It is rate-limited to one trigger per 2 minutes per serverless instance
+    to prevent abuse. This is what the dashboard's auto-ingest UI calls when
+    it detects the "waiting" state (empty database on first deploy).
+
+    The actual ingestion runs inline (same as /api/ingest/run), so the response
+    is slow (10-30 seconds) but the dashboard shows a loading state.
+    """
+    settings = _settings()
+
+    # Rate limit check
+    now = time.monotonic()
+    if (now - _trigger_rate_limit["last_trigger"]) < _TRIGGER_COOLDOWN_SECONDS:
+        remaining = _TRIGGER_COOLDOWN_SECONDS - (now - _trigger_rate_limit["last_trigger"])
+        raise HTTPException(
+            status_code=429,
+            detail=f"Ingestion was triggered recently. Wait {remaining:.0f}s before trying again.",
+        )
+
+    # Validate that credentials are configured
+    try:
+        settings.validate_required()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    # Mark that we're triggering (for rate limiting)
+    _trigger_rate_limit["last_trigger"] = now
+
+    # Run the ingestion cycle
+    return _ingest_endpoint(trigger="dashboard")
 
 
 @app.post("/api/ingest/upload", include_in_schema=False)
