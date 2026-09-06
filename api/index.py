@@ -36,10 +36,19 @@ import sys
 from pathlib import Path
 from typing import Any
 
-# Make the repository root importable regardless of where the platform puts the
-# function (cwd is normally the deployment root; this also covers flat layouts).
-_ROOT = Path(__file__).resolve().parent.parent
-for candidate in (_ROOT, _ROOT.parent):
+# Make the repository-root `telemetry` package importable regardless of how
+# the platform lays out the bundle: entry at <bundle>/api/index.py with the
+# package traced to <bundle>/, copied under <bundle>/api/, or the whole
+# repository rooted one level up.  `vercel.json` also pins
+# functions."api/index.py".includeFiles = "telemetry/**" so the package ships
+# with the function even when static import tracing misses it.
+_HERE = Path(__file__).resolve().parent
+_CANDIDATES = (
+    _HERE.parent,  # <bundle>/  (entry at <bundle>/api/index.py)
+    _HERE,         # <bundle>/api/  (package copied beside the entrypoint)
+    _HERE.parent.parent,  # <bundle>/../ repo checked out one level up
+)
+for candidate in _CANDIDATES:
     if (candidate / "telemetry").is_dir() and str(candidate) not in sys.path:
         sys.path.insert(0, str(candidate))
 
