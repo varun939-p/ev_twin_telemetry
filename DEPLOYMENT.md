@@ -53,16 +53,22 @@ tier accepts. Pro users: see "Cron cadence" below for the 5-minute heartbeat.
 
 1. Import the repository. **Root Directory stays at the repository root** —
    the Next.js app lives at the root, and Vercel auto-detects it.
+
+   > ⚠️ **Migrating the pre-existing `ev-twin-telemetry` project?** Its Root
+   > Directory is still set to `frontend` — a directory this branch DELETES.
+   > Until you clear it, every deployment fails instantly and no config change
+   > helps. Fix it once:
+   > **Settings → General → Root Directory → Edit → clear the value (leave
+   > empty) → Save**, then **Deployments → latest → ⋯ → Redeploy**.
+   > (Confirmed via the Vercel GitHub app's status payload:
+   > `"rootDirectory": "frontend"`.)
 2. That's it for the build. `api/index.py` is discovered automatically and
    built with the Python runtime; `api/requirements.txt` is its dependency
    list (kept separate from the root `requirements.txt`, which also carries
-   dev tooling). `vercel.json` pins the function's `maxDuration: 60` /
-   `memory: 1024`, registers the cron and sets the security headers. 60 s is
-   the ceiling a Hobby project without Fluid compute accepts (values above it
-   fail the build); one ingestion cycle finishes in a few seconds, and a
-   cycle that ever outlives the ceiling is retried idempotently by the next
-   cron/on-demand run. On Pro with Fluid compute you can raise it (up to
-   800 s) by editing the `functions` block in `vercel.json`.
+   dev tooling). Platform defaults cover the rest — on Hobby that is a 300 s
+   function ceiling and 2 GB memory, far above what one ingestion cycle needs
+   (~seconds, idempotent on retry). `vercel.json` registers the cron and sets
+   the security headers.
 
 ## Step 3 — Environment variables
 
