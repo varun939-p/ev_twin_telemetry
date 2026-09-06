@@ -14,11 +14,11 @@ engine at a staging host or the local mock server.
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -180,6 +180,15 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------ metrics
     metrics_enabled: bool = False
     metrics_port: int = Field(default=9464, ge=1, le=65535)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _strip_empty_strings(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            # If an environment variable is set to an empty string, discard it so
+            # Pydantic uses the field's default value instead of failing type parsing.
+            return {k: v for k, v in data.items() if not (isinstance(v, str) and v.strip() == "")}
+        return data
 
     @field_validator("database_url", mode="before")
     @classmethod
