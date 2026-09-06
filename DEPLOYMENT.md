@@ -56,8 +56,13 @@ tier accepts. Pro users: see "Cron cadence" below for the 5-minute heartbeat.
 2. That's it for the build. `api/index.py` is discovered automatically and
    built with the Python runtime; `api/requirements.txt` is its dependency
    list (kept separate from the root `requirements.txt`, which also carries
-   dev tooling). `vercel.json` pins the function's `maxDuration: 120` /
-   `memory: 1024`, registers the cron and sets the security headers.
+   dev tooling). `vercel.json` pins the function's `maxDuration: 60` /
+   `memory: 1024`, registers the cron and sets the security headers. 60 s is
+   the ceiling a Hobby project without Fluid compute accepts (values above it
+   fail the build); one ingestion cycle finishes in a few seconds, and a
+   cycle that ever outlives the ceiling is retried idempotently by the next
+   cron/on-demand run. On Pro with Fluid compute you can raise it (up to
+   800 s) by editing the `functions` block in `vercel.json`.
 
 ## Step 3 — Environment variables
 
