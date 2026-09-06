@@ -66,3 +66,27 @@ it("honors an explicit standalone TELEMETRY_API_URL override", async () => {
   await loadTelemetry();
   expect(fetcher.mock.calls.every(([url]) => url.startsWith("https://python.example.test/api/"))).toBe(true);
 });
+
+it("falls back to default api paths when Vercel environment variables are empty strings", async () => {
+  vi.stubEnv("VERCEL", "1");
+  vi.stubEnv("TELEMETRY_DOC_PATH", "  ");
+  vi.stubEnv("TELEMETRY_HEALTH_PATH", "");
+  const fetcher = vi.fn(async (url: string) => Response.json(url.endsWith("/health") ? { status: "ok", database: "up", ingestion } : doc));
+  vi.stubGlobal("fetch", fetcher);
+  await loadTelemetry();
+  expect(fetcher.mock.calls.some(([url]) => url === "https://fleet.example.test/api/health")).toBe(true);
+  expect(fetcher.mock.calls.some(([url]) => url === "https://fleet.example.test/api/telemetry/trusted")).toBe(true);
+});
+
+it("safely handles HTML error responses without unhandled SyntaxError", async () => {
+  vi.stubEnv("VERCEL", "1");
+  const fetcher = vi.fn(async () => new Response("<!DOCTYPE html><html>404</html>", {
+    status: 200,
+    headers: { "content-type": "text/html" },
+  }));
+  vi.stubGlobal("fetch", fetcher);
+  const result = await loadTelemetry();
+  expect(result.source).toBe("waiting");
+  expect(result.note).toContain("non-JSON");
+});
+

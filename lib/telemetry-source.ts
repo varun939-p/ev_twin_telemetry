@@ -61,6 +61,12 @@ interface SourceConfig {
   timeoutMs: number;
 }
 
+function cleanPath(raw: string | undefined, fallback: string): string {
+  const trimmed = raw?.trim();
+  if (!trimmed) return fallback;
+  return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+}
+
 function readConfig(): SourceConfig {
   const env = process.env;
   return {
@@ -68,8 +74,8 @@ function readConfig(): SourceConfig {
     // Python function in the same Vercel project. In local development the
     // absolute URL points at `next start` itself, whose rewrite proxies the
     // call on to `uvicorn telemetry.main:app`.
-    docPath: env.TELEMETRY_DOC_PATH ?? "/api/telemetry/trusted",
-    healthPath: env.TELEMETRY_HEALTH_PATH ?? "/api/health",
+    docPath: cleanPath(env.TELEMETRY_DOC_PATH, "/api/telemetry/trusted"),
+    healthPath: cleanPath(env.TELEMETRY_HEALTH_PATH, "/api/health"),
     // How long a rendered page may serve a cached document. 30s keeps the
     // dashboard at most one cron window behind, and 100 concurrent viewers
     // cost one function invocation.
@@ -101,6 +107,31 @@ async function resolveBaseUrl(): Promise<string> {
     || (process.env.VERCEL === "1" ? "" : process.env.BACKEND_URL?.trim())
     || "";
   if (configured) return configured.replace(/\/+$/, "");
+
+  // On Vercel, server components run inside serverless functions. Outgoing SSR
+  // fetches must hit the public HTTPS domain so Vercel's edge routes /api/* to
+  // the Python serverless function (api/index.py).
+  if (process.env.VERCEL === "1") {
+    try {
+      const h = await headers();
+      const forwardedHost = h.get("x-forwarded-host")?.split(",")[0]?.trim();
+      if (forwardedHost && !forwardedHost.startsWith("localhost") && !forwardedHost.startsWith("127.")) {
+        return `https://${forwardedHost}`;
+      }
+      const host = h.get("host")?.trim();
+      if (host && !host.startsWith("localhost") && !host.startsWith("127.")) {
+        return `https://${host}`;
+      }
+    } catch {
+      // Outside a request context (build-time prerender)
+    }
+    const vercelHost = (
+      process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim() ||
+      process.env.VERCEL_URL?.trim() ||
+      "ev-twin-telemetry.vercel.app"
+    );
+    return `https://${vercelHost.replace(/^https?:\/\//, "")}`;
+  }
 
   try {
     const h = await headers();
@@ -156,6 +187,10 @@ async function probeLiveness(cfg: SourceConfig): Promise<HealthProbe> {
       cfg.timeoutMs,
     );
     if (!res.ok) throw new Error("health endpoint did not answer");
+    const contentType = res.headers.get("content-type") ?? "";
+    if (contentType && !contentType.includes("application/json") && !contentType.includes("application/problem+json")) {
+      throw new Error(`health endpoint returned non-JSON (${contentType})`);
+    }
     const body: unknown = await res.json();
     if (!isRecord(body) || body.status !== "ok") throw new Error("invalid health response");
     // /health intentionally returns HTTP 200 even if Neon is down. The body,
@@ -319,6 +354,14 @@ export const loadTelemetry = cache(async function loadTelemetry(): Promise<Telem
           ? ` The control plane says: ${detail.detail}`
           : "";
       return waitingResult(`Control plane returned ${res.status} for ${cfg.docPath}.${sentence}`, (await healthPromise).ingestion);
+    }
+
+    const contentType = res.headers.get("content-type") ?? "";
+    if (contentType && !contentType.includes("application/json") && !contentType.includes("application/problem+json")) {
+      return waitingResult(
+        `Control plane returned non-JSON (${contentType}) for ${cfg.docPath}. Check route configuration.`,
+        (await healthPromise).ingestion,
+      );
     }
 
     const payload: unknown = await res.json();
