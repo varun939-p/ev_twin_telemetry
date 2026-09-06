@@ -310,11 +310,13 @@ stale or missing data for current data.
 
 Ingestion is pull-based and stateless, exactly as a serverless platform
 requires: the Vercel Cron job (`vercel.json`) calls `GET /api/cron/ingest`
-every five minutes (Pro plan; Hobby caps crons at once per day — use an
-external scheduler for tighter cadences, see `DEPLOYMENT.md`), which runs ONE
-extraction cycle — vendor API → validation → Neon upsert — and returns its
-summary. `POST /api/ingest/run` does the same on demand with the same Bearer
-secret. The old `python -m telemetry run` loop still exists for
+once a day — the tightest schedule Vercel's Hobby tier accepts, which keeps
+the deployment check green; on Pro, set the schedule to `*/5 * * * *` (or
+point any external scheduler at the route on any cadence, see
+`DEPLOYMENT.md`). Each call runs ONE extraction cycle — vendor API →
+validation → Neon upsert — and returns its summary. `POST /api/ingest/run`
+does the same on demand with the same Bearer secret. The old
+`python -m telemetry run` loop still exists for
 dedicated-server/Docker deployments, sharing every line of engine code.
 
 Because every view iterates `PARAM_ORDER` and reads `field_status`, unlocking

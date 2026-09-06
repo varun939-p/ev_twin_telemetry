@@ -16,7 +16,7 @@
                      │  api/index.py  — Python serverless function      │
                      │      │  telemetry.main.py (FastAPI)              │
    Vercel Cron ────► │      │   GET  /api/cron/ingest  (Bearer secret)  │
-   (every 5 min*)    │      │   GET  /api/telemetry/trusted             │
+   (daily*, Pro: 5m) │      │   GET  /api/telemetry/trusted             │
                      │      ▼                                          │
                      │  Neon PostgreSQL  ◄── vendor pull on demand      │
                      └──────────────────────────────────┬───────────────┘
@@ -24,7 +24,8 @@
                                         https://track.blueenergymotors.com
 ```
 
-\* Pro plan. Hobby allows one cron run per day — see "Cron cadence" below.
+\* Shipped schedule is daily (07:13 UTC) — the most frequent Vercel's Hobby
+tier accepts. Pro users: see "Cron cadence" below for the 5-minute heartbeat.
 
 ---
 
@@ -78,22 +79,26 @@ client import into a build error.
 
 ## Step 4 — Cron cadence
 
-`vercel.json` ships `"*/5 * * * *"` on `/api/cron/ingest` — five-minute fleet
-refreshes, which is the product's heartbeat.
+`vercel.json` ships `"13 7 * * *"` on `/api/cron/ingest` — **once per day,
+07:13 UTC (≈13:13 IST)**. That is the most frequent schedule Vercel's Hobby
+plan accepts (Hobby hard-rejects any expression that fires more than once per
+day at deploy time, so a `*/5 * * * *` here breaks the build check — which is
+exactly what the first deployment attempt hit). The daily run keeps a demo
+warm; it is NOT the product's intended heartbeat. On-demand ingestion is
+unaffected: `POST /api/ingest/run` works at any time with the Bearer secret.
 
-- **Hobby plan:** cron expressions may only fire **once per day**; a `*/5`
-  schedule fails at deploy time. Either (a) replace the schedule with a daily
-  one (e.g. `"17 4 * * *"`) while evaluating, or (b) delete the `crons` block
-  and point any external scheduler (cron-job.org, GitHub Actions, UptimeRobot)
-  at:
+To get the real five-minute heartbeat:
+
+- **Pro plan:** change the schedule in `vercel.json` to `"*/5 * * * *"`.
+  Cron hits only run against production deployments, never previews.
+- **Hobby plan (no upgrade):** delete the `crons` block and point any external
+  scheduler (cron-job.org, GitHub Actions, UptimeRobot) at the same route on
+  any cadence you want:
 
   ```
   GET https://<your-app>.vercel.app/api/cron/ingest
   Authorization: Bearer <CRON_SECRET>
   ```
-
-- **Pro plan:** the shipped schedule works as-is. Cron hits only run against
-  production deployments, never previews.
 
 ## Step 5 — Verify
 

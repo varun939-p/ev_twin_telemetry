@@ -404,7 +404,9 @@ request. The refactor keeps every line of engine code and changes only the
 *scheduling* and the *delivery*:
 
 * **Scheduling:** Vercel Cron (`vercel.json`) calls `GET /api/cron/ingest`
-  every five minutes; `POST /api/ingest/run` triggers the same single cycle on
+  once a day — the most frequent schedule the Hobby tier accepts; Pro can set
+  `*/5 * * * *` and external schedulers can hit the route at any cadence.
+  `POST /api/ingest/run` triggers the same single cycle on
   demand. Each call runs `TelemetryExtractor.run_cycle()` exactly once — the
   same method the loop calls — so validation, unchanged-frame skipping and
   live-date resolution behave identically in both worlds. Per-warm-instance
