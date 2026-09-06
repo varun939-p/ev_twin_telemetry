@@ -181,6 +181,18 @@ class Settings(BaseSettings):
     metrics_enabled: bool = False
     metrics_port: int = Field(default=9464, ge=1, le=65535)
 
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def _normalize_database_url(cls, v: str | None) -> str | None:
+        if not v or not isinstance(v, str):
+            return v
+        v = v.strip()
+        if v.startswith("postgres://"):
+            return "postgresql+psycopg://" + v[len("postgres://"):]
+        if v.startswith("postgresql://"):
+            return "postgresql+psycopg://" + v[len("postgresql://"):]
+        return v
+
     @field_validator("api_date", "api_vehicle_filter", mode="before")
     @classmethod
     def _empty_filter(cls, value: str | None) -> str | None:

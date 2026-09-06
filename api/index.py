@@ -37,7 +37,13 @@ for candidate in _CANDIDATES:
     if (candidate / "telemetry").is_dir() and str(candidate) not in sys.path:
         sys.path.insert(0, str(candidate))
 
-from telemetry.main import app as _control_plane  # noqa: E402  (path set up first)
+_startup_error: str | None = None
+try:
+    from telemetry.main import app as _control_plane  # noqa: E402  (path set up first)
+except Exception:  # pragma: no cover
+    import traceback
+    _startup_error = traceback.format_exc()
+    _control_plane = None
 
 _MOUNTS = ("/api/index.py", "/api/index")
 _ROUTE_QUERY = "__telemetry_path"
@@ -81,8 +87,29 @@ class PathNormalizer:
         await self._app(scope, receive, send)
 
 
-app = PathNormalizer(_control_plane)
+async def _error_app(scope: dict, receive: Any, send: Any) -> None:
+    if scope.get("type") == "http":
+        import json
+        body = json.dumps({
+            "ok": False,
+            "status": "startup_error",
+            "detail": "FastAPI control plane failed to initialize on cold start.",
+            "traceback": _startup_error,
+        }).encode("utf-8")
+        await send({
+            "type": "http.response.start",
+            "status": 500,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode("ascii")),
+            ],
+        })
+        await send({"type": "http.response.body", "body": body})
 
-# `app` is what the runtime detects.  Expose the raw ASGI app too, for tooling
-# that wants the FastAPI instance (tests, uvicorn --dev).
-control_plane = _control_plane
+
+if _control_plane is not None:
+    app = PathNormalizer(_control_plane)
+    control_plane = _control_plane
+else:
+    app = _error_app
+    control_plane = None

@@ -3,7 +3,6 @@
   "regions": ["bom1"],
   "functions": {
     "api/index.py": {
-      "runtime": "@vercel/python@4.7.0",
       "includeFiles": "telemetry/**",
       "maxDuration": 60
     }
