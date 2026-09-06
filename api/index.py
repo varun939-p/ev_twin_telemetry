@@ -107,9 +107,6 @@ async def _error_app(scope: dict, receive: Any, send: Any) -> None:
         await send({"type": "http.response.body", "body": body})
 
 
-if _control_plane is not None:
-    app = PathNormalizer(_control_plane)
-    control_plane = _control_plane
-else:
-    app = _error_app
-    control_plane = None
+_handler = PathNormalizer(_control_plane) if _control_plane is not None else _error_app
+app = _handler
+control_plane = _control_plane
