@@ -39,7 +39,7 @@ import {
 } from "@/lib/fleet";
 import { SOC_CRITICAL, assetStatus, medianFrameAgeHours } from "@/lib/fleet-metrics";
 import type { InboundSeed, PackSeed } from "@/lib/site-model";
-import { numericValue, type TrustedTelemetryDocument } from "@/lib/trusted-telemetry";
+import { numericValue, parseTimestampMs, type TrustedTelemetryDocument } from "@/lib/trusted-telemetry";
 
 const DRILL_DOWNS = [
   { href: "/digital-twin/truck-telemetry", label: "Truck Telemetry", hint: "Carrier map, alerts, 24-param detail" },
@@ -64,7 +64,29 @@ export default function CentralView({ data }: { data: TrustedTelemetryDocument }
   const stationId = station?.id ?? "";
   const registry = useMemo(() => batteryRegistry(vehicles), [vehicles]);
 
-  const medianAgeHours = useMemo(() => medianFrameAgeHours(vehicles), [vehicles]);
+  /**
+   * Median frame age, computed deterministically so the SERVER and CLIENT
+   * always render the same number (the hydration-mismatch fix).
+   *
+   * Two non-negotiable anchors, not one:
+   *   1. `medianFrameAgeHours` reads each `observed_at` through
+   *      `parseTimestampMs`, which treats zone-less control-plane timestamps
+   *      as UTC. Without that, a UTC server (Vercel SSR) and an IST browser
+   *      (Hyderabad) parse the same naive string to epochs 5.5 h apart.
+   *   2. The reference instant is the snapshot's OWN `generated_at`, NOT
+   *      `Date.now()`. `generated_at` is a fixed UTC instant serialised into
+   *      the document on the server and shipped with it, so the elapsed hours
+   *      are computed against a value both runtimes share. `Date.now()` would
+   *      drift by however long hydration takes and disagree by microseconds
+   *      even with the parse fix. `LiveRefresh` re-fetches every 20 s anyway,
+   *      so a fresh `generated_at` (and therefore a fresh age) arrives on the
+   *      normal cadence — no client-side ticking is needed.
+   */
+  const medianAgeHours = useMemo(() => {
+    const nowMs = parseTimestampMs(data.generated_at);
+    if (!Number.isFinite(nowMs)) return medianFrameAgeHours(vehicles);
+    return medianFrameAgeHours(vehicles, new Date(nowMs));
+  }, [vehicles, data.generated_at]);
 
   /** Packs whose nearest hub is the selected site — real identities + SOC. */
   const sitePacks = useMemo<PackSeed[]>(

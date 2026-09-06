@@ -2,6 +2,8 @@
 
 import { useSyncExternalStore } from "react";
 
+import { parseTimestampMs } from "@/lib/trusted-telemetry";
+
 /**
  * OBSERVED SOC HISTORY.
  *
@@ -67,7 +69,7 @@ export function recordSocSamples(
 
   for (const frame of frames) {
     if (frame.soc === null || !frame.observedAt) continue;
-    const at = Date.parse(frame.observedAt);
+    const at = parseTimestampMs(frame.observedAt);
     if (!Number.isFinite(at)) continue;
 
     const series = history.get(frame.vehicleId) ?? [];
