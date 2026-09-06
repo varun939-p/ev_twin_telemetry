@@ -16,7 +16,7 @@
                      │  api/index.py  — Python serverless function      │
                      │      │  telemetry.main.py (FastAPI)              │
    Vercel Cron ────► │      │   GET  /api/cron/ingest  (Bearer secret)  │
-   (every 5 min)     │      │   GET  /api/telemetry/trusted             │
+   (daily, Pro: *)   │      │   GET  /api/telemetry/trusted             │
                      │      │   ↑ AUTO-INGEST: triggers ingestion if    │
                      │      │   DB is empty or data is >10 min stale    │
                      │      ▼                                          │
@@ -89,16 +89,16 @@ client import into a build error.
 
 ## Step 4 — Cron cadence & auto-ingest
 
-`vercel.json` ships `"*/5 * * * *"` on `/api/cron/ingest` — **every 5 minutes**.
-This is the recommended cadence for keeping fleet data fresh.
+`vercel.json` ships `"13 7 * * *"` on `/api/cron/ingest` — **once per day at
+07:13 UTC (≈12:43 IST)**. This is compatible with all Vercel plans including
+Hobby (which rejects any cron expression that fires more than once per day).
 
-> **Hobby plan limitation:** Vercel's Hobby tier hard-rejects cron expressions
-> that fire more than once per day. If your deploy fails with a cron schedule
-> error, change `"*/5 * * * *"` to `"13 7 * * *"` (once per day at 07:13 UTC).
-> The **auto-ingest mechanism** (see below) ensures your dashboard still shows
-> live data on first visit, regardless of the cron schedule.
+> **Why once per day?** The **auto-ingest mechanism** (below) is the primary
+> way data stays fresh — it triggers automatically whenever the dashboard is
+> loaded and the data is >10 minutes stale. The cron job is a safety net that
+> keeps the database warm even when no one is viewing the dashboard.
 
-### Auto-ingest (NEW — solves the "empty dashboard" problem)
+### Auto-ingest (the primary data freshness mechanism)
 
 The dashboard now **automatically triggers ingestion** when it detects:
 - The database is empty (first deploy, no data yet)
@@ -109,11 +109,30 @@ This means:
    upstream API → shows live metrics within seconds. No waiting for cron.
 2. **Subsequent visits:** Dashboard reads from DB. If data is >10 min stale,
    auto-ingest triggers a fresh pull before responding.
-3. **Cron backup:** The scheduled cron job keeps data fresh between visits.
+3. **Cron backup:** The daily cron job keeps data warm when no one is viewing.
 
 The auto-ingest has a **45-second cooldown** to prevent rapid-fire requests to
 the upstream API. This ensures the dashboard is never more than ~10 minutes
-behind, even without a frequent cron schedule.
+behind, even with a daily cron schedule.
+
+### Upgrading to a more frequent cron (Pro plan only)
+
+If you are on the **Vercel Pro plan** ($20/month), you can change the cron
+schedule in `vercel.json` to `"*/5 * * * *"` (every 5 minutes) or even
+`"* * * * *"` (every minute). Hobby plans will reject these at deploy time.
+
+### External schedulers (all plans)
+
+For more frequent updates on any plan, point an external scheduler at the
+ingestion endpoint:
+
+```
+GET https://<your-app>.vercel.app/api/cron/ingest
+Authorization: Bearer <CRON_SECRET>
+```
+
+Services like [cron-job.org](https://cron-job.org) (free), GitHub Actions, or
+UptimeRobot can hit this endpoint on any cadence.
 
 ### Manual ingestion
 
