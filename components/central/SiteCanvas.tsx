@@ -556,11 +556,16 @@ export default function SiteCanvas({
           const hovered = hoverId === charger.id;
           const label = charger.id === "charger-a" ? "Charger A" : "Charger B";
           const portColor = charger.totalKw > 0 ? "var(--ok)" : "var(--ink-3)";
+          const chargerBox = isoBox(c, 18, 12, 28);
           return (
             <g key={charger.id} {...linkProps(charger.id, "/digital-twin/charging-station", `${label} — open Charging Station`)}>
-              <polygon points={tile(c, 34, 24)} fill="var(--plate)" stroke={hovered ? "var(--accent)" : "var(--line-strong)"} strokeWidth={hovered ? 2 : 1} opacity=".65" />
-              <circle cx={c[0]} cy={c[1] - 8} r={6} fill="var(--surface-2)" stroke={portColor} strokeWidth="2" />
-              <circle cx={c[0]} cy={c[1] - 8} r={2.5} fill={portColor} className={charger.totalKw > 0 ? "pulse-soft" : ""} />
+              <polygon points={tile(c, 34, 24)} fill="var(--plate)" stroke={hovered ? "var(--accent)" : "var(--line-strong)"} strokeWidth={hovered ? 2 : 1} opacity=".75" />
+              <Solid box={chargerBox} top="var(--surface-2)" left="var(--surface-3)" right="var(--plate)" opacity={hovered ? 1 : 0.96} />
+              <polygon points={chargerBox.top} fill="var(--accent-soft)" stroke={portColor} strokeWidth="1.2" />
+              <rect x={chargerBox.crown[0] - 8} y={chargerBox.crown[1] - 15} width="16" height="8" rx="1.5" fill="var(--surface)" stroke="var(--accent)" strokeWidth="1" />
+              <circle cx={chargerBox.crown[0] - 6} cy={chargerBox.crown[1] + 8} r="3.5" fill="var(--surface-2)" stroke={portColor} strokeWidth="1.5" />
+              <circle cx={chargerBox.crown[0] + 6} cy={chargerBox.crown[1] + 8} r="3.5" fill="var(--surface-2)" stroke={portColor} strokeWidth="1.5" />
+              <circle cx={chargerBox.crown[0]} cy={chargerBox.crown[1] - 11} r="2" fill={portColor} className={charger.totalKw > 0 ? "pulse-soft" : ""} />
               <text x={c[0]} y={c[1] + 30} textAnchor="middle" style={{ fontSize: 11, fontWeight: 700 }} className="fill-[var(--ink-2)]">{label}</text>
             </g>
           );
