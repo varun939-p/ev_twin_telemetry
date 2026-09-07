@@ -37,7 +37,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { ModelBadge, Pill } from "@/components/ui/Pill";
 import type { SwapStation } from "@/lib/fleet";
-import { ROAD_DOCK_T, SITE_ASSETS, simulateSite, type InboundSeed, type PackSeed } from "@/lib/site-model";
+import { SITE_ASSETS, simulateSite, type InboundSeed, type PackSeed } from "@/lib/site-model";
 
 /* ------------------------------------------------------------ projection */
 
@@ -263,7 +263,6 @@ export default function SiteCanvas({
   });
 
   const truckPose = samplePath(ROAD, site.dock.roadT);
-  const apron = samplePath(ROAD, ROAD_DOCK_T).at;
   const truckVisible = site.dock.phase !== "clear";
 
   const ground = tile(GROUND, 340, 230);
@@ -593,9 +592,6 @@ export default function SiteCanvas({
                   </g>
                 );
               })}
-              <text x={c[0]} y={c[1] + 28} textAnchor="middle" style={{ fontSize: 10, fontWeight: 600 }} className="fill-[var(--ink-3)]">
-                {charger.label.replace("Dual-gun ", "")}
-              </text>
             </g>
           );
         })}
@@ -635,33 +631,23 @@ export default function SiteCanvas({
             {(() => {
               const [x, y] = truckPose.at;
               const heading = truckPose.heading;
-              const headingAngle = Math.atan2(heading[1], heading[0]) * 180 / Math.PI;
               const side: Pt = [-heading[1], heading[0]];
               const trailer = isoBox([x, y], 42, 20, 34);
               const cabCenter: Pt = [x + 44 * heading[0] * 0.9, y + 44 * heading[1] * 0.9];
               const cab = isoBox(cabCenter, 16, 18, 30);
               const docked = site.dock.phase === "swapping" || site.dock.phase === "docking" || site.dock.phase === "release";
-              const wheelPositions: Pt[] = [-28, -2, 25].flatMap((axle) => {
-                const axlePoint: Pt = [x + heading[0] * axle, y + heading[1] * axle + 18];
-                return [
-                  [axlePoint[0] + side[0] * 17, axlePoint[1] + side[1] * 17],
-                  [axlePoint[0] - side[0] * 17, axlePoint[1] - side[1] * 17],
-                ] as Pt[];
-              });
               return (
                 <g>
                   <ellipse cx={x} cy={y + 10} rx={58} ry={18} fill="#05070d" opacity={0.35} />
-                  {wheelPositions.map(([wx, wy], index) => (
-                    <g key={`truck-wheel-${index}`} transform={`rotate(${headingAngle} ${wx} ${wy})`}>
-                      <ellipse cx={wx} cy={wy} rx="9" ry="5" fill="#07090d" stroke="var(--line-strong)" strokeWidth="1.2" />
-                      <ellipse cx={wx} cy={wy} rx="3" ry="1.8" fill="var(--ink-3)" />
-                    </g>
-                  ))}
                   <Solid box={trailer} top={docked ? "var(--accent)" : "var(--info)"} left="var(--surface-3)" right="var(--plate)" />
                   <polygon points={trailer.top} fill="none" stroke="var(--accent-ink)" strokeWidth="1.2" />
                   <path d={`M ${x - heading[0] * 27} ${y - heading[1] * 27} L ${x + heading[0] * 27} ${y + heading[1] * 27}`} stroke="var(--accent-ink)" strokeWidth="2" opacity=".6" />
                   <Solid box={cab} top="var(--warn)" left="var(--surface-3)" right="var(--plate)" />
                   <polygon points={cab.top} fill="var(--accent-soft)" stroke="var(--info)" strokeWidth="1" opacity=".95" />
+                  <g aria-label="Truck cab headlights">
+                    <circle cx={cabCenter[0] + heading[0] * 16 + side[0] * 9} cy={cabCenter[1] + heading[1] * 16 + side[1] * 9 - 9} r="2.8" fill="#f6d58a" className="pulse-soft" />
+                    <circle cx={cabCenter[0] + heading[0] * 16 - side[0] * 9} cy={cabCenter[1] + heading[1] * 16 - side[1] * 9 - 9} r="2.8" fill="#f6d58a" className="pulse-soft" />
+                  </g>
                   <circle cx={cabCenter[0] + side[0] * 12} cy={cabCenter[1] + side[1] * 12 - 10} r="2.5" fill="var(--ok)" className="pulse-soft" />
                   <g aria-label="Truck battery and charging port">
                     <polygon points={tile([x, y + 17], 24, 8)} fill="var(--surface-3)" stroke="var(--line-strong)" strokeWidth="1" />
@@ -671,13 +657,6 @@ export default function SiteCanvas({
                   {docked && (
                     <>
                       <polygon points={trailer.top} fill="var(--accent)" filter="url(#glow)" className="pulse-emissive" />
-                      <path
-                        d={`M ${apron[0] - 46} ${apron[1] - 2} l 92 0`}
-                        stroke="var(--accent)"
-                        strokeWidth={2}
-                        strokeDasharray="5 5"
-                        className="energy-flow"
-                      />
                     </>
                   )}
                   <text x={x} y={trailer.crown[1] - 10} textAnchor="middle" style={{ fontSize: 10, fontWeight: 700 }} className="fill-[var(--ink)]">
