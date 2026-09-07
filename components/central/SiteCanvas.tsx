@@ -392,7 +392,7 @@ export default function SiteCanvas({
         ))}
 
         {/* -------------------------------------------------- grid pylon */}
-        <g {...staticProps("grid", "Grid feeder — 250 kW utility supply")}>
+        <g {...linkProps("grid", "/digital-twin/central", "Grid feeder — return to Central Dashboard")}>
           <path
             d={`M ${ANCHOR.pylon[0] - 18} ${ANCHOR.pylon[1] + 46} L ${ANCHOR.pylon[0] - 6} ${ANCHOR.pylon[1] - 40} L ${ANCHOR.pylon[0] + 6} ${ANCHOR.pylon[1] - 40} L ${ANCHOR.pylon[0] + 18} ${ANCHOR.pylon[1] + 46}`}
             fill="none"
@@ -558,7 +558,7 @@ export default function SiteCanvas({
           const hovered = hoverId === charger.id;
           const live = charger.totalKw > 0;
           return (
-            <g key={charger.id} {...staticProps(charger.id, `${charger.label} — facility asset`)}>
+            <g key={charger.id} {...linkProps(charger.id, "/digital-twin/charging-station", `${charger.label} — open Charging Station`)}>
               <polygon points={tile(c, 40, 32)} fill="var(--plate)" stroke="var(--line-strong)" strokeWidth={1} />
               <Solid box={box} top="var(--surface-2)" left="var(--surface-3)" right="var(--plate)" opacity={hovered ? 0.92 : 1} />
               {live && (
@@ -592,8 +592,10 @@ export default function SiteCanvas({
         })}
 
         {/* ---------------------------------------------------------- DG */}
-        <g {...staticProps("dg", "Backup diesel generator — facility asset")}>
+        <g {...linkProps("dg", "/digital-twin/dg-operations", "Backup diesel generator — open DG")}>
           <polygon points={tile(ANCHOR.dg, 76, 58)} fill="var(--plate)" stroke="var(--line-strong)" strokeWidth={1} />
+          <Solid box={isoBox(ANCHOR.dg, 76, 58, 6)} top="var(--surface-2)" left="var(--surface-3)" right="var(--plate)" />
+          <path d={`M ${ANCHOR.dg[0] - 44} ${ANCHOR.dg[1] + 6} h 88`} stroke="var(--line-strong)" strokeWidth="2" opacity=".8" />
           <Solid
             box={dgBox}
             top="var(--surface-2)"
@@ -623,14 +625,40 @@ export default function SiteCanvas({
           >
             {(() => {
               const [x, y] = truckPose.at;
+              const heading = truckPose.heading;
+              const headingAngle = Math.atan2(heading[1], heading[0]) * 180 / Math.PI;
+              const side: Pt = [-heading[1], heading[0]];
               const trailer = isoBox([x, y], 42, 20, 34);
-              const cab = isoBox([x + 44 * truckPose.heading[0] * 0.9, y + 44 * truckPose.heading[1] * 0.9], 16, 18, 30);
+              const cabCenter: Pt = [x + 44 * heading[0] * 0.9, y + 44 * heading[1] * 0.9];
+              const cab = isoBox(cabCenter, 16, 18, 30);
               const docked = site.dock.phase === "swapping" || site.dock.phase === "docking" || site.dock.phase === "release";
+              const wheelPositions: Pt[] = [-28, -2, 25].flatMap((axle) => {
+                const axlePoint: Pt = [x + heading[0] * axle, y + heading[1] * axle + 18];
+                return [
+                  [axlePoint[0] + side[0] * 17, axlePoint[1] + side[1] * 17],
+                  [axlePoint[0] - side[0] * 17, axlePoint[1] - side[1] * 17],
+                ] as Pt[];
+              });
               return (
                 <g>
-                  <ellipse cx={x} cy={y + 8} rx={54} ry={16} fill="var(--ink)" opacity={0.08} />
+                  <ellipse cx={x} cy={y + 10} rx={58} ry={18} fill="#05070d" opacity={0.35} />
+                  {wheelPositions.map(([wx, wy], index) => (
+                    <g key={`truck-wheel-${index}`} transform={`rotate(${headingAngle} ${wx} ${wy})`}>
+                      <ellipse cx={wx} cy={wy} rx="9" ry="5" fill="#07090d" stroke="var(--line-strong)" strokeWidth="1.2" />
+                      <ellipse cx={wx} cy={wy} rx="3" ry="1.8" fill="var(--ink-3)" />
+                    </g>
+                  ))}
                   <Solid box={trailer} top={docked ? "var(--accent)" : "var(--info)"} left="var(--surface-3)" right="var(--plate)" />
-                  <Solid box={cab} top="var(--ink-2)" left="var(--surface-3)" right="var(--plate)" />
+                  <polygon points={trailer.top} fill="none" stroke="var(--accent-ink)" strokeWidth="1.2" />
+                  <path d={`M ${x - heading[0] * 27} ${y - heading[1] * 27} L ${x + heading[0] * 27} ${y + heading[1] * 27}`} stroke="var(--accent-ink)" strokeWidth="2" opacity=".6" />
+                  <Solid box={cab} top="var(--warn)" left="var(--surface-3)" right="var(--plate)" />
+                  <polygon points={cab.top} fill="var(--accent-soft)" stroke="var(--info)" strokeWidth="1" opacity=".95" />
+                  <circle cx={cabCenter[0] + side[0] * 12} cy={cabCenter[1] + side[1] * 12 - 10} r="2.5" fill="var(--ok)" className="pulse-soft" />
+                  <g aria-label="Truck battery and charging port">
+                    <polygon points={tile([x, y + 17], 24, 8)} fill="var(--surface-3)" stroke="var(--line-strong)" strokeWidth="1" />
+                    <circle cx={x + side[0] * 22} cy={y + side[1] * 22 - 10} r="5" fill="var(--surface-2)" stroke="var(--accent)" strokeWidth="1.5" />
+                    <circle cx={x + side[0] * 22} cy={y + side[1] * 22 - 10} r="2" fill={docked ? "var(--ok)" : "var(--ink-3)"} />
+                  </g>
                   {docked && (
                     <>
                       <polygon points={trailer.top} fill="var(--accent)" filter="url(#glow)" className="pulse-emissive" />
