@@ -214,6 +214,7 @@ export function vehicleCity(vehicle: TrustedVehicle): { name: string; state: str
   const geo = vehicleGeo(vehicle);
   if (!geo) return null;
   const near = nearestCity(geo.lat, geo.lon);
+  if (!near) return null;
   return { name: near.name, state: near.state };
 }
 

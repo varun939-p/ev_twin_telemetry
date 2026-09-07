@@ -538,6 +538,7 @@ export const REFERENCE_CITIES: ReadonlyArray<{ name: string; state: string; lat:
   { name: "Hyderabad", state: "Telangana", lat: 17.385, lon: 78.4867 },
   { name: "Vijayawada", state: "Andhra Pradesh", lat: 16.5062, lon: 80.648 },
   { name: "Visakhapatnam", state: "Andhra Pradesh", lat: 17.6868, lon: 83.2185 },
+  { name: "Nellore", state: "Andhra Pradesh", lat: 14.4426, lon: 79.9865 },
   { name: "Chennai", state: "Tamil Nadu", lat: 13.0827, lon: 80.2707 },
   { name: "Bengaluru", state: "Karnataka", lat: 12.9716, lon: 77.5946 },
   { name: "Kochi", state: "Kerala", lat: 9.9312, lon: 76.2673 },
@@ -553,7 +554,10 @@ export function haversineKm(aLat: number, aLon: number, bLat: number, bLon: numb
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
-export function nearestCity(lat: number, lon: number) {
+export function nearestCity(lat: number, lon: number): { name: string; state: string; distanceKm: number } | null {
+  if (lat < INDIA_BBOX.latMin || lat > INDIA_BBOX.latMax || lon < INDIA_BBOX.lonMin || lon > INDIA_BBOX.lonMax) {
+    return null;
+  }
   let best = REFERENCE_CITIES[0];
   let bestKm = Number.POSITIVE_INFINITY;
   for (const city of REFERENCE_CITIES) {
@@ -585,7 +589,7 @@ export interface Cluster {
   lon: number;
   count: number;
   members: GeoPoint[];
-  city: { name: string; state: string; distanceKm: number };
+  city: { name: string; state: string; distanceKm: number } | null;
   avgSoc: number | null;
 }
 

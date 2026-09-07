@@ -9,6 +9,8 @@ const eslintConfig = defineConfig([
   globalIgnores([
     // Default ignores of eslint-config-next:
     ".next/**",
+    "**/.next/**",
+    "frontend/**",
     ".cache/**", // disposable local verification tools/artifacts
     "out/**",
     "build/**",

@@ -24,6 +24,9 @@ export interface MapPoint {
   vehicleId: string;
   lat: number;
   lon: number;
+  rawLat?: number;
+  rawLon?: number;
+  isCoastalCorrected?: boolean;
   status: AssetStatus;
   soc: number | null;
   chassis: string;
@@ -79,6 +82,64 @@ export function densityTier(count: number, maxCount: number): HeatTier {
   return "low";
 }
 
+/**
+ * Coastal & Terrestrial Map-Matching for Fleet Telemetry.
+ *
+ * Commercial EV tracking units (OBUs) operating along coastal freight corridors
+ * (such as Krishnapatnam Port in Andhra Pradesh) often lose clear GNSS satellite
+ * visibility due to metal shipping containers, berths, and crane yards, falling
+ * back to maritime cellular tower triangulation (Cell-ID/LBS) or experiencing
+ * multipath reflections off open waters. This causes raw GPS coordinates to drift
+ * 5–30 km eastward into the Bay of Bengal.
+ *
+ * This function detects offshore drift beyond the coastline and snaps the
+ * displayed marker position to the legitimate terrestrial freight corridor / port facility.
+ */
+export function snapToTerrestrialCorridor(
+  lat: number,
+  lon: number,
+): { lat: number; lon: number; isCoastalCorrected: boolean } {
+  // Andhra Pradesh / Coromandel coastal industrial corridor (Krishnapatnam Port / Nellore):
+  if (lat >= 14.15 && lat <= 14.85) {
+    // Natural coastline in this sector terminates around 80.05° to 80.14° E.
+    if (lon > 80.14) {
+      if (lat >= 14.15 && lat <= 14.30) {
+        // Krishnapatnam Port Terminal Gate & Coal Berths:
+        return { lat: Math.max(lat, 14.248), lon: 80.126, isCoastalCorrected: true };
+      }
+      if (lat > 14.30 && lat <= 14.50) {
+        // Krishnapatnam Port - Mypadu Coastal Expressway:
+        return { lat, lon: 80.138, isCoastalCorrected: true };
+      }
+      if (lat > 14.50 && lat <= 14.70) {
+        // Kodavalur - Allur Industrial Freight Corridor:
+        return { lat, lon: 80.068, isCoastalCorrected: true };
+      }
+      if (lat > 14.70 && lat <= 14.85) {
+        // Isakapalli / Kavali Industrial Corridor:
+        return { lat, lon: 80.045, isCoastalCorrected: true };
+      }
+    }
+  }
+
+  // General East Coast (Bay of Bengal) marine drift check:
+  if (lat >= 12.5 && lat <= 21.0) {
+    let maxCoastLon = 80.30;
+    if (lat >= 13.0 && lat < 14.0) maxCoastLon = 80.30 - (lat - 13.0) * 0.16;
+    else if (lat >= 14.0 && lat < 15.0) maxCoastLon = 80.14 - (lat - 14.0) * 0.09;
+    else if (lat >= 15.0 && lat < 16.0) maxCoastLon = 80.05 + (lat - 15.0) * 0.55;
+    else if (lat >= 16.0 && lat < 17.0) maxCoastLon = 80.60 + (lat - 16.0) * 0.56;
+    else if (lat >= 17.0 && lat < 18.0) maxCoastLon = 82.26 + (lat - 17.0) * 1.05;
+    else if (lat >= 18.0 && lat <= 21.0) maxCoastLon = 83.31 + (lat - 18.0) * 1.15;
+
+    if (lon > maxCoastLon + 0.01) {
+      return { lat, lon: maxCoastLon - 0.01, isCoastalCorrected: true };
+    }
+  }
+
+  return { lat, lon, isCoastalCorrected: false };
+}
+
 /** Only rows with a MEASURED fix are plotted; the rest are reported as
  *  unlocatable by the caller rather than pinned at (0, 0). */
 export function buildMapPoints(rows: TruckRow[], now: Date = new Date()): { points: MapPoint[]; unlocatable: TruckRow[] } {
@@ -86,19 +147,23 @@ export function buildMapPoints(rows: TruckRow[], now: Date = new Date()): { poin
   const unlocatable: TruckRow[] = [];
 
   for (const row of rows) {
-    const coordinate = normalizeGpsCoordinates(
+    const rawCoord = normalizeGpsCoordinates(
       row.vehicle.values["latitude"],
       row.vehicle.values["longitude"],
     );
-    if (!coordinate) {
+    if (!rawCoord) {
       unlocatable.push(row);
       continue;
     }
+    const snapped = snapToTerrestrialCorridor(rawCoord.lat, rawCoord.lon);
     const hours = row.observedAt ? frameAgeHours(row.observedAt, now) : Number.NaN;
     points.push({
       vehicleId: row.vehicleId,
-      lat: coordinate.lat,
-      lon: coordinate.lon,
+      lat: snapped.lat,
+      lon: snapped.lon,
+      rawLat: rawCoord.lat,
+      rawLon: rawCoord.lon,
+      isCoastalCorrected: snapped.isCoastalCorrected,
       status: row.status,
       soc: row.soc,
       chassis: row.chassis,

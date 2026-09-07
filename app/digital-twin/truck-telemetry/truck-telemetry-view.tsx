@@ -67,6 +67,9 @@ export default function TruckTelemetryView({ data }: { data: TrustedTelemetryDoc
   const rows = useMemo(() => truckRows(scoped, registry), [scoped, registry]);
   const alerts = useMemo(() => truckAlerts(scoped, sites), [scoped, sites]);
 
+  const { points, unlocatable } = useMemo(() => buildMapPoints(rows), [rows]);
+  const clusters = useMemo(() => buildCityClusters(points), [points]);
+
   /**
    * Cross-component click-to-zoom: an alert-row click selects the carrier AND
    * flies the map to its live GPS position at the readable asset radius (the
@@ -77,6 +80,11 @@ export default function TruckTelemetryView({ data }: { data: TrustedTelemetryDoc
     (vehicleId: string) => {
       select(vehicleId, "table");
       scrollMapIntoView(); // the alert panel sits BELOW the map — go to it
+      const pt = points.find((p) => p.vehicleId === vehicleId);
+      if (pt) {
+        requestFly(pt.lat, pt.lon, ZOOM.asset);
+        return;
+      }
       const row = rows.find((r) => r.vehicleId === vehicleId);
       const coordinate = normalizeGpsCoordinates(
         row?.vehicle.values["latitude"],
@@ -84,11 +92,8 @@ export default function TruckTelemetryView({ data }: { data: TrustedTelemetryDoc
       );
       if (coordinate) requestFly(coordinate.lat, coordinate.lon, ZOOM.asset);
     },
-    [rows, select, requestFly],
+    [rows, points, select, requestFly],
   );
-
-  const { points, unlocatable } = useMemo(() => buildMapPoints(rows), [rows]);
-  const clusters = useMemo(() => buildCityClusters(points), [points]);
 
   const statusCounts = useMemo(() => {
     const c = { moving: 0, charging: 0, idle: 0, unknown: 0 };
@@ -120,9 +125,14 @@ export default function TruckTelemetryView({ data }: { data: TrustedTelemetryDoc
     scrollMapIntoView();
     if (!match) return;
     select(match.vehicle_id, "link");
-    const coordinate = normalizeGpsCoordinates(match.values["latitude"], match.values["longitude"]);
-    if (coordinate) requestFly(coordinate.lat, coordinate.lon, ZOOM.asset);
-  }, [deepLink, vehicles, select, requestFly]);
+    const pt = points.find((p) => p.vehicleId === match.vehicle_id);
+    if (pt) {
+      requestFly(pt.lat, pt.lon, ZOOM.asset);
+    } else {
+      const coordinate = normalizeGpsCoordinates(match.values["latitude"], match.values["longitude"]);
+      if (coordinate) requestFly(coordinate.lat, coordinate.lon, ZOOM.asset);
+    }
+  }, [deepLink, vehicles, points, select, requestFly]);
 
   /* ------------------------------------------------------------- render */
 
