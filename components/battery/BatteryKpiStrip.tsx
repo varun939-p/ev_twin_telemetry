@@ -30,18 +30,13 @@ import type { TrustedVehicle } from "@/lib/trusted-telemetry";
  */
 export default function BatteryKpiStrip({
   packs,
-  totalPacks,
 }: {
   /** Packs in the current filter scope. */
   packs: TrustedVehicle[];
-  /** Fleet-wide pack count, so tile 1 always states the asset base. */
-  totalPacks: number;
 }) {
   const charging = chargingNow(packs);
   const deployed = deployedPacks(packs);
   const load = runningLoadKw(packs);
-
-  const scopeNote = packs.length === totalPacks ? "across the whole fleet" : `in the filtered scope of ${packs.length}`;
 
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">

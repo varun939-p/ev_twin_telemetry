@@ -139,7 +139,8 @@ export default function TruckTelemetryView({ data }: { data: TrustedTelemetryDoc
             <Pill tone="warn" dot>
               {statusCounts.idle} idle
             </Pill>
-            {statusCounts.unknown > 0 && <Pill tone="neutral">{statusCounts.unknown} no reading</Pill>}
+            <Pill tone="neutral">{statusCounts.unknown} other / offline</Pill>
+            <Pill tone="neutral">{rows.length} total trucks</Pill>
           </div>
         }
       />

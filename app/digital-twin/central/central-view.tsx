@@ -20,7 +20,8 @@
  */
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
+import { useRouter } from "next/navigation";
 
 import FacilityPanels from "@/components/central/FacilityPanels";
 import SiteCanvas from "@/components/central/SiteCanvas";
@@ -28,7 +29,7 @@ import { KpiCard } from "@/components/ui/Metric";
 import { Pill } from "@/components/ui/Pill";
 import { Card, CardHeader, Hairline, PageHeading } from "@/components/ui/Surface";
 import PanelErrorBoundary from "@/components/ui/PanelErrorBoundary";
-import { SegmentedControl } from "@/components/ui/Field";
+import SiteFilter, { usePersistedSiteSelection } from "@/components/central/SiteFilter";
 import {
   deriveSites,
   batteryRegistry,
@@ -38,9 +39,10 @@ import {
   predictArrival,
   truckChassis,
 } from "@/lib/fleet";
-import { SOC_CRITICAL, assetStatus, medianFrameAgeHours } from "@/lib/fleet-metrics";
+import { SOC_CRITICAL, assetStatus, batteryAlerts, truckAlerts } from "@/lib/fleet-metrics";
+import AttentionPanel from "@/components/alerts/AttentionPanel";
 import type { InboundSeed, PackSeed } from "@/lib/site-model";
-import { numericValue, parseTimestampMs, type TrustedTelemetryDocument } from "@/lib/trusted-telemetry";
+import { numericValue, type TrustedTelemetryDocument } from "@/lib/trusted-telemetry";
 
 const DRILL_DOWNS = [
   { href: "/digital-twin/truck-telemetry", label: "Truck Telemetry", hint: "Carrier map, alerts, 24-param detail" },
@@ -49,6 +51,7 @@ const DRILL_DOWNS = [
 
 export default function CentralView({ data }: { data: TrustedTelemetryDocument }) {
   const vehicles = data.vehicles;
+  const router = useRouter();
 
   /**
    * Sites come from the payload, ordered by fleet presence. The toggle used to
@@ -56,58 +59,37 @@ export default function CentralView({ data }: { data: TrustedTelemetryDocument }
    * API is actually reporting and defaults to the busiest site.
    */
   const sites = useMemo(() => deriveSites(vehicles), [vehicles]);
-
-  // Held as `null` until the operator picks one, so an empty payload cannot
-  // crash the page on `sites[0].id` and a site vanishing between polls falls
-  // back to the busiest remaining one instead of rendering a dead selection.
-  const [selectedSiteId, setSelectedSiteId] = useState<string | null>(null);
+  const [selectedSiteIds, setSelectedSiteIds] = usePersistedSiteSelection(sites);
+  const selectedSiteId = selectedSiteIds[0] ?? sites[0]?.id ?? "";
   const station = sites.find((s) => s.id === selectedSiteId) ?? sites[0] ?? null;
-  const stationId = station?.id ?? "";
+  const selectedVehicles = useMemo(() => {
+    if (!selectedSiteIds.length) return [];
+    return vehicles.filter((vehicle) => {
+      const nearest = nearestStation(vehicle, sites);
+      return nearest ? selectedSiteIds.includes(nearest.id) : false;
+    });
+  }, [vehicles, sites, selectedSiteIds]);
   const registry = useMemo(() => batteryRegistry(vehicles), [vehicles]);
-
-  /**
-   * Median frame age, computed deterministically so the SERVER and CLIENT
-   * always render the same number (the hydration-mismatch fix).
-   *
-   * Two non-negotiable anchors, not one:
-   *   1. `medianFrameAgeHours` reads each `observed_at` through
-   *      `parseTimestampMs`, which treats zone-less control-plane timestamps
-   *      as UTC. Without that, a UTC server (Vercel SSR) and an IST browser
-   *      (Hyderabad) parse the same naive string to epochs 5.5 h apart.
-   *   2. The reference instant is the snapshot's OWN `generated_at`, NOT
-   *      `Date.now()`. `generated_at` is a fixed UTC instant serialised into
-   *      the document on the server and shipped with it, so the elapsed hours
-   *      are computed against a value both runtimes share. `Date.now()` would
-   *      drift by however long hydration takes and disagree by microseconds
-   *      even with the parse fix. `LiveRefresh` re-fetches every 20 s anyway,
-   *      so a fresh `generated_at` (and therefore a fresh age) arrives on the
-   *      normal cadence — no client-side ticking is needed.
-   */
-  const medianAgeHours = useMemo(() => {
-    const nowMs = parseTimestampMs(data.generated_at);
-    if (!Number.isFinite(nowMs)) return medianFrameAgeHours(vehicles);
-    return medianFrameAgeHours(vehicles, new Date(nowMs));
-  }, [vehicles, data.generated_at]);
 
   /** Packs whose nearest hub is the selected site — real identities + SOC. */
   const sitePacks = useMemo<PackSeed[]>(
     () =>
-      vehicles
-        .filter((v) => isEvVehicle(v) && nearestStation(v, sites)?.id === stationId)
+      selectedVehicles
+        .filter((v) => isEvVehicle(v) && selectedSiteIds.includes(nearestStation(v, sites)?.id ?? ""))
         .map((v) => ({
           vehicleId: v.vehicle_id,
           batteryLabel: registry.get(v.vehicle_id)?.label ?? v.vehicle_id,
           soc: numericValue(v, "soc"),
         }))
         .sort((a, b) => (a.soc ?? 101) - (b.soc ?? 101)),
-    [vehicles, stationId, registry, sites],
+    [selectedVehicles, selectedSiteIds, registry, sites],
   );
 
   /** Carriers actually moving toward this hub, ordered by GPS-derived ETA. */
   const inbound = useMemo<InboundSeed[]>(
     () =>
-      vehicles
-        .filter((v) => assetStatus(v) === "moving" && nearestStation(v, sites)?.id === stationId)
+      selectedVehicles
+        .filter((v) => assetStatus(v) === "moving" && selectedSiteIds.includes(nearestStation(v, sites)?.id ?? ""))
         .map((v) => {
           const arrival = predictArrival(v, sites);
           return {
@@ -119,52 +101,19 @@ export default function CentralView({ data }: { data: TrustedTelemetryDocument }
           };
         })
         .sort((a, b) => (a.etaMinutes ?? 1e9) - (b.etaMinutes ?? 1e9)),
-    [vehicles, stationId, sites],
+    [selectedVehicles, selectedSiteIds, sites],
   );
 
-  const inService = useMemo(() => vehicles.filter((v) => assetStatus(v) === "moving").length, [vehicles]);
+  const inService = useMemo(() => selectedVehicles.filter((v) => assetStatus(v) === "moving").length, [selectedVehicles]);
   const belowReserve = useMemo(
-    () => vehicles.filter((v) => isEvVehicle(v) && (numericValue(v, "soc") ?? 100) < SOC_CRITICAL).length,
-    [vehicles],
+    () => selectedVehicles.filter((v) => isEvVehicle(v) && (numericValue(v, "soc") ?? 100) < SOC_CRITICAL).length,
+    [selectedVehicles],
   );
+  const attentionAlerts = useMemo(() => [...batteryAlerts(selectedVehicles, registry, sites), ...truckAlerts(selectedVehicles, sites)], [selectedVehicles, registry, sites]);
 
   return (
     <div className="space-y-4">
-      <PageHeading
-        title="Central Dashboard"
-        actions={
-          <SegmentedControl
-            label="Site"
-            value={stationId}
-            onChange={setSelectedSiteId}
-            options={sites.map((s) => ({ value: s.id, label: s.name, count: s.assetCount }))}
-          />
-        }
-      />
-
-      {/* 1 — live strip, all validated telemetry ------------------------- */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
-        <KpiCard label="Carriers inbound to this hub" value={inbound.length} tone="info" />
-        <KpiCard label="Packs assigned to this site" value={sitePacks.length} tone="neutral" />
-        <KpiCard label="Fleet in service" value={inService} tone="ok" />
-        <KpiCard
-          label="Packs below reserve"
-          value={belowReserve}
-          tone={belowReserve > 0 ? "danger" : "ok"}
-        />
-        {/* Median Frame Age was homed on the Swap Station draft. That route is
-            gone, but the metric is the single best read on ingest-loop health,
-            so it lands here on the fleet-wide overview rather than being lost
-            with the page that used to host it. */}
-        <KpiCard
-          label="Median frame age"
-          value={medianAgeHours === null ? null : Number(medianAgeHours.toFixed(1))}
-          unit=" h"
-          tone={medianAgeHours !== null && medianAgeHours > 24 ? "warn" : "ok"}
-        />
-      </div>
-
-      {/* 2 — the site canvas -------------------------------------------- */}
+      <PageHeading title="Central Dashboard" actions={<SiteFilter sites={sites} selected={selectedSiteIds} onChange={setSelectedSiteIds} />} />
       <Card>
         <div className="p-2 sm:p-3">
           <PanelErrorBoundary name="Facility canvas" resetKey={data.generated_at}>
@@ -172,69 +121,27 @@ export default function CentralView({ data }: { data: TrustedTelemetryDocument }
           </PanelErrorBoundary>
         </div>
       </Card>
-
-      {/* 2b — the three operational panels (swap bays, chargers, grid/DG),
-          fed by the same real telemetry + audited facility model ---------- */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
+        <KpiCard label="Trucks Incoming" value={inbound.length} tone="info" />
+        <KpiCard label="Batteries at Site" value={sitePacks.length} tone="neutral" />
+        <KpiCard label="Low Battery Alerts" value={belowReserve} tone={belowReserve > 0 ? "danger" : "ok"} />
+        <KpiCard label="Active Trucks" value={inService} tone="ok" />
+        <KpiCard label="Battery Reserve %" value={sitePacks.length ? Math.round(sitePacks.reduce((sum, pack) => sum + (pack.soc ?? 0), 0) / sitePacks.length) : null} unit="%" tone="accent" />
+      </div>
       <PanelErrorBoundary name="Facility panels" resetKey={data.generated_at}>
         <FacilityPanels packs={sitePacks} inbound={inbound} station={station} />
       </PanelErrorBoundary>
-
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-        {/* 3 — inbound queue -------------------------------------------- */}
         <Card className="xl:col-span-2">
-          <CardHeader
-            eyebrow="Arrivals"
-            title="Inbound carriers"
-            actions={<Pill tone="neutral">{inbound.length} moving</Pill>}
-          />
+          <CardHeader eyebrow="Arrivals" title="Inbound carriers" actions={<Pill tone="neutral">{inbound.length} moving</Pill>} />
           <Hairline />
-          {inbound.length === 0 ? (
-            <p className="px-5 py-8 text-center text-xs text-ink-3">
-              No carriers are currently moving toward this hub.
-            </p>
-          ) : (
-            <ul className="scroll-thin max-h-[260px] divide-y divide-line overflow-y-auto">
-              {inbound.slice(0, 12).map((truck) => (
-                <li key={truck.vehicleId}>
-                  <Link
-                    href={`/digital-twin/truck-telemetry?vehicle_id=${encodeURIComponent(truck.vehicleId)}`}
-                    className="flex items-center gap-3 px-5 py-2.5 transition hover:bg-surface-2"
-                  >
-                    <span className="num min-w-0 flex-1 truncate text-xs font-medium text-ink">{truck.carrierLabel}</span>
-                    <span className="num text-[12px] text-ink-2">
-                      {truck.soc === null ? "SOC —" : `SOC ${truck.soc}%`}
-                    </span>
-                    <span className="num text-[12px] text-ink-3">{truck.distanceKm ?? "—"} km</span>
-                    <Pill tone="info">{formatEta(truck.etaMinutes) ?? "ETA —"}</Pill>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          )}
+          {inbound.length === 0 ? <p className="px-5 py-8 text-center text-xs text-ink-3">No carriers are currently moving toward the selected sites.</p> : <ul className="scroll-thin max-h-[260px] divide-y divide-line overflow-y-auto">{inbound.slice(0, 12).map((truck) => <li key={truck.vehicleId}><Link href={`/digital-twin/truck-telemetry?vehicle_id=${encodeURIComponent(truck.vehicleId)}`} className="flex items-center gap-3 px-5 py-2.5 transition hover:bg-surface-2"><span className="num min-w-0 flex-1 truncate text-xs font-medium text-ink">{truck.carrierLabel}</span><span className="num text-[12px] text-ink-2">{truck.soc === null ? "SOC —" : `SOC ${truck.soc}%`}</span><span className="num text-[12px] text-ink-3">{truck.distanceKm ?? "—"} km</span><Pill tone="info">{formatEta(truck.etaMinutes) ?? "ETA —"}</Pill></Link></li>)}</ul>}
         </Card>
-
-        {/* 4 — drill-down rail ------------------------------------------ */}
-        <Card>
-          <CardHeader eyebrow="Navigate" title="Asset telemetry" description="Same targets the canvas routes to." />
-          <Hairline />
-          <ul className="divide-y divide-line">
-            {DRILL_DOWNS.map((item) => (
-              <li key={item.href}>
-                <Link href={item.href} className="flex items-center gap-3 px-5 py-2.5 transition hover:bg-surface-2">
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-xs font-medium text-ink">{item.label}</span>
-                    <span className="block truncate text-[11px] text-ink-3">{item.hint}</span>
-                  </span>
-                  <span aria-hidden className="text-accent">
-                    →
-                  </span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </Card>
+        <Card><CardHeader eyebrow="Navigate" title="Asset telemetry" description="Open a detailed view for the selected fleet." /><Hairline /><ul className="divide-y divide-line">{DRILL_DOWNS.map((item) => <li key={item.href}><Link href={item.href} className="flex items-center gap-3 px-5 py-3 transition hover:bg-surface-2"><span className="min-w-0 flex-1"><span className="block text-xs font-medium text-ink">{item.label}</span><span className="block text-[11px] text-ink-3">{item.hint}</span></span><span className="text-accent" aria-hidden>→</span></Link></li>)}</ul></Card>
       </div>
+      <PanelErrorBoundary name="Combined attention" resetKey={data.generated_at}>
+        <AttentionPanel alerts={attentionAlerts} title="Need Attention — Fleet" emptyMessage="All selected batteries and trucks are within the current operating thresholds." onRowClick={(vehicleId) => router.push(`/digital-twin/truck-telemetry?vehicle_id=${encodeURIComponent(vehicleId)}`)} />
+      </PanelErrorBoundary>
     </div>
   );
 }
-

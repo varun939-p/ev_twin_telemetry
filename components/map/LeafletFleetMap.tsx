@@ -451,18 +451,9 @@ function clusterSize(count: number, maxCount: number): number {
  */
 const NODE_PX = 24;
 
-const VehicleMarker = memo(function VehicleMarker({
-  point,
-  onHoverIn,
-  onHoverOut,
-}: {
-  point: MapPoint;
-  onHoverIn: (kind: "point" | "cluster", id: string) => void;
-  onHoverOut: () => void;
-}) {
+const VehicleMarker = memo(function VehicleMarker({ point }: { point: MapPoint }) {
   const hovered = useIsHovered(point.vehicleId);
   const selected = useIsSelected(point.vehicleId);
-  const hover = useTwin((s) => s.hover);
   const select = useTwin((s) => s.select);
   const requestFly = useTwin((s) => s.requestFly);
 
@@ -490,15 +481,8 @@ const VehicleMarker = memo(function VehicleMarker({
       icon={icon}
       keyboard={false}
       eventHandlers={{
-        // onMouseOver -> the floating card + the table-row highlight link.
-        mouseover: () => {
-          hover(point.vehicleId, "map");
-          onHoverIn("point", point.vehicleId);
-        },
-        mouseout: () => {
-          hover(null);
-          onHoverOut();
-        },
+        // Individual truck hover deliberately has no popup. Truck Telemetry
+        // is a carrier view; battery context belongs to Battery Tracking.
         click: () => {
           select(point.vehicleId, "map");
           // Readable radius, never a rooftop dive. NO filtering — selection
@@ -873,7 +857,7 @@ export default function LeafletFleetMap({
               />
             ))
           : points.map((p) => (
-              <VehicleMarker key={p.vehicleId} point={p} onHoverIn={onHoverIn} onHoverOut={onHoverOut} />
+              <VehicleMarker key={p.vehicleId} point={p} />
             ))}
       </MapContainer>
 

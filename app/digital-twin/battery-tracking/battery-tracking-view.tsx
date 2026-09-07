@@ -177,7 +177,7 @@ export default function BatteryTrackingView({ data }: { data: TrustedTelemetryDo
 
       {/* 2 — the four KPIs ---------------------------------------------- */}
       <PanelErrorBoundary name="Battery KPIs" resetKey={data.generated_at}>
-        <BatteryKpiStrip packs={scoped} totalPacks={allPacks.length} />
+        <BatteryKpiStrip packs={scoped} />
       </PanelErrorBoundary>
 
       {/* 3 — filters ----------------------------------------------------- */}

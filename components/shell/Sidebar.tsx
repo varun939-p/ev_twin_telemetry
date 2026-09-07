@@ -9,12 +9,9 @@ import { usePersistedBool } from "@/lib/persisted";
 /**
  * Primary navigation rail.
  *
- * Replaces `ViewNav` (two floating "cards" that duplicated the deleted banner
- * headers).  `Digital Twin` is a real expandable heading owning exactly the
- * three SHIPPING routes.  Swap Station, Chargers and DG were removed on
- * instruction — they are being built as a separate workstream and will be
- * re-integrated later, and a nav entry for a route that does not exist is
- * worse than no entry at all.
+ * The rail is the stable product navigation. Seven destinations are visible
+ * so operators can see the complete digital-twin roadmap without losing the
+ * live telemetry routes.
  *
  * Behaviour:
  *   * active route resolved from `usePathname` (prefix match, so nested
@@ -27,6 +24,7 @@ export interface NavItem {
   href: string;
   label: string;
   icon: ReactNode;
+  draft?: boolean;
 }
 
 const stroke = { fill: "none", stroke: "currentColor", strokeWidth: 1.6, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
@@ -65,6 +63,10 @@ export const NAV_ITEMS: NavItem[] = [
       </svg>
     ),
   },
+  { href: "/digital-twin/swap-station-view", label: "Swap Station", icon: <span aria-hidden>⇄</span>, draft: true },
+  { href: "/digital-twin/charging-station", label: "Charging Station", icon: <span aria-hidden>⚡</span>, draft: true },
+  { href: "/digital-twin/dg-operations", label: "DG", icon: <span aria-hidden>◈</span>, draft: true },
+  { href: "/digital-twin/predictive-analysis", label: "Predictive Analysis", icon: <span aria-hidden>↗</span>, draft: true },
 ];
 
 const STORAGE_KEY = "twin.nav.expanded";
@@ -138,7 +140,7 @@ export default function Sidebar({ open, onNavigate }: { open: boolean; onNavigat
                         active
                           ? "bg-accent-soft text-accent"
                           : "text-ink-2 hover:bg-surface-3 hover:text-ink"
-                      }`}
+                      } ${item.draft ? "opacity-55" : ""}`}
                     >
                       <span className={`mt-[1px] shrink-0 ${active ? "text-accent" : "text-ink-3 group-hover:text-ink-2"}`}>
                         {item.icon}
