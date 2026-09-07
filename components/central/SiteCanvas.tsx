@@ -623,14 +623,41 @@ export default function SiteCanvas({
           >
             {(() => {
               const [x, y] = truckPose.at;
+              const heading = truckPose.heading;
+              const angle = Math.atan2(heading[1], heading[0]) * 180 / Math.PI;
+              const normal: Pt = [-heading[1], heading[0]];
+              const cabCenter: Pt = [x + 44 * heading[0] * 0.9, y + 44 * heading[1] * 0.9];
               const trailer = isoBox([x, y], 42, 20, 34);
-              const cab = isoBox([x + 44 * truckPose.heading[0] * 0.9, y + 44 * truckPose.heading[1] * 0.9], 16, 18, 30);
+              const cab = isoBox(cabCenter, 16, 18, 30);
               const docked = site.dock.phase === "swapping" || site.dock.phase === "docking" || site.dock.phase === "release";
+              const wheel = (position: Pt, key: string) => (
+                <g key={key} transform={`rotate(${angle} ${position[0]} ${position[1]})`}>
+                  <ellipse cx={position[0]} cy={position[1]} rx="8" ry="4.5" fill="#080b11" stroke="var(--line-strong)" strokeWidth="1.2" />
+                  <ellipse cx={position[0]} cy={position[1]} rx="3" ry="1.8" fill="var(--ink-3)" />
+                </g>
+              );
+              const wheelPositions: Pt[] = [-30, -2, 26].flatMap((distance) => {
+                const base: Pt = [x + heading[0] * distance, y + heading[1] * distance + 17];
+                return [
+                  [base[0] + normal[0] * 17, base[1] + normal[1] * 17],
+                  [base[0] - normal[0] * 17, base[1] - normal[1] * 17],
+                ] as Pt[];
+              });
               return (
                 <g>
-                  <ellipse cx={x} cy={y + 8} rx={54} ry={16} fill="var(--ink)" opacity={0.08} />
+                  <ellipse cx={x} cy={y + 10} rx={58} ry={18} fill="#05070d" opacity={0.38} />
+                  <path d={`M ${x - heading[0] * 46} ${y - heading[1] * 46} L ${x + heading[0] * 48} ${y + heading[1] * 48}`} stroke="var(--ink-3)" strokeWidth="4" opacity=".8" />
+                  {wheelPositions.map((position, index) => wheel(position, `wheel-${index}`))}
                   <Solid box={trailer} top={docked ? "var(--accent)" : "var(--info)"} left="var(--surface-3)" right="var(--plate)" />
+                  <polygon points={trailer.top} fill="none" stroke="var(--line-strong)" strokeWidth="1" />
+                  <path d={`M ${x - heading[0] * 27} ${y - heading[1] * 27} L ${x + heading[0] * 27} ${y + heading[1] * 27}`} stroke="var(--accent-ink)" strokeWidth="2" opacity=".55" />
                   <Solid box={cab} top="var(--ink-2)" left="var(--surface-3)" right="var(--plate)" />
+                  <polygon points={cab.top} fill="var(--accent-soft)" opacity=".9" stroke="var(--info)" strokeWidth="1" />
+                  <circle cx={cabCenter[0] + normal[0] * 12} cy={cabCenter[1] + normal[1] * 12 - 10} r="2.5" fill="var(--ok)" className="pulse-soft" />
+                  <g aria-label="Truck charging port">
+                    <circle cx={x + normal[0] * 22} cy={y + normal[1] * 22 - 12} r="5" fill="var(--surface-2)" stroke="var(--accent)" strokeWidth="1.5" />
+                    <circle cx={x + normal[0] * 22} cy={y + normal[1] * 22 - 12} r="2" fill={docked ? "var(--ok)" : "var(--ink-3)"} />
+                  </g>
                   {docked && (
                     <>
                       <polygon points={trailer.top} fill="var(--accent)" filter="url(#glow)" className="pulse-emissive" />
