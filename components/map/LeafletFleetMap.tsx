@@ -286,6 +286,10 @@ function HoverCard({
     if (!el) return;
     const GAP = 14; // marker edge -> card edge; leaves room for the arrow
     const EDGE = 8;
+    // The top-left chrome zone (Exit Live View button). The card must NEVER
+    // sit over it — visually or physically — so an operator can always see
+    // AND click the reset control.
+    const CHROME = { w: 220, h: 58 };
     const place = () => {
       const pt = map.latLngToContainerPoint([lat, lon]);
       const size = map.getSize();
@@ -298,9 +302,16 @@ function HoverCard({
         pt.x < -MARGIN || pt.x > size.x + MARGIN || pt.y < -MARGIN || pt.y > size.y + MARGIN;
       el.style.visibility = offscreen ? "hidden" : "visible";
       if (offscreen) return;
-      const x = Math.min(Math.max(pt.x - w / 2, EDGE), Math.max(EDGE, size.x - w - EDGE));
+      let x = Math.min(Math.max(pt.x - w / 2, EDGE), Math.max(EDGE, size.x - w - EDGE));
       const nextBelow = pt.y - h - GAP < EDGE;
-      const y = nextBelow ? pt.y + GAP : pt.y - h - GAP;
+      let y = nextBelow ? pt.y + GAP : pt.y - h - GAP;
+      // Overlap guard: if the card would intersect the button zone, slide it
+      // below the zone first; if that would push it off the bottom, slide it
+      // right of the zone instead. The arrow stays anchored to the marker.
+      if (x < CHROME.w && y < CHROME.h) {
+        if (y + h < size.y - EDGE - (CHROME.h - y)) y = CHROME.h + 4;
+        else x = CHROME.w + 4;
+      }
       el.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0)`;
       setBelow((prev) => (prev === nextBelow ? prev : nextBelow));
     };
@@ -316,7 +327,7 @@ function HoverCard({
   const arrow = (
     <span
       aria-hidden
-      className={`absolute left-1/2 h-2.5 w-2.5 -translate-x-1/2 rotate-45 border-slate-200/90 bg-white ${
+      className={`absolute left-1/2 h-2.5 w-2.5 -translate-x-1/2 rotate-45 border-slate-300/70 bg-white/80 ${
         below ? "-top-1 border-l border-t" : "-bottom-1 border-b border-r"
       }`}
     />
@@ -331,10 +342,11 @@ function HoverCard({
         ref={cardRef}
         className="rise-in pointer-events-none absolute left-0 top-0 z-[1200] w-[248px] will-change-transform"
       >
-        {/* LIGHT callout on the dark map — deliberately NOT a token: the card
-            must stay crisp white in BOTH themes, and it must never blur or
-            dim the radar field behind it (no backdrop-filter, ~95% alpha). */}
-        <div className="relative rounded-xl border border-slate-200/90 bg-white/95 p-3 shadow-[0_8px_22px_rgba(2,6,23,0.35)]">
+        {/* TRANSLUCENT callout on the dark map — deliberately NOT a token:
+            crisp in BOTH themes, never blurs or dims the radar field behind
+            it (no backdrop-filter), and only ~80% opaque so the map reads
+            through it. Text is near-black for maximum contrast. */}
+        <div className="relative rounded-xl border border-slate-300/70 bg-white/80 p-3 shadow-[0_8px_22px_rgba(2,6,23,0.3)]">
           {arrow}
           <p className="truncate text-[12.5px] font-semibold text-slate-900">
             {c.city}, {c.state}
@@ -354,7 +366,7 @@ function HoverCard({
               {tierLabel}
             </span>
           </p>
-          <p className="mt-2 text-[11px] font-medium text-blue-600">
+          <p className="mt-2 text-[11px] font-semibold text-amber-700">
             Click to zoom in — every other carrier stays on the map
           </p>
         </div>
@@ -369,8 +381,8 @@ function HoverCard({
       ref={cardRef}
       className="rise-in pointer-events-none absolute left-0 top-0 z-[1200] w-[248px] will-change-transform"
     >
-      {/* light callout — no backdrop-filter, both-theme crisp (see cluster card) */}
-      <div className="relative rounded-xl border border-slate-200/90 bg-white/95 p-3 shadow-[0_8px_22px_rgba(2,6,23,0.35)]">
+      {/* translucent callout — no backdrop-filter, ~80% opaque (see cluster card) */}
+      <div className="relative rounded-xl border border-slate-300/70 bg-white/80 p-3 shadow-[0_8px_22px_rgba(2,6,23,0.3)]">
         {arrow}
         {/* identity: human label + status, exactly like a Maps place card */}
         <div className="flex items-start justify-between gap-2">

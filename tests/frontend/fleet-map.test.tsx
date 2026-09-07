@@ -291,7 +291,8 @@ describe("LeafletFleetMap — hover popups", () => {
     // is the LIGHT callout (white card, explicit palette), not a token that
     // flips dark inside the .canvas-dark scope.
     expect(cardRoot?.className).not.toContain("backdrop-blur");
-    expect(cardRoot?.innerHTML).toContain("bg-white/95");
+    // very transparent per the operator mandate, high-contrast near-black text
+    expect(cardRoot?.innerHTML).toContain("bg-white/80");
 
     // …and the map→table link fires (row highlight pointer).
     expect(useTwin.getState().hovered?.vehicleId).toBe("TRK-007");
