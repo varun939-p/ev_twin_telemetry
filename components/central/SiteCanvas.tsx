@@ -553,45 +553,15 @@ export default function SiteCanvas({
         {/* ---------------------------------------------------- chargers */}
         {site.chargers.map((charger, i) => {
           const c = ANCHOR.chargers[i];
-          const box = isoBox(c, 26, 20, 62);
           const hovered = hoverId === charger.id;
-          const live = charger.totalKw > 0;
+          const label = charger.id === "charger-a" ? "Charger A" : "Charger B";
+          const portColor = charger.totalKw > 0 ? "var(--ok)" : "var(--ink-3)";
           return (
-            <g key={charger.id} {...linkProps(charger.id, "/digital-twin/charging-station", `${charger.label} — open Charging Station`)}>
-              <polygon points={tile(c, 40, 32)} fill="var(--plate)" stroke="var(--line-strong)" strokeWidth={1} />
-              <Solid box={box} top="var(--surface-2)" left="var(--surface-3)" right="var(--plate)" opacity={hovered ? 0.92 : 1} />
-              <polygon points={tile([c[0], c[1] + 28], 30, 24)} fill="var(--surface-3)" stroke="var(--line-strong)" strokeWidth="1" />
-              <rect x={box.crown[0] - 12} y={box.crown[1] - 32} width="24" height="12" rx="2" fill="var(--accent-soft)" stroke="var(--accent)" strokeWidth="1" />
-              <path d={`M ${box.crown[0] - 8} ${box.crown[1] - 26} h 16`} stroke="var(--info)" strokeWidth="1.5" opacity=".8" />
-              {[-8, 0, 8].map((offset) => <path key={`vent-${charger.id}-${offset}`} d={`M ${c[0] + offset - 10} ${c[1] + 14} h 5`} stroke="var(--ink-3)" strokeWidth="1" opacity=".7" />)}
-              {live && (
-                <>
-                  <polygon points={box.top} fill="var(--ok)" opacity={0.18} stroke="var(--ok)" strokeWidth={1} />
-                  <polygon points={box.top} fill="var(--ok)" filter="url(#glow)" className="pulse-emissive" />
-                </>
-              )}
-              {/* dual charging guns and their grounded cable loops */}
-              {charger.guns.map((gun, gi) => {
-                const gx = box.crown[0] + (gi === 0 ? -30 : 30);
-                const gy = box.crown[1] + 30 + gi * 16;
-                return <path key={`cable-${gun.id}`} d={`M ${box.crown[0]} ${box.crown[1] + 20} C ${gx - 8} ${gy + 18}, ${gx + 12} ${gy + 28}, ${gx} ${gy + 8}`} fill="none" stroke="var(--ink-3)" strokeWidth="2" strokeLinecap="round" opacity=".8" />;
-              })}
-              {charger.guns.map((gun, gi) => {
-                // Guns hang off the kerb side of the unit, clear of the roof —
-                // they were previously drawn over the top face and the kW
-                // labels collided with the geometry.
-                const gx = box.crown[0] + (gi === 0 ? -30 : 30);
-                const gy = box.crown[1] + 30 + gi * 16;
-                const tone = gun.status === "delivering" ? "var(--ok)" : gun.status === "handshake" ? "var(--warn)" : "var(--ink-3)";
-                return (
-                  <g key={gun.id}>
-                    <circle cx={gx} cy={gy} r={4} fill={tone} className={gun.status === "delivering" ? "pulse-soft" : ""} />
-                    <text x={gx} y={gy - 9} textAnchor="middle" style={{ fontSize: 9, fontWeight: 700 }} className="fill-[var(--ink-2)]">
-                      {gun.kw > 0 ? `${gun.kw}kW` : "—"}
-                    </text>
-                  </g>
-                );
-              })}
+            <g key={charger.id} {...linkProps(charger.id, "/digital-twin/charging-station", `${label} — open Charging Station`)}>
+              <polygon points={tile(c, 34, 24)} fill="var(--plate)" stroke={hovered ? "var(--accent)" : "var(--line-strong)"} strokeWidth={hovered ? 2 : 1} opacity=".65" />
+              <circle cx={c[0]} cy={c[1] - 8} r={6} fill="var(--surface-2)" stroke={portColor} strokeWidth="2" />
+              <circle cx={c[0]} cy={c[1] - 8} r={2.5} fill={portColor} className={charger.totalKw > 0 ? "pulse-soft" : ""} />
+              <text x={c[0]} y={c[1] + 30} textAnchor="middle" style={{ fontSize: 11, fontWeight: 700 }} className="fill-[var(--ink-2)]">{label}</text>
             </g>
           );
         })}
@@ -633,8 +603,8 @@ export default function SiteCanvas({
               const heading = truckPose.heading;
               const side: Pt = [-heading[1], heading[0]];
               const trailer = isoBox([x, y], 42, 20, 34);
-              const cabCenter: Pt = [x + 44 * heading[0] * 0.9, y + 44 * heading[1] * 0.9];
-              const cab = isoBox(cabCenter, 16, 18, 30);
+              const cabCenter: Pt = [x + 30 * heading[0], y + 30 * heading[1]];
+              const cab = isoBox(cabCenter, 18, 20, 32);
               const docked = site.dock.phase === "swapping" || site.dock.phase === "docking" || site.dock.phase === "release";
               return (
                 <g>
