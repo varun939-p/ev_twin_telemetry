@@ -216,17 +216,13 @@ async function main() {
     }
   }
 
-  // 3. CONTROL PLANE — the FastAPI app the dashboard's /api/* rewrites target.
-  const apiPort = envOf("API_PORT") || "8000";
-  run("api", py, ["-m", "uvicorn", "telemetry.main:app", "--host", "0.0.0.0", "--port", apiPort], dbEnv, "\x1b[32m");
-  const apiUp = await waitHealthy(`http://127.0.0.1:${apiPort}/api/health`, `control plane :${apiPort}`, 60);
-  if (!apiUp) {
-    console.error("[stack] control plane failed to start — check [api] logs above");
-    shutdown("SIGTERM");
-    return;
-  }
-
-  // 4. DASHBOARD — Next.js, whose rewrite carries /api/* to the control plane.
+  // 3+4. DASHBOARD FIRST, then the control plane. The dashboard binds its
+  //    port in well under a second (both `next start` and `next dev`), while
+  //    uvicorn takes a moment longer — spawning the UI first guarantees the
+  //    sandbox preview registration (first port to listen) always aims at
+  //    :3000, the presentation layer, never at the JSON control plane on
+  //    :8000 (whose bare root is a 404 — the "blank preview" incident).
+  //
   //    WEB_MODE=start serves the PRODUCTION build (`next build` must have run):
   //    an immutable module snapshot with zero on-demand recompilation. This is
   //    the deployment-real mode and it structurally eliminates the dev-only
@@ -236,6 +232,16 @@ async function main() {
   const webMode = process.env.WEB_MODE === "start" ? "start" : "dev";
   console.log(`[stack] ✓ starting dashboard (${webMode}) on :${webPort} — open http://localhost:${webPort}/digital-twin/truck-telemetry`);
   run("web", isWin ? "npm.cmd" : "npm", ["run", webMode], { ...dbEnv, PORT: webPort }, "\x1b[34m");
+
+  // 3. CONTROL PLANE — the FastAPI app the dashboard's /api/* rewrites target.
+  const apiPort = envOf("API_PORT") || "8000";
+  run("api", py, ["-m", "uvicorn", "telemetry.main:app", "--host", "0.0.0.0", "--port", apiPort], dbEnv, "\x1b[32m");
+  const apiUp = await waitHealthy(`http://127.0.0.1:${apiPort}/api/health`, `control plane :${apiPort}`, 60);
+  if (!apiUp) {
+    console.error("[stack] control plane failed to start — check [api] logs above");
+    shutdown("SIGTERM");
+    return;
+  }
 
   console.log("\x1b[1m[stack] all processes owned by this command — Ctrl+C stops everything\x1b[0m");
   // Keep the orchestrator alive while children run.
