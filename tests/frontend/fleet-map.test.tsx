@@ -283,7 +283,7 @@ describe("LeafletFleetMap — hover popups", () => {
     expect(screen.getByText("SOC")).toBeTruthy();
 
     // Glued positioning: the card is placed via an inline transform.
-    const cardRoot = screen.getByText(/ID TRK-007/).closest<HTMLDivElement>("div[class*='z-[900]']");
+    const cardRoot = screen.getByText(/ID TRK-007/).closest<HTMLDivElement>("div[class*='z-[1200]']");
     expect(cardRoot?.style.transform).toMatch(/translate3d/);
 
     // CRYSTAL-CLEAR mandate: the callout must never blur or dim the map

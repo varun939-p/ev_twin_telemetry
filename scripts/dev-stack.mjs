@@ -227,9 +227,15 @@ async function main() {
   }
 
   // 4. DASHBOARD — Next.js, whose rewrite carries /api/* to the control plane.
+  //    WEB_MODE=start serves the PRODUCTION build (`next build` must have run):
+  //    an immutable module snapshot with zero on-demand recompilation. This is
+  //    the deployment-real mode and it structurally eliminates the dev-only
+  //    stale-chunk hydration splits (server module != client module) that a
+  //    long-lived `next dev` session can produce after hot edits.
   const webPort = process.env.PORT || "3000";
-  console.log(`[stack] ✓ starting dashboard on :${webPort} — open http://localhost:${webPort}/digital-twin/truck-telemetry`);
-  run("web", isWin ? "npm.cmd" : "npm", ["run", "dev"], { ...dbEnv, PORT: webPort }, "\x1b[34m");
+  const webMode = process.env.WEB_MODE === "start" ? "start" : "dev";
+  console.log(`[stack] ✓ starting dashboard (${webMode}) on :${webPort} — open http://localhost:${webPort}/digital-twin/truck-telemetry`);
+  run("web", isWin ? "npm.cmd" : "npm", ["run", webMode], { ...dbEnv, PORT: webPort }, "\x1b[34m");
 
   console.log("\x1b[1m[stack] all processes owned by this command — Ctrl+C stops everything\x1b[0m");
   // Keep the orchestrator alive while children run.

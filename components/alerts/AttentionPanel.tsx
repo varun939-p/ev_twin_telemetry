@@ -169,9 +169,12 @@ export default function AttentionPanel({
   const headerTint =
     worst === "critical" ? "bg-danger-soft" : worst === "warning" ? "bg-warn-soft" : "bg-surface-2";
 
+  // overflow-hidden REMOVED deliberately: it clipped the row InfoTip
+  // popovers at the panel edge (the "comment text missing behind the
+  // section" bug). The header carries its own top rounding instead.
   return (
-    <section className={`overflow-hidden rounded-xl border bg-surface ${frame} shadow-[var(--shadow)]`} aria-label={title}>
-      <header className={`flex flex-wrap items-center gap-3 px-4 py-3 ${headerTint}`}>
+    <section className={`rounded-xl border bg-surface ${frame} shadow-[var(--shadow)]`} aria-label={title}>
+      <header className={`flex flex-wrap items-center gap-3 rounded-t-xl px-4 py-3 ${headerTint}`}>
         <span
           className={`grid h-7 w-7 shrink-0 place-items-center rounded-full ${
             worst === "critical" ? "bg-danger text-white" : worst === "warning" ? "bg-warn text-white" : "bg-surface-3 text-ink-3"
@@ -347,7 +350,7 @@ export default function AttentionPanel({
           return (
             <div
               role="tooltip"
-              className="rise-in pointer-events-none fixed z-[60] rounded-xl border border-line-strong bg-surface/95 p-3 shadow-[0_10px_28px_rgba(0,0,0,0.4)]"
+              className="rise-in pointer-events-none fixed z-[1200] rounded-xl border border-line-strong bg-surface/95 p-3 shadow-[0_10px_28px_rgba(0,0,0,0.4)]"
               style={{ left, top, width: POPOVER_W }}
             >
               <div className="flex items-center gap-2">

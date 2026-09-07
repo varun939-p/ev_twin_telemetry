@@ -329,7 +329,7 @@ function HoverCard({
     return (
       <div
         ref={cardRef}
-        className="rise-in pointer-events-none absolute left-0 top-0 z-[900] w-[248px] will-change-transform"
+        className="rise-in pointer-events-none absolute left-0 top-0 z-[1200] w-[248px] will-change-transform"
       >
         {/* LIGHT callout on the dark map — deliberately NOT a token: the card
             must stay crisp white in BOTH themes, and it must never blur or
@@ -367,7 +367,7 @@ function HoverCard({
   return (
     <div
       ref={cardRef}
-      className="rise-in pointer-events-none absolute left-0 top-0 z-[900] w-[248px] will-change-transform"
+      className="rise-in pointer-events-none absolute left-0 top-0 z-[1200] w-[248px] will-change-transform"
     >
       {/* light callout — no backdrop-filter, both-theme crisp (see cluster card) */}
       <div className="relative rounded-xl border border-slate-200/90 bg-white/95 p-3 shadow-[0_8px_22px_rgba(2,6,23,0.35)]">
@@ -865,9 +865,10 @@ export default function LeafletFleetMap({
             ))}
       </MapContainer>
 
-      {/* Google-Maps-style hover card. z-[900]: Leaflet's panes top out at
-          700, so the card always paints above markers and popups, and it is
-          pointer-events-none so it can never trap the cursor. */}
+      {/* Google-Maps-style hover card. z-[1200]: above Leaflet's panes
+          (<=700), its controls (<=1000) AND every page surface, so the card
+          can never slide behind a section; pointer-events-none so it can
+          never trap the cursor. */}
       {cardTarget && map && (
         <HoverCard
           key={cardTarget.kind === "point" ? cardTarget.point.vehicleId : cardTarget.cluster.id}
