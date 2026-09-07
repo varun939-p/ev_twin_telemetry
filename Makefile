@@ -15,7 +15,7 @@ BIN      = $(VENV)/bin
 PG_URL  ?= postgresql+psycopg://postgres:postgres@127.0.0.1:5432/twin
 
 .DEFAULT_GOAL := help
-.PHONY: help setup mock initdb schema fields once run api web web-build test check smoke lint clean
+.PHONY: help setup mock initdb schema fields once run api web devstack web-build test check smoke lint clean
 
 help: ## show this help
 	@grep -E '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -48,6 +48,9 @@ api: ## run the control plane on :8000 (same app Vercel mounts as api/index.py)
 
 web: ## run the Next.js dashboard in dev mode (rewrites /api to the control plane)
 	npm run dev
+
+devstack: ## ONE command: real local PostgreSQL + replay data + control plane + polling worker + dashboard
+	npm run dev:all
 
 web-build: ## production build of the dashboard
 	npm run build
