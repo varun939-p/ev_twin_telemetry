@@ -78,3 +78,25 @@ describe("FacilityPanels — the three operational panels", () => {
     expect(screen.getAllByText("Facility model").length).toBe(3);
   });
 });
+
+describe("FacilityPanels — hydration stability", () => {
+  it("renders byte-identical HTML across repeated renders at the shared tick-0 frame", () => {
+    // The hydration contract: SSR and the first client render must produce
+    // the EXACT same tree. simulateSite(0, ...) is pure and the component
+    // owns no other render-time nondeterminism, so two renders must agree
+    // byte for byte — the guard that would have caught any class drift
+    // (the w-16/w-20 class of bug) before the browser ever does.
+    const { container, unmount } = render(
+      <FacilityPanels packs={packs} inbound={inbound} station={station} />,
+    );
+    const first = container.innerHTML;
+    unmount();
+    const second = render(
+      <FacilityPanels packs={packs} inbound={inbound} station={station} />,
+    ).container.innerHTML;
+    expect(second).toBe(first);
+    // and the class under the regression report is the fresh one everywhere
+    expect(first).toContain("w-20");
+    expect(first).not.toContain('class="w-16"');
+  });
+});

@@ -666,7 +666,7 @@ export default function SiteCanvas({
           </button>
         </div>
 
-        <div className="absolute bottom-3 left-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-line bg-surface/90 px-2.5 py-1.5 backdrop-blur-sm">
+        <div className="absolute bottom-3 left-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-line bg-surface/95 px-2.5 py-1.5">
           {[
             ["var(--ok)", "charging / delivering"],
             ["var(--warn)", "DG running"],

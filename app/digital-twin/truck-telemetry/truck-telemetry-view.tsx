@@ -145,7 +145,7 @@ export default function TruckTelemetryView({ data }: { data: TrustedTelemetryDoc
       />
 
       {/* 1 — MAP, absolute top, full width ------------------------------- */}
-      <Card id={MAP_ANCHOR_ID}>
+      <Card id={MAP_ANCHOR_ID} className="scroll-mt-16">
         <div className="p-3">
           <PanelErrorBoundary name="Carrier map" resetKey={data.generated_at}>
             <FleetMap points={points} clusters={clusters} heightClass="h-[440px]" />

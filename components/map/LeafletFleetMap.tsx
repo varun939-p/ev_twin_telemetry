@@ -316,7 +316,7 @@ function HoverCard({
   const arrow = (
     <span
       aria-hidden
-      className={`absolute left-1/2 h-2.5 w-2.5 -translate-x-1/2 rotate-45 border-line-strong bg-surface ${
+      className={`absolute left-1/2 h-2.5 w-2.5 -translate-x-1/2 rotate-45 border-slate-200/90 bg-white ${
         below ? "-top-1 border-l border-t" : "-bottom-1 border-b border-r"
       }`}
     />
@@ -331,27 +331,30 @@ function HoverCard({
         ref={cardRef}
         className="rise-in pointer-events-none absolute left-0 top-0 z-[900] w-[248px] will-change-transform"
       >
-        <div className="relative rounded-xl border border-line-strong bg-surface/95 p-3 shadow-[0_10px_28px_rgba(0,0,0,0.4)] backdrop-blur-sm">
+        {/* LIGHT callout on the dark map — deliberately NOT a token: the card
+            must stay crisp white in BOTH themes, and it must never blur or
+            dim the radar field behind it (no backdrop-filter, ~95% alpha). */}
+        <div className="relative rounded-xl border border-slate-200/90 bg-white/95 p-3 shadow-[0_8px_22px_rgba(2,6,23,0.35)]">
           {arrow}
-          <p className="truncate text-[12.5px] font-semibold text-ink">
+          <p className="truncate text-[12.5px] font-semibold text-slate-900">
             {c.city}, {c.state}
           </p>
-          <p className="mt-0.5 text-[11px] text-ink-2">
+          <p className="mt-0.5 text-[11px] text-slate-500">
             {regionOfState(c.state) ?? "Unmapped region"} region
           </p>
-          <div className="my-2 h-px bg-line" />
-          <p className="text-[11px] text-ink-2">
-            <span className="num font-semibold text-ink">{c.count}</span>{" "}
+          <div className="my-2 h-px bg-slate-200" />
+          <p className="text-[11px] text-slate-600">
+            <span className="num font-semibold text-slate-900">{c.count}</span>{" "}
             {c.count === 1 ? "carrier" : "carriers"} in this cluster
           </p>
-          <p className="mt-0.5 text-[11px] text-ink-2">
+          <p className="mt-0.5 text-[11px] text-slate-600">
             Avg SOC <span className="num">{c.avgSoc === null ? "—" : `${c.avgSoc}%`}</span>
             {"  ·  "}
             <span className="font-medium" style={{ color: HEAT_TIER_COLOR[tier] }}>
               {tierLabel}
             </span>
           </p>
-          <p className="mt-2 text-[11px] font-medium text-accent">
+          <p className="mt-2 text-[11px] font-medium text-blue-600">
             Click to zoom in — every other carrier stays on the map
           </p>
         </div>
@@ -366,11 +369,12 @@ function HoverCard({
       ref={cardRef}
       className="rise-in pointer-events-none absolute left-0 top-0 z-[900] w-[248px] will-change-transform"
     >
-      <div className="relative rounded-xl border border-line-strong bg-surface/95 p-3 shadow-[0_10px_28px_rgba(0,0,0,0.4)] backdrop-blur-sm">
+      {/* light callout — no backdrop-filter, both-theme crisp (see cluster card) */}
+      <div className="relative rounded-xl border border-slate-200/90 bg-white/95 p-3 shadow-[0_8px_22px_rgba(2,6,23,0.35)]">
         {arrow}
         {/* identity: human label + status, exactly like a Maps place card */}
         <div className="flex items-start justify-between gap-2">
-          <p className="truncate text-[12.5px] font-semibold text-ink">
+          <p className="truncate text-[12.5px] font-semibold text-slate-900">
             {p.batteryLabel ?? p.chassis}
           </p>
           <span
@@ -381,30 +385,30 @@ function HoverCard({
             {STATUS_SHORT[p.status]}
           </span>
         </div>
-        <p className="num mt-0.5 truncate text-[10.5px] text-ink-3">
+        <p className="num mt-0.5 truncate text-[10.5px] text-slate-400">
           ID {p.vehicleId}
           {p.batteryLabel ? ` · ${p.chassis}` : ""}
         </p>
 
-        <div className="my-2 h-px bg-line" />
+        <div className="my-2 h-px bg-slate-200" />
 
         {/* live location */}
-        <p className="truncate text-[11.5px] text-ink-2">
-          <span className="font-semibold text-ink">{p.city ?? "Unmapped"}</span>
+        <p className="truncate text-[11.5px] text-slate-600">
+          <span className="font-semibold text-slate-900">{p.city ?? "Unmapped"}</span>
           {p.state ? `, ${p.state}` : ""}
         </p>
-        <p className="num mt-0.5 text-[10.5px] text-ink-3">
+        <p className="num mt-0.5 text-[10.5px] text-slate-400">
           {fmtCoord(p.lat, "N", "S")}, {fmtCoord(p.lon, "E", "W")}
         </p>
 
         {/* live vitals */}
         {p.soc !== null && (
           <div className="mt-2">
-            <div className="flex items-baseline justify-between text-[10.5px] text-ink-3">
+            <div className="flex items-baseline justify-between text-[10.5px] text-slate-400">
               <span className="font-semibold tracking-[0.08em]">SOC</span>
-              <span className="num text-ink-2">{p.soc}%</span>
+              <span className="num text-slate-600">{p.soc}%</span>
             </div>
-            <div className="mt-1 h-[3px] overflow-hidden rounded-full bg-surface-3">
+            <div className="mt-1 h-[3px] overflow-hidden rounded-full bg-slate-200">
               <div
                 className="h-full rounded-full"
                 style={{ width: `${Math.min(100, Math.max(0, p.soc))}%`, background: color }}
@@ -412,7 +416,7 @@ function HoverCard({
             </div>
           </div>
         )}
-        <p className="mt-2 text-[10px] uppercase tracking-[0.08em] text-ink-3">{p.ageLabel}</p>
+        <p className="mt-2 text-[10px] uppercase tracking-[0.08em] text-slate-400">{p.ageLabel}</p>
       </div>
     </div>
   );
@@ -550,6 +554,7 @@ const ClusterMarker = memo(function ClusterMarker({
       iconAnchor: [size / 2, size / 2],
       html: `<div class="heat-blob heat-${tier}" style="width:${size}px;height:${size}px;--ping-delay:-${pingDelay(cluster.id)}s" data-cluster-id="${cluster.id}">
                <span class="heat-halo" aria-hidden></span>
+               <span class="heat-center" aria-hidden></span>
                <span class="heat-ping" aria-hidden></span>
                <span class="heat-ping heat-ping-late" aria-hidden></span>
              </div>`,
@@ -920,7 +925,7 @@ export default function LeafletFleetMap({
         </button>
 
         {/* zoom read-out + layer state */}
-        <div className="pointer-events-none absolute bottom-3 right-3 rounded-md border border-line bg-surface/90 px-2 py-1 text-[10px] font-semibold tracking-[0.1em] text-ink-3 backdrop-blur-sm">
+        <div className="pointer-events-none absolute bottom-3 right-3 rounded-md border border-line bg-surface/90 px-2 py-1 text-[10px] font-semibold tracking-[0.1em] text-ink-3">
           z<span className="num">{zoom}</span> · {showClusters ? "city clusters" : "assets"}
           {fallbackGeo && <span className="ml-1 text-warn">· offline basemap</span>}
         </div>
@@ -928,7 +933,7 @@ export default function LeafletFleetMap({
         {/* legend — live nodes + density tiers (status detail lives on the
             hover card; the map speaks two visual languages: pulsing = live,
             bubble colour = density) */}
-        <div className="pointer-events-none absolute bottom-3 left-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-line bg-surface/90 px-2.5 py-1.5 backdrop-blur-sm">
+        <div className="pointer-events-none absolute bottom-3 left-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-line bg-surface/95 px-2.5 py-1.5">
           <span className="flex items-center gap-1.5 text-[11px] font-medium text-ink-2">
             <span className="relative inline-flex h-2.5 w-2.5">
               <span className="absolute inset-0 rounded-full border border-[#63b3ff]" style={{ opacity: 0.55 }} />

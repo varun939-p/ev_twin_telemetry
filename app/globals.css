@@ -345,6 +345,7 @@ body {
   .live-node-core,
   .heat-ping,
   .heat-halo,
+  .heat-center,
   .severity-preview-dot::before,
   .severity-preview-dot::after {
     animation: none !important;
@@ -414,13 +415,15 @@ body {
   position: absolute;
   inset: 0;
   margin: auto;
-  width: 10px;
-  height: 10px;
+  width: 11px;
+  height: 11px;
   border-radius: 9999px;
-  background: #63b3ff;
-  border: 1.5px solid rgba(255, 255, 255, 0.9);
-  box-shadow: 0 0 6px rgba(99, 179, 255, 0.75);
-  animation: live-node-blink 2.2s ease-in-out infinite;
+  background: #7cc4ff;
+  border: 1.5px solid rgba(255, 255, 255, 0.95);
+  box-shadow:
+    0 0 8px rgba(124, 196, 255, 0.9),
+    0 0 2px rgba(255, 255, 255, 0.9) inset;
+  animation: live-node-blink 1.6s ease-in-out infinite;
   transition: background 0.15s ease;
 }
 .live-node-ring {
@@ -434,9 +437,11 @@ body {
   animation: live-node-pulse 2.2s cubic-bezier(0.2, 0.6, 0.4, 1) infinite;
 }
 .live-node.is-active .live-node-core {
-  background: #a8d4ff;
+  background: #b8dcff;
   border-color: #ffffff;
-  box-shadow: 0 0 10px rgba(140, 200, 255, 0.95);
+  box-shadow:
+    0 0 12px rgba(160, 210, 255, 1),
+    0 0 3px rgba(255, 255, 255, 0.95) inset;
   animation-duration: 1.2s;
 }
 .live-node.is-active .live-node-ring {
@@ -448,7 +453,7 @@ body {
     opacity: 1;
   }
   50% {
-    opacity: 0.55;
+    opacity: 0.45;
   }
 }
 @keyframes live-node-pulse {
@@ -498,14 +503,33 @@ body {
   border-radius: 9999px;
   background: radial-gradient(
     circle,
-    color-mix(in srgb, var(--heat) 26%, transparent) 0%,
-    color-mix(in srgb, var(--heat) 13%, transparent) 42%,
-    color-mix(in srgb, var(--heat) 4%, transparent) 62%,
-    transparent 76%
+    color-mix(in srgb, var(--heat) 34%, transparent) 0%,
+    color-mix(in srgb, var(--heat) 16%, transparent) 40%,
+    color-mix(in srgb, var(--heat) 6%, transparent) 60%,
+    transparent 78%
   );
-  border: 1px solid color-mix(in srgb, var(--heat) 38%, transparent);
-  animation: heat-breathe 3.6s ease-in-out infinite;
+  border: 1px solid color-mix(in srgb, var(--heat) 45%, transparent);
+  animation: heat-breathe 3.2s ease-in-out infinite;
   transition: filter 0.15s ease;
+}
+/* Luminous core of the field: a tiny light disc that gives the cell a
+   centre of mass without ever carrying text — the "hot reading" of a radar
+   blip. Light-mixed so it reads as glow, not a solid bubble. */
+.heat-center {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 26%;
+  height: 26%;
+  border-radius: 9999px;
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, white 55%, var(--heat)) 0%,
+    color-mix(in srgb, var(--heat) 45%, transparent) 70%,
+    transparent 100%
+  );
+  filter: blur(0.5px);
+  animation: heat-breathe 3.2s ease-in-out infinite;
 }
 .heat-blob:hover .heat-halo {
   filter: brightness(1.12) saturate(1.15);
@@ -514,32 +538,32 @@ body {
   position: absolute;
   inset: 0;
   border-radius: 9999px;
-  border: 1.5px solid color-mix(in srgb, var(--heat) 52%, transparent);
+  border: 1.5px solid color-mix(in srgb, var(--heat) 60%, transparent);
   opacity: 0;
-  animation: heat-radar 3.6s cubic-bezier(0.2, 0.6, 0.4, 1) infinite;
+  animation: heat-radar 3.2s cubic-bezier(0.2, 0.6, 0.4, 1) infinite;
   animation-delay: var(--ping-delay, 0s);
 }
 .heat-ping-late {
-  animation-delay: calc(var(--ping-delay, 0s) + 1.8s);
+  animation-delay: calc(var(--ping-delay, 0s) + 1.6s);
 }
 @keyframes heat-radar {
   0% {
     transform: scale(0.55);
-    opacity: 0.8;
+    opacity: 0.85;
   }
   80% {
-    transform: scale(1.9);
+    transform: scale(2.05);
     opacity: 0;
   }
   100% {
-    transform: scale(1.9);
+    transform: scale(2.05);
     opacity: 0;
   }
 }
 @keyframes heat-breathe {
   0%,
   100% {
-    opacity: 0.72;
+    opacity: 0.65;
   }
   50% {
     opacity: 1;

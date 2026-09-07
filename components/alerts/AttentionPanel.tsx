@@ -347,7 +347,7 @@ export default function AttentionPanel({
           return (
             <div
               role="tooltip"
-              className="rise-in pointer-events-none fixed z-[60] rounded-xl border border-line-strong bg-surface/95 p-3 shadow-[0_10px_28px_rgba(0,0,0,0.4)] backdrop-blur-sm"
+              className="rise-in pointer-events-none fixed z-[60] rounded-xl border border-line-strong bg-surface/95 p-3 shadow-[0_10px_28px_rgba(0,0,0,0.4)]"
               style={{ left, top, width: POPOVER_W }}
             >
               <div className="flex items-center gap-2">

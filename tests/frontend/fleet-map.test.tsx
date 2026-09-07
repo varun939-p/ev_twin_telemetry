@@ -286,6 +286,13 @@ describe("LeafletFleetMap — hover popups", () => {
     const cardRoot = screen.getByText(/ID TRK-007/).closest<HTMLDivElement>("div[class*='z-[900]']");
     expect(cardRoot?.style.transform).toMatch(/translate3d/);
 
+    // CRYSTAL-CLEAR mandate: the callout must never blur or dim the map
+    // behind it — no backdrop-filter utility anywhere on the card — and it
+    // is the LIGHT callout (white card, explicit palette), not a token that
+    // flips dark inside the .canvas-dark scope.
+    expect(cardRoot?.className).not.toContain("backdrop-blur");
+    expect(cardRoot?.innerHTML).toContain("bg-white/95");
+
     // …and the map→table link fires (row highlight pointer).
     expect(useTwin.getState().hovered?.vehicleId).toBe("TRK-007");
   });
