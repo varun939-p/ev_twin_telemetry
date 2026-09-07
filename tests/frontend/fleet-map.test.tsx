@@ -274,16 +274,18 @@ describe("LeafletFleetMap — hover popups", () => {
     expect(node).toBeTruthy();
     fireEvent.mouseOver(node!);
 
-    // The Google-Maps-style card appears…
-    await screen.findByText(/ID TRK-007/, {}, { timeout: 3000 });
-    // …with the required content: live location, ID, current status.
-    expect(screen.getByText("Moving")).toBeTruthy();
+    // The carrier-only Google-Maps-style card appears…
+    await screen.findByText("CHASSIS-TRK-007", {}, { timeout: 3000 });
+    // …with the required carrier content: location, status, and no battery fields.
+    expect(screen.getAllByText("Moving").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText(/18\.5204° N/)).toBeTruthy();
     expect(screen.getByText(/73\.8567° E/)).toBeTruthy();
-    expect(screen.getByText("SOC")).toBeTruthy();
+    expect(screen.getByText("Speed")).toBeTruthy();
+    expect(screen.queryByText("SOC")).toBeNull();
+    expect(screen.queryByText(/Battery/)).toBeNull();
 
     // Glued positioning: the card is placed via an inline transform.
-    const cardRoot = screen.getByText(/ID TRK-007/).closest<HTMLDivElement>("div[class*='z-[1200]']");
+    const cardRoot = screen.getByText("CHASSIS-TRK-007").closest<HTMLDivElement>("div[class*='z-[1200]']");
     expect(cardRoot?.style.transform).toMatch(/translate3d/);
 
     // CRYSTAL-CLEAR mandate: the callout must never blur or dim the map

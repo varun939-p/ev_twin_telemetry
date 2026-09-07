@@ -224,15 +224,21 @@ export default function TruckTable({
     const dir = sort.dir === "asc" ? 1 : -1;
     // Nulls always sink to the bottom regardless of direction: an unmeasured
     // value is not "the smallest", it is unknown.
-    const num = (v: number | null) => (v === null ? Number.POSITIVE_INFINITY * dir : v);
+    const compareNumbers = (a: number | null, b: number | null) => {
+      // Unknown values always sink, regardless of direction.
+      if (a === null && b === null) return 0;
+      if (a === null) return 1;
+      if (b === null) return -1;
+      return (a - b) * dir;
+    };
     return [...rows].sort((a, b) => {
       switch (sort.key) {
         case "soc":
-          return (num(a.soc) - num(b.soc)) * dir;
+          return compareNumbers(a.soc, b.soc);
         case "residual":
-          return (num(a.residualKm) - num(b.residualKm)) * dir;
+          return compareNumbers(a.residualKm, b.residualKm);
         case "odometer":
-          return (num(a.odometerKm) - num(b.odometerKm)) * dir;
+          return compareNumbers(a.odometerKm, b.odometerKm);
         case "status":
           return a.status.localeCompare(b.status) * dir;
         default:

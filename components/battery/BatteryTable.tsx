@@ -6,7 +6,7 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import DetailChevron from "@/components/ui/DetailChevron";
 import { StatusPill, Value } from "@/components/ui/Pill";
 import { EmptyState } from "@/components/ui/Surface";
-import { SOC_CRITICAL, type BatteryRow } from "@/lib/fleet-metrics";
+import { SOC_CRITICAL, SOC_LOW, type BatteryRow } from "@/lib/fleet-metrics";
 import { useIsHovered, useIsSelected, useTwin } from "@/lib/store";
 
 /**
@@ -76,7 +76,8 @@ const Row = memo(function Row({ row, onKnowMore }: { row: BatteryRow; onKnowMore
   }, [pointerSeq]);
 
   const critical = row.soc !== null && row.soc < SOC_CRITICAL;
-  const socTone = row.soc === null ? "bg-ink-3" : critical ? "bg-danger" : row.soc < 50 ? "bg-warn" : "bg-ok";
+  const warning = row.soc !== null && row.soc >= SOC_CRITICAL && row.soc <= SOC_LOW;
+  const socTone = row.soc === null ? "bg-ink-3" : critical ? "bg-danger" : warning ? "bg-warn" : "bg-ok";
 
   return (
     <tr
@@ -89,9 +90,11 @@ const Row = memo(function Row({ row, onKnowMore }: { row: BatteryRow; onKnowMore
           ? "bg-accent-soft"
           : hovered
             ? "bg-surface-3"
-            : critical
-              ? "bg-danger-soft/60 hover:bg-danger-soft"
-              : "hover:bg-surface-2"
+              : critical
+                ? "bg-danger-soft/60 hover:bg-danger-soft"
+                : warning
+                  ? "bg-warn-soft/60 hover:bg-warn-soft"
+                  : "hover:bg-surface-2"
       }`}
     >
       <td className="px-3 py-2">
@@ -178,15 +181,21 @@ export default function BatteryTable({
 
   const sorted = useMemo(() => {
     const dir = sort.dir === "asc" ? 1 : -1;
-    const num = (v: number | null) => (v === null ? Number.POSITIVE_INFINITY * dir : v);
+    const compareNumbers = (a: number | null, b: number | null) => {
+      // Unknown values always sink, regardless of direction.
+      if (a === null && b === null) return 0;
+      if (a === null) return 1;
+      if (b === null) return -1;
+      return (a - b) * dir;
+    };
     return [...rows].sort((a, b) => {
       switch (sort.key) {
         case "soc":
-          return (num(a.soc) - num(b.soc)) * dir;
+          return compareNumbers(a.soc, b.soc);
         case "soh":
-          return (num(a.soh) - num(b.soh)) * dir;
+          return compareNumbers(a.soh, b.soh);
         case "cycles":
-          return (num(a.cycles) - num(b.cycles)) * dir;
+          return compareNumbers(a.cycles, b.cycles);
         default:
           return a.batteryId.localeCompare(b.batteryId, undefined, { numeric: true }) * dir;
       }

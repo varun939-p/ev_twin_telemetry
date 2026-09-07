@@ -36,14 +36,14 @@ export const STATUS_LABEL: Record<AssetStatus, string> = {
   moving: "In service · moving",
   charging: "Charging",
   idle: "Idle · parked",
-  unknown: "No motion reading",
+  unknown: "Offline / stale",
 };
 
 export const STATUS_SHORT: Record<AssetStatus, string> = {
   moving: "Moving",
   charging: "Charging",
   idle: "Idle",
-  unknown: "Unknown",
+  unknown: "Offline",
 };
 
 /** Token names, not hex: the map, tables and canvas all read the same set so
@@ -324,7 +324,7 @@ export function batteryAlerts(
         )}. ${age} Route to the nearest hub before the next leg.`,
         metric: `SOC ${soc}%`,
       });
-    } else if (soc !== null && soc < SOC_LOW) {
+    } else if (soc !== null && soc <= SOC_LOW) {
       alerts.push({
         id: `${v.vehicle_id}:soc-low`,
         kind: "soc-low",

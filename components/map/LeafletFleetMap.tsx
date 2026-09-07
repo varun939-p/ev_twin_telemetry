@@ -387,7 +387,7 @@ function HoverCard({
         {/* identity: human label + status, exactly like a Maps place card */}
         <div className="flex items-start justify-between gap-2">
           <p className="truncate text-[12.5px] font-semibold text-slate-900">
-            {p.batteryLabel ?? p.chassis}
+            {p.chassis}
           </p>
           <span
             className="inline-flex shrink-0 items-center gap-1.5 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold"
@@ -398,8 +398,7 @@ function HoverCard({
           </span>
         </div>
         <p className="num mt-0.5 truncate text-[10.5px] text-slate-400">
-          ID {p.vehicleId}
-          {p.batteryLabel ? ` · ${p.chassis}` : ""}
+          Carrier ID {p.chassis}
         </p>
 
         <div className="my-2 h-px bg-slate-200" />
@@ -413,21 +412,10 @@ function HoverCard({
           {fmtCoord(p.lat, "N", "S")}, {fmtCoord(p.lon, "E", "W")}
         </p>
 
-        {/* live vitals */}
-        {p.soc !== null && (
-          <div className="mt-2">
-            <div className="flex items-baseline justify-between text-[10.5px] text-slate-400">
-              <span className="font-semibold tracking-[0.08em]">SOC</span>
-              <span className="num text-slate-600">{p.soc}%</span>
-            </div>
-            <div className="mt-1 h-[3px] overflow-hidden rounded-full bg-slate-200">
-              <div
-                className="h-full rounded-full"
-                style={{ width: `${Math.min(100, Math.max(0, p.soc))}%`, background: color }}
-              />
-            </div>
-          </div>
-        )}
+        <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-slate-600">
+          <span><span className="font-semibold text-slate-900">Speed</span><br />{p.speedKmh == null ? "No reading" : `${p.speedKmh} km/h`}</span>
+          <span><span className="font-semibold text-slate-900">Status</span><br />{STATUS_SHORT[p.status]}</span>
+        </div>
         <p className="mt-2 text-[10px] uppercase tracking-[0.08em] text-slate-400">{p.ageLabel}</p>
       </div>
     </div>
@@ -451,10 +439,19 @@ function clusterSize(count: number, maxCount: number): number {
  */
 const NODE_PX = 24;
 
-const VehicleMarker = memo(function VehicleMarker({ point }: { point: MapPoint }) {
+const VehicleMarker = memo(function VehicleMarker({
+  point,
+  onHoverIn,
+  onHoverOut,
+}: {
+  point: MapPoint;
+  onHoverIn: (kind: "point", id: string) => void;
+  onHoverOut: () => void;
+}) {
   const hovered = useIsHovered(point.vehicleId);
   const selected = useIsSelected(point.vehicleId);
   const select = useTwin((s) => s.select);
+  const setHovered = useTwin((s) => s.hover);
   const requestFly = useTwin((s) => s.requestFly);
 
   const active = hovered || selected;
@@ -472,7 +469,7 @@ const VehicleMarker = memo(function VehicleMarker({ point }: { point: MapPoint }
                  <span class="live-node-core" aria-hidden></span>
                </div>`,
       }),
-    [active, point.vehicleId],
+      [active, point.vehicleId],
   );
 
   return (
@@ -481,8 +478,14 @@ const VehicleMarker = memo(function VehicleMarker({ point }: { point: MapPoint }
       icon={icon}
       keyboard={false}
       eventHandlers={{
-        // Individual truck hover deliberately has no popup. Truck Telemetry
-        // is a carrier view; battery context belongs to Battery Tracking.
+        mouseover: () => {
+          setHovered(point.vehicleId, "map");
+          onHoverIn("point", point.vehicleId);
+        },
+        mouseout: () => {
+          setHovered(null, "map");
+          onHoverOut();
+        },
         click: () => {
           select(point.vehicleId, "map");
           // Readable radius, never a rooftop dive. NO filtering — selection
@@ -857,7 +860,12 @@ export default function LeafletFleetMap({
               />
             ))
           : points.map((p) => (
-              <VehicleMarker key={p.vehicleId} point={p} />
+              <VehicleMarker
+                key={p.vehicleId}
+                point={p}
+                onHoverIn={onHoverIn}
+                onHoverOut={onHoverOut}
+              />
             ))}
       </MapContainer>
 

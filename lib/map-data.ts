@@ -24,6 +24,7 @@ export interface MapPoint {
   lat: number;
   lon: number;
   status: AssetStatus;
+  speedKmh?: number | null;
   soc: number | null;
   batteryLabel: string | null;
   chassis: string;
@@ -98,6 +99,7 @@ export function buildMapPoints(rows: TruckRow[], now: Date = new Date()): { poin
       lat,
       lon,
       status: row.status,
+      speedKmh: row.speedKmh,
       soc: row.soc,
       batteryLabel: row.batteryLabel,
       chassis: row.chassis,
