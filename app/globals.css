@@ -23,12 +23,9 @@
  * a client-facing dashboard should have one deliberate, art-directed
  * appearance, not two half-tuned ones.
  *
- * The exception is the two DATA CANVASES — the fleet map and the isometric
- * facility model. Those stay dark, because a dark ground is what makes status
- * colour read as luminous signal rather than as ink on paper. They opt in via
- * `.canvas-dark`, which re-declares the same token names locally, so every
- * component inside them keeps using `bg-surface` / `text-ink` and simply
- * resolves to the dark values. No component knows which surface it is on.
+ * The fleet map remains a dark data canvas so live GPS nodes retain contrast.
+ * The facility twin uses a separate light atmospheric stage, preserving the
+ * same semantic status and accent tokens without returning to a black scene.
  * ------------------------------------------------------------------------- */
 
 :root {
@@ -210,6 +207,42 @@ body {
   min-height: 240px;
 }
 
+/* Native momentum carousel used by the multi-site filter. It remains
+   keyboard-scrollable while the decorative scrollbar is hidden. */
+.site-scroll {
+  scrollbar-width: none;
+  overscroll-behavior-inline: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.site-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* Light environmental stage for the isometric facility model. */
+.facility-stage {
+  --canvas: #eef4f9;
+  --surface: rgba(255, 255, 255, 0.96);
+  --surface-2: #f8fbfd;
+  --surface-3: #e8eff5;
+  --line: rgba(70, 96, 119, 0.14);
+  --line-strong: rgba(61, 87, 110, 0.26);
+  --ink: #1b2732;
+  --ink-2: #526779;
+  --ink-3: #7d91a2;
+  --plate: #dce7ef;
+  --shadow: 0 6px 18px rgba(27, 53, 76, 0.08);
+  min-height: 360px;
+  background:
+    radial-gradient(circle at 50% 32%, rgba(255, 255, 255, 0.96), transparent 54%),
+    linear-gradient(180deg, #f8fbfe 0%, #e5edf4 100%);
+  color: var(--ink);
+}
+.facility-scene {
+  min-height: 360px;
+  will-change: transform;
+  transition: transform 320ms cubic-bezier(0.2, 0.75, 0.25, 1);
+}
+
 /* Scrollbars that match the surface instead of the OS default */
 .scroll-thin {
   scrollbar-width: thin;
@@ -349,6 +382,9 @@ body {
   .severity-preview-dot::before,
   .severity-preview-dot::after {
     animation: none !important;
+  }
+  .facility-scene {
+    transition: none !important;
   }
 }
 

@@ -42,7 +42,7 @@ describe("FacilityPanels — the three operational panels", () => {
     expect(screen.getByText("Bay 4")).toBeTruthy();
     expect(screen.getByText("Battery 1")).toBeTruthy();
     // the vehicle queue surfaces the real inbound carrier + ETA
-    expect(screen.getByText("Vehicle queue")).toBeTruthy();
+    expect(screen.getByText("Incoming truck queue")).toBeTruthy();
     expect(screen.getByText("CHASSIS-9")).toBeTruthy();
     expect(screen.getByText("1 inbound")).toBeTruthy();
     // the active transaction caption from the dock state machine
@@ -63,10 +63,10 @@ describe("FacilityPanels — the three operational panels", () => {
 
   it("renders grid/DG load with site draw, feeder limit and DG state", () => {
     render(<FacilityPanels packs={packs} inbound={inbound} station={station} />);
-    expect(screen.getByText("Grid & DG load")).toBeTruthy();
-    expect(screen.getByText("Site draw")).toBeTruthy();
+    expect(screen.getByText("Grid and generator power")).toBeTruthy();
+    expect(screen.getByText("Total site power demand")).toBeTruthy();
     expect(screen.getByText("Diesel generator")).toBeTruthy();
-    expect(screen.getByText(/Grid stable|DG assisting/)).toBeTruthy();
+    expect(screen.getByText(/Grid stable|Generator assisting/)).toBeTruthy();
     // feeder budget line (250 kW model) and the modelled-load footnote
     expect(screen.getByText(/\/ 250 kW/)).toBeTruthy();
     expect(screen.getByText(/Modelled load until the site controller/)).toBeTruthy();

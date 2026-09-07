@@ -36,6 +36,7 @@ import { MAP_ANCHOR_ID, scrollMapIntoView, VEHICLE_DEEP_LINK_PARAM } from "@/lib
 import { applyVehicleFilters, batteryRegistry, buildGeoIndex, deriveSites, isEvVehicle } from "@/lib/fleet";
 import { truckAlerts, truckRows, type TruckRow } from "@/lib/fleet-metrics";
 import { buildCityClusters, buildMapPoints, ZOOM } from "@/lib/map-data";
+import { normalizeGpsCoordinates } from "@/lib/gps";
 import { useFilterState, useTwin } from "@/lib/store";
 import { orderedParams, type TrustedTelemetryDocument } from "@/lib/trusted-telemetry";
 
@@ -77,9 +78,11 @@ export default function TruckTelemetryView({ data }: { data: TrustedTelemetryDoc
       select(vehicleId, "table");
       scrollMapIntoView(); // the alert panel sits BELOW the map — go to it
       const row = rows.find((r) => r.vehicleId === vehicleId);
-      const lat = row?.vehicle.values["latitude"];
-      const lon = row?.vehicle.values["longitude"];
-      if (typeof lat === "number" && typeof lon === "number") requestFly(lat, lon, ZOOM.asset);
+      const coordinate = normalizeGpsCoordinates(
+        row?.vehicle.values["latitude"],
+        row?.vehicle.values["longitude"],
+      );
+      if (coordinate) requestFly(coordinate.lat, coordinate.lon, ZOOM.asset);
     },
     [rows, select, requestFly],
   );
@@ -117,9 +120,8 @@ export default function TruckTelemetryView({ data }: { data: TrustedTelemetryDoc
     scrollMapIntoView();
     if (!match) return;
     select(match.vehicle_id, "link");
-    const lat = match.values["latitude"];
-    const lon = match.values["longitude"];
-    if (typeof lat === "number" && typeof lon === "number") requestFly(lat, lon, ZOOM.asset);
+    const coordinate = normalizeGpsCoordinates(match.values["latitude"], match.values["longitude"]);
+    if (coordinate) requestFly(coordinate.lat, coordinate.lon, ZOOM.asset);
   }, [deepLink, vehicles, select, requestFly]);
 
   /* ------------------------------------------------------------- render */
@@ -129,17 +131,20 @@ export default function TruckTelemetryView({ data }: { data: TrustedTelemetryDoc
       <PageHeading
         title="Truck Telemetry"
         actions={
-          <div className="flex flex-wrap items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5" aria-label="Carrier status totals">
+            <Pill tone="neutral">{rows.length} total carriers</Pill>
             <Pill tone="ok" dot pulse>
               {statusCounts.moving} moving
             </Pill>
             <Pill tone="info" dot>
               {statusCounts.charging} charging
             </Pill>
-            <Pill tone="warn" dot>
-              {statusCounts.idle} idle
+            <Pill tone="neutral" dot>
+              {statusCounts.idle} parked
             </Pill>
-            {statusCounts.unknown > 0 && <Pill tone="neutral">{statusCounts.unknown} no reading</Pill>}
+            <Pill tone="warn" dot>
+              {statusCounts.unknown} other / offline
+            </Pill>
           </div>
         }
       />

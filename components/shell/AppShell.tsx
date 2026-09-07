@@ -5,8 +5,6 @@ import { useState, type ReactNode } from "react";
 
 import AutoIngestTrigger from "@/components/shell/AutoIngestTrigger";
 import LiveClock from "@/components/shell/LiveClock";
-import IngestionStatus from "@/components/shell/IngestionStatus";
-import type { IngestionHealth } from "@/lib/ingestion-status";
 import Sidebar, { NAV_ITEMS } from "@/components/shell/Sidebar";
 import { Pill } from "@/components/ui/Pill";
 import type { TelemetrySource } from "@/lib/trusted-telemetry";
@@ -29,7 +27,6 @@ export default function AppShell({
   measuredChannels,
   source,
   sourceNote,
-  ingestion,
   canBootstrap = false,
 }: {
   children: ReactNode;
@@ -41,7 +38,6 @@ export default function AppShell({
   source: TelemetrySource;
   /** Why we fell back, when we did. Never hidden from the operator. */
   sourceNote: string | null;
-  ingestion: IngestionHealth | null;
   canBootstrap?: boolean;
 }) {
   const pathname = usePathname();
@@ -114,7 +110,6 @@ export default function AppShell({
             an ultrawide display stretching cards and prose to unreadable
             line lengths. */}
         <main className="mx-auto w-full min-w-0 max-w-[1920px] flex-1 px-4 py-5 lg:px-6 lg:py-6">
-          <IngestionStatus health={ingestion} />
           {children}
         </main>
       </div>

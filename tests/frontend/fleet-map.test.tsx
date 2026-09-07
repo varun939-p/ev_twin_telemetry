@@ -8,9 +8,9 @@
  *      other truck keeps rendering.
  *   2. EXIT LIVE VIEW — the button must clear selection/hover/focus state and
  *      fly the camera to the fixed wide-India frame in a single move.
- *   3. HOVER POPUPS — hovering a truck marker opens the floating card with
- *      the truck's ID, live coordinates and status, and publishes the
- *      table-highlight pointer.
+ *   3. HOVER BOUNDARY — individual truck hover publishes the table-highlight
+ *      pointer but never mounts a battery or vehicle card; aggregate cluster
+ *      hover keeps its legitimate region/count/average-charge detail.
  *   4. LIVE PULSING NODES — individual trucks render as light-blue pulsing
  *      divIcon nodes (`.live-node-ring`), not static pins.
  *   5. DENSITY RADAR FIELD — grouped carriers render as highly transparent,
@@ -64,7 +64,7 @@ function makePoint(
   city: string | null = null,
   state: string | null = null,
 ): MapPoint {
-  return { vehicleId, lat, lon, status, soc, batteryLabel: `Battery ${vehicleId.slice(-1)}`, chassis: `CHASSIS-${vehicleId}`, city, state, ageLabel: "frame 2m old" };
+  return { vehicleId, lat, lon, status, soc, chassis: `CHASSIS-${vehicleId}`, city, state, ageLabel: "frame 2m old" };
 }
 
 /**
@@ -180,6 +180,13 @@ describe("LeafletFleetMap — density radar field", () => {
     expect(singleton!.querySelector(".live-node-core")).toBeTruthy();
     expect(singleton!.querySelector(".live-node-ring")).toBeTruthy();
     expect(document.querySelectorAll(".heat-blob").length).toBe(2);
+
+    // A one-carrier city is not a legitimate aggregate: even at cluster zoom,
+    // hovering its node must never resurrect an individual battery card.
+    fireEvent.mouseOver(singleton!);
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(screen.queryByText("1 carrier in this cluster")).toBeNull();
+    expect(screen.queryByText(/Average battery charge/i)).toBeNull();
   });
 });
 
@@ -259,43 +266,33 @@ describe("LeafletFleetMap — live pulsing nodes", () => {
   });
 });
 
-describe("LeafletFleetMap — hover popups", () => {
-  it("hovering a truck marker opens the live card with ID, location and status", async () => {
+describe("LeafletFleetMap — hover boundary", () => {
+  it("links truck hover to the table without rendering any individual marker card", async () => {
     render(<LeafletFleetMap points={plainPoints} clusters={[]} />);
     await waitFor(() => expect(lastMap()).not.toBeNull());
-    const map = lastMap()!;
 
-    // Let the mount flight (wide-India frame) settle so projections are final.
-    await waitFor(() => expect(map.getCenter().lat).toBeCloseTo(21.5, 0), { timeout: 4000 });
-
-    // Markers are interactive DOM nodes (divIcons) — a real mouseover on the
-    // node element is exactly what a user's cursor produces.
     const node = document.querySelector<HTMLElement>('[data-vehicle-id="TRK-007"]');
     expect(node).toBeTruthy();
     fireEvent.mouseOver(node!);
 
-    // The Google-Maps-style card appears…
-    await screen.findByText(/ID TRK-007/, {}, { timeout: 3000 });
-    // …with the required content: live location, ID, current status.
-    expect(screen.getByText("Moving")).toBeTruthy();
-    expect(screen.getByText(/18\.5204° N/)).toBeTruthy();
-    expect(screen.getByText(/73\.8567° E/)).toBeTruthy();
-    expect(screen.getByText("SOC")).toBeTruthy();
+    await waitFor(() => expect(useTwin.getState().hovered?.vehicleId).toBe("TRK-007"));
+    expect(screen.queryByText(/ID TRK-007/)).toBeNull();
+    expect(screen.queryByText(/Battery 7/)).toBeNull();
+    expect(screen.queryByText(/18\.5204° N/)).toBeNull();
+    expect(document.querySelector('[role="tooltip"]')).toBeNull();
+  });
 
-    // Glued positioning: the card is placed via an inline transform.
-    const cardRoot = screen.getByText(/ID TRK-007/).closest<HTMLDivElement>("div[class*='z-[1200]']");
-    expect(cardRoot?.style.transform).toMatch(/translate3d/);
+  it("keeps legitimate aggregate detail on cluster hover", async () => {
+    render(<LeafletFleetMap points={cityPoints} clusters={buildCityClusters(cityPoints)} />);
+    await waitFor(() => expect(lastMap()).not.toBeNull());
 
-    // CRYSTAL-CLEAR mandate: the callout must never blur or dim the map
-    // behind it — no backdrop-filter utility anywhere on the card — and it
-    // is the LIGHT callout (white card, explicit palette), not a token that
-    // flips dark inside the .canvas-dark scope.
-    expect(cardRoot?.className).not.toContain("backdrop-blur");
-    // very transparent per the operator mandate, high-contrast near-black text
-    expect(cardRoot?.innerHTML).toContain("bg-white/80");
+    const cluster = document.querySelector<HTMLElement>('[data-cluster-id$="::Pune"]');
+    expect(cluster).toBeTruthy();
+    fireEvent.mouseOver(cluster!);
 
-    // …and the map→table link fires (row highlight pointer).
-    expect(useTwin.getState().hovered?.vehicleId).toBe("TRK-007");
+    expect(await screen.findByText("Pune, Maharashtra")).toBeTruthy();
+    expect(screen.getByText((_, element) => element?.tagName === "P" && element.textContent === "5 carriers in this cluster")).toBeTruthy();
+    expect(screen.getByText((_, element) => element?.tagName === "P" && element.textContent?.includes("Average battery charge") === true)).toBeTruthy();
   });
 });
 

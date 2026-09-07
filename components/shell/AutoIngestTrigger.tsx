@@ -6,7 +6,7 @@
  * Python write route stays bearer-protected when CRON_SECRET is configured.
  */
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 
 import { readIngestResponse } from "@/lib/ingest-response";
 import type { TelemetrySource } from "@/lib/trusted-telemetry";
@@ -14,13 +14,13 @@ import type { TelemetrySource } from "@/lib/trusted-telemetry";
 const TRIGGER_KEY = "twin-auto-ingest-triggered";
 const TRIGGER_COOLDOWN_MS = 60_000;
 
-export default function AutoIngestTrigger({ source, sourceNote, enabled = false }: {
+export default function AutoIngestTrigger({ source, enabled = false }: {
   source: TelemetrySource;
+  /** Retained for API compatibility; ingestion diagnostics are no longer rendered. */
   sourceNote: string | null;
   enabled?: boolean;
 }) {
   const router = useRouter();
-  const [status, setStatus] = useState<{ busy: boolean; message: string } | null>(null);
   const triggered = useRef(false);
 
   useEffect(() => {
@@ -40,7 +40,6 @@ export default function AutoIngestTrigger({ source, sourceNote, enabled = false 
     const start = setTimeout(async () => {
       triggered.current = true;
       try { sessionStorage.setItem(TRIGGER_KEY, String(Date.now())); } catch { /* optional */ }
-      setStatus({ busy: true, message: "Fetching telemetry from upstream…" });
       timeout = setTimeout(() => controller.abort(), 65_000);
       try {
         const response = await fetch("/api/ingest/run", {
@@ -48,13 +47,10 @@ export default function AutoIngestTrigger({ source, sourceNote, enabled = false 
         });
         const result = await readIngestResponse(response);
         if (cancelled) return;
-        setStatus({ busy: false, message: result.message });
         if (result.refresh) router.refresh();
       } catch {
-        if (cancelled) return;
-        setStatus({ busy: false, message: controller.signal.aborted
-          ? "Ingestion request timed out. Check ingestion status before retrying."
-          : "Backend unreachable. Start the control plane and check BACKEND_URL." });
+        // Local bootstrap remains best-effort and deliberately silent. The
+        // dashboard no longer renders ingestion banners or toast notifications.
       } finally {
         clearTimeout(timeout);
       }
@@ -67,16 +63,7 @@ export default function AutoIngestTrigger({ source, sourceNote, enabled = false 
     };
   }, [enabled, source, router]);
 
-  if (!enabled || source !== "waiting" || !status) return null;
-  return (
-    <div role="status" aria-live="polite" className="fixed bottom-4 right-4 z-50 max-w-sm rounded-lg border border-line bg-surface px-4 py-3 shadow-lg">
-      <div className="flex items-start gap-3">
-        {status.busy && <div aria-hidden className="mt-0.5 h-4 w-4 animate-spin rounded-full border-2 border-accent border-t-transparent" />}
-        <div className="flex-1">
-          <p className="text-xs font-medium text-ink">{status.message}</p>
-          {sourceNote && <p className="mt-1 text-[11px] text-ink-2">{sourceNote}</p>}
-        </div>
-      </div>
-    </div>
-  );
+  // Keep the development-only bootstrap side effect, but expose no ingestion
+  // banner, toast or live-region notification in the product UI.
+  return null;
 }

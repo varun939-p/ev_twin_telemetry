@@ -205,15 +205,20 @@ export default function SiteCanvas({
   packs,
   inbound,
   station,
+  appearance = "enhanced",
 }: {
   packs: PackSeed[];
   inbound: InboundSeed[];
   station: SwapStation | null;
+  /** Central retains the original dark facility view; drafts may use the enhanced stage. */
+  appearance?: "original" | "enhanced";
 }) {
   const router = useRouter();
   const [tick, setTick] = useState(0);
   const [paused, setPaused] = useState(false);
   const [hoverId, setHoverId] = useState<string | null>(null);
+  const [camera, setCamera] = useState({ zoom: 1, orbit: 0 });
+  const enhanced = appearance === "enhanced";
 
   // 1 Hz sim clock. Never runs on the server, so tick 0 is the shared frame.
   useEffect(() => {
@@ -228,11 +233,11 @@ export default function SiteCanvas({
   const go = (href: string) => router.push(href);
 
   /**
-   * Facility assets that no longer have a destination (chargers, DG, grid)
-   * must NOT advertise themselves as clickable. `staticProps` gives them the
-   * same hover highlight and accessible label without `role="link"`, a
-   * pointer cursor or a router push — a control that looks clickable and does
-   * nothing is the single most common trust bug in an operations UI.
+   * Facility assets without a detail destination (currently the grid feeder
+   * and vacant bays) must not advertise themselves as clickable. `staticProps`
+   * gives them an accessible label without `role="link"`, a pointer cursor or
+   * a router push — a control that looks clickable and does nothing is a trust
+   * bug in an operations UI.
    */
   const staticProps = (id: string, label: string) => ({
     "aria-label": label,
@@ -287,22 +292,41 @@ export default function SiteCanvas({
   };
 
   return (
-    // `canvas-dark` re-declares the design tokens locally, so every child —
-    // the SVG, the overlay pills, the Pause button — resolves `--surface`,
-    // `--ink` and the status hues to their dark-ground values without any of
-    // them knowing they are on a dark surface.
-    <div className="canvas-dark relative overflow-hidden rounded-lg">
+    <div
+      className={enhanced
+        ? "facility-stage relative isolate overflow-hidden rounded-lg"
+        : "canvas-dark relative overflow-hidden rounded-lg"}
+    >
       <svg
         viewBox={`0 0 ${VIEW.w} ${VIEW.h}`}
-        className="block h-auto w-full select-none"
-        role="img"
+        preserveAspectRatio="xMidYMid meet"
+        className={`${enhanced ? "facility-scene " : ""}block h-auto w-full select-none`}
+        style={enhanced ? {
+          transform: `perspective(1400px) rotateY(${camera.orbit * 4}deg) scale(${camera.zoom})`,
+          transformOrigin: "50% 54%",
+        } : undefined}
+        role="group"
         aria-label="Interactive isometric model of the battery swap facility"
       >
+        <title>Interactive battery swap facility model</title>
         <defs>
           <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="var(--surface-2)" />
             <stop offset="100%" stopColor="var(--surface-3)" />
           </linearGradient>
+          <linearGradient id="stageSky" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#f8fbfe" />
+            <stop offset="62%" stopColor="#eef4f9" />
+            <stop offset="100%" stopColor="#e5edf4" />
+          </linearGradient>
+          <radialGradient id="ambientLight" cx="50%" cy="45%" r="55%">
+            <stop offset="0%" stopColor="#ffffff" stopOpacity="0.92" />
+            <stop offset="58%" stopColor="#dbe8f3" stopOpacity="0.42" />
+            <stop offset="100%" stopColor="#b7c9d8" stopOpacity="0" />
+          </radialGradient>
+          <pattern id="stageGrid" width="32" height="16" patternUnits="userSpaceOnUse" patternTransform="skewY(26.5)">
+            <path d="M32 0H0V16" fill="none" stroke="#9fb4c6" strokeWidth="0.6" opacity="0.22" />
+          </pattern>
           <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
             <feGaussianBlur stdDeviation="6" result="b" />
             <feMerge>
@@ -311,6 +335,15 @@ export default function SiteCanvas({
             </feMerge>
           </filter>
         </defs>
+
+        {enhanced && (
+          <>
+            <rect width={VIEW.w} height={VIEW.h} fill="url(#stageSky)" />
+            <ellipse cx="600" cy="330" rx="560" ry="300" fill="url(#ambientLight)" />
+            <path d="M0 430 L600 125 L1200 430 L600 735 Z" fill="url(#stageGrid)" opacity={0.65} />
+            <ellipse cx="600" cy="478" rx="390" ry="126" fill="#69839a" opacity={0.1} />
+          </>
+        )}
 
         {/* ---------------------------------------------------- ground */}
         <polygon points={ground} fill="url(#plate)" stroke="var(--line-strong)" strokeWidth={1.5} />
@@ -394,7 +427,7 @@ export default function SiteCanvas({
         </g>
 
         {/* ------------------------------------------------------- station */}
-        <g {...linkProps("swap-station", "/digital-twin/battery-tracking", "Swap station — open the pack register")}>
+        <g {...linkProps("swap-station", "/digital-twin/swap-station/overview", "Swap station — open station operations")}>
           <Solid
             box={stationBox}
             top="var(--surface)"
@@ -541,7 +574,7 @@ export default function SiteCanvas({
           const hovered = hoverId === charger.id;
           const live = charger.totalKw > 0;
           return (
-            <g key={charger.id} {...staticProps(charger.id, `${charger.label} — facility asset`)}>
+            <g key={charger.id} {...linkProps(charger.id, "/digital-twin/charging-station", `${charger.label} — open charging station`)}>
               <polygon points={tile(c, 40, 32)} fill="var(--plate)" stroke="var(--line-strong)" strokeWidth={1} />
               <Solid box={box} top="var(--surface-2)" left="var(--surface-3)" right="var(--plate)" opacity={hovered ? 0.92 : 1} />
               {live && (
@@ -575,7 +608,7 @@ export default function SiteCanvas({
         })}
 
         {/* ---------------------------------------------------------- DG */}
-        <g {...staticProps("dg", "Backup diesel generator — facility asset")}>
+        <g {...linkProps("dg", "/digital-twin/dg/overview", "Backup diesel generator — open generator analysis")}>
           <polygon points={tile(ANCHOR.dg, 76, 58)} fill="var(--plate)" stroke="var(--line-strong)" strokeWidth={1} />
           <Solid
             box={dgBox}
@@ -591,7 +624,7 @@ export default function SiteCanvas({
             </>
           )}
           <text x={ANCHOR.dg[0]} y={ANCHOR.dg[1] + 44} textAnchor="middle" style={{ fontSize: 10, fontWeight: 600 }} className="fill-[var(--ink-3)]">
-            DG {site.dg.running ? `${site.dg.loadKw} kW` : "Standby"}
+            Generator {site.dg.running ? `${site.dg.loadKw} kW` : "Standby"}
           </text>
         </g>
 
@@ -631,7 +664,7 @@ export default function SiteCanvas({
                   </text>
                   {site.dock.truck?.etaMinutes !== null && site.dock.phase === "approach" && (
                     <text x={x} y={trailer.crown[1] + 4} textAnchor="middle" style={{ fontSize: 9 }} className="fill-[var(--ink-3)]">
-                      ETA {site.dock.truck?.etaMinutes} min · {site.dock.truck?.distanceKm} km
+                      Arrives in {site.dock.truck?.etaMinutes} min · {site.dock.truck?.distanceKm} km away
                     </text>
                   )}
                 </g>
@@ -656,28 +689,80 @@ export default function SiteCanvas({
           </Pill>
         </div>
 
-        <div className="pointer-events-auto absolute right-3 top-3 flex items-center gap-2">
+        <div className="pointer-events-auto absolute right-3 top-3 flex flex-wrap items-center justify-end gap-1.5">
+          {enhanced && (
+            <div className="flex overflow-hidden rounded-lg border border-line bg-surface shadow-[var(--shadow)]" aria-label="Facility camera controls">
+            <button
+              type="button"
+              onClick={() => setCamera((view) => ({ ...view, orbit: Math.max(-2, view.orbit - 1) }))}
+              disabled={camera.orbit <= -2}
+              aria-label="Rotate facility view left"
+              title="Rotate view left"
+              className="grid h-8 w-8 cursor-pointer place-items-center text-ink-2 transition hover:bg-surface-3 hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              ↶
+            </button>
+            <button
+              type="button"
+              onClick={() => setCamera((view) => ({ ...view, zoom: Math.max(0.9, Number((view.zoom - 0.1).toFixed(1))) }))}
+              disabled={camera.zoom <= 0.9}
+              aria-label="Zoom facility view out"
+              className="grid h-8 w-8 cursor-pointer place-items-center border-l border-line text-ink-2 transition hover:bg-surface-3 hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              −
+            </button>
+            <button
+              type="button"
+              onClick={() => setCamera({ zoom: 1, orbit: 0 })}
+              disabled={camera.zoom === 1 && camera.orbit === 0}
+              aria-label="Reset facility camera"
+              className="h-8 cursor-pointer border-l border-line px-2 text-[10px] font-semibold text-ink-3 transition hover:bg-surface-3 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Reset
+            </button>
+            <button
+              type="button"
+              onClick={() => setCamera((view) => ({ ...view, zoom: Math.min(1.25, Number((view.zoom + 0.1).toFixed(1))) }))}
+              disabled={camera.zoom >= 1.25}
+              aria-label="Zoom facility view in"
+              className="grid h-8 w-8 cursor-pointer place-items-center border-l border-line text-ink-2 transition hover:bg-surface-3 hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              +
+            </button>
+            <button
+              type="button"
+              onClick={() => setCamera((view) => ({ ...view, orbit: Math.min(2, view.orbit + 1) }))}
+              disabled={camera.orbit >= 2}
+              aria-label="Rotate facility view right"
+              title="Rotate view right"
+              className="grid h-8 w-8 cursor-pointer place-items-center border-l border-line text-ink-2 transition hover:bg-surface-3 hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              ↷
+            </button>
+            </div>
+          )}
           <button
             type="button"
             onClick={() => setPaused((p) => !p)}
-            className="cursor-pointer rounded-lg border border-line bg-surface px-2.5 py-1.5 text-[12px] font-semibold text-ink-2 shadow-[var(--shadow)] transition hover:text-ink"
+            aria-pressed={paused}
+            className="h-8 cursor-pointer rounded-lg border border-line bg-surface px-2.5 text-[12px] font-semibold text-ink-2 shadow-[var(--shadow)] transition hover:bg-surface-3 hover:text-ink"
           >
-            {paused ? "▶ Resume" : "❚❚ Pause"}
+            {paused ? (enhanced ? "▶ Resume motion" : "▶ Resume") : (enhanced ? "❚❚ Pause motion" : "❚❚ Pause")}
           </button>
         </div>
 
         <div className="absolute bottom-3 left-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-line bg-surface/95 px-2.5 py-1.5">
           {[
-            ["var(--ok)", "charging / delivering"],
-            ["var(--warn)", "DG running"],
-            ["var(--ink-3)", "vacant / idle"],
+            ["var(--ok)", "Charging or delivering"],
+            ["var(--warn)", "Generator running"],
+            ["var(--ink-3)", "Vacant or idle"],
           ].map(([color, label]) => (
             <span key={label} className="flex items-center gap-1.5 text-[11px] font-medium text-ink-2">
               <span className="h-2 w-2 rounded-full" style={{ background: color }} />
               {label}
             </span>
           ))}
-          <span className="text-[11px] text-ink-3">· click any asset to drill down</span>
+          <span className="text-[11px] text-ink-3">· select a station, charger, generator, truck or occupied bay for details</span>
         </div>
       </div>
     </div>

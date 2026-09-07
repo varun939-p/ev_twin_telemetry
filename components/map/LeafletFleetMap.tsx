@@ -28,17 +28,12 @@
  *                     zoomed-in frame is never left stranded. Re-entering
  *                     the map cancels the pending snap.
  *
- * HOVER CARD (Google-Maps-style)
- * ------------------------------
- * Each marker handles `mouseover`/`mouseout` directly. One shared card is
- * positioned with `latLngToContainerPoint()` and GLUED to its marker by
- * writing `transform` on the map's `move`/`zoom` events — direct DOM writes,
- * so panning/animation costs zero React renders. The card's content is always
- * re-derived from the CURRENT `points` array by id, so a streaming SOC/GPS
- * update refreshes an open card in place, and a truck that drops out of the
- * feed closes the card instead of showing stale telemetry. A 90 ms close lag
- * stops the card from flickering while the cursor crosses gaps between
- * neighbouring markers.
+ * HOVER OVERLAYS
+ * --------------
+ * Only city clusters expose a map-local hover card (region, carrier count,
+ * average charge and density). Individual truck markers never mount a card;
+ * their hover handler only highlights the matching carrier row. This hard
+ * boundary prevents battery-context data from leaking into the truck map.
  *
  * ZOOM CONTRACT
  * -------------
@@ -50,8 +45,8 @@
  * BI-DIRECTIONAL LINK
  * -------------------
  *   marker hover  -> store.hover(id, "map")   -> table row highlights
- *   row hover     -> store.hover(id, "table") -> the map opens the same card
- *   marker click  -> store.select(id, "map")  -> card pins to the selection
+ *   row hover     -> store.hover(id, "table") -> marker highlights
+ *   marker click  -> store.select(id, "map")  -> marker pins + camera flies
  *   cluster click -> camera only — no store mutation of any kind.
  * Every marker subscribes to its own boolean via a Zustand selector, and both
  * marker kinds are `memo`-ised on a stable point object, so a hover re-renders
@@ -65,7 +60,7 @@ import type { GeoJsonObject } from "geojson";
 
 import { useIsHovered, useIsSelected, useTwin } from "@/lib/store";
 import { regionOfState } from "@/lib/fleet";
-import { STATUS_SHORT, type AssetStatus } from "@/lib/fleet-metrics";
+import { geographicCentroid } from "@/lib/gps";
 import {
   HEAT_TIER_COLOR,
   HEAT_TIER_LABEL,
@@ -87,16 +82,6 @@ const CLUSTER_BREAK = 7;
  * current (possibly narrowed) data happens to be.
  */
 const INDIA_HOME = { center: [21.5, 79] as [number, number], zoom: ZOOM.fleet };
-
-/** Desaturated status hues, matched to the design tokens. Markers sit on a
- *  photographic basemap, so they carry a solid white hairline for separation
- *  instead of a glow — a halo over map detail reads as a rendering artefact. */
-const STATUS_COLOR: Record<AssetStatus, string> = {
-  moving: "#4ca771",
-  charging: "#4ca771",
-  idle: "#8b8d94",
-  unknown: "#6b7280",
-};
 
 /**
  * BASEMAP — a health-based failover chain, chosen for 2026 realities:
@@ -248,187 +233,95 @@ function ZoomWatcher({ onZoom }: { onZoom: (z: number) => void }) {
 
 /* ------------------------------------------------------------- hover card */
 
-type HoverRef = { kind: "point" | "cluster"; id: string };
-type CardTarget =
-  | { kind: "point"; point: MapPoint }
-  | { kind: "cluster"; cluster: MapCluster };
+type HoverRef = { id: string };
 
-const fmtCoord = (v: number, pos: "N" | "E", neg: "S" | "W") =>
-  `${Math.abs(v).toFixed(4)}° ${v >= 0 ? pos : neg}`;
-
-/**
- * The floating card. Mounted at most ONCE per map. Positioning is glued to the
- * anchor by projecting lat/lng -> container px on every map move and writing
- * `transform` straight to the DOM — no React state per frame, so a flyTo
- * animation or a pan costs nothing. Flips below the marker when there is no
- * room above (the flip is state, but only changes on the boundary frame).
- */
 /** The tier label for a cluster hover card — vocabulary shared with the map legend. */
 const hoverTierLabel = (tier: HeatTier) => HEAT_TIER_LABEL[tier];
 
-function HoverCard({
+/**
+ * Cluster-only hover card. Individual truck markers intentionally never mount
+ * a floating card: the Truck Telemetry map must not surface battery-context
+ * data on pointer movement. The card is clipped by the isolated map frame and
+ * follows its cluster through camera moves with direct DOM writes.
+ */
+function ClusterHoverCard({
   map,
-  target,
+  cluster,
   maxClusterCount,
 }: {
   map: L.Map;
-  target: CardTarget;
+  cluster: MapCluster;
   maxClusterCount: number;
 }) {
   const cardRef = useRef<HTMLDivElement | null>(null);
   const [below, setBelow] = useState(false);
 
-  const lat = target.kind === "point" ? target.point.lat : target.cluster.lat;
-  const lon = target.kind === "point" ? target.point.lon : target.cluster.lon;
-
   useEffect(() => {
     const el = cardRef.current;
     if (!el) return;
-    const GAP = 14; // marker edge -> card edge; leaves room for the arrow
-    const EDGE = 8;
-    // The top-left chrome zone (Exit Live View button). The card must NEVER
-    // sit over it — visually or physically — so an operator can always see
-    // AND click the reset control.
-    const CHROME = { w: 220, h: 58 };
+    const gap = 14;
+    const edge = 8;
+    const chrome = { w: 220, h: 58 };
     const place = () => {
-      const pt = map.latLngToContainerPoint([lat, lon]);
+      const point = map.latLngToContainerPoint([cluster.lat, cluster.lon]);
       const size = map.getSize();
-      const w = el.offsetWidth;
-      const h = el.offsetHeight;
-      // The anchor left the frame (snap-back, pan, fly-away): retire the card
-      // instead of clamping it to an edge and pointing at nothing.
-      const MARGIN = 80;
+      const width = el.offsetWidth;
+      const height = el.offsetHeight;
+      const margin = 80;
       const offscreen =
-        pt.x < -MARGIN || pt.x > size.x + MARGIN || pt.y < -MARGIN || pt.y > size.y + MARGIN;
+        point.x < -margin || point.x > size.x + margin || point.y < -margin || point.y > size.y + margin;
       el.style.visibility = offscreen ? "hidden" : "visible";
       if (offscreen) return;
-      let x = Math.min(Math.max(pt.x - w / 2, EDGE), Math.max(EDGE, size.x - w - EDGE));
-      const nextBelow = pt.y - h - GAP < EDGE;
-      let y = nextBelow ? pt.y + GAP : pt.y - h - GAP;
-      // Overlap guard: if the card would intersect the button zone, slide it
-      // below the zone first; if that would push it off the bottom, slide it
-      // right of the zone instead. The arrow stays anchored to the marker.
-      if (x < CHROME.w && y < CHROME.h) {
-        if (y + h < size.y - EDGE - (CHROME.h - y)) y = CHROME.h + 4;
-        else x = CHROME.w + 4;
+
+      let left = Math.min(Math.max(point.x - width / 2, edge), Math.max(edge, size.x - width - edge));
+      const nextBelow = point.y - height - gap < edge;
+      let top = nextBelow ? point.y + gap : point.y - height - gap;
+      if (left < chrome.w && top < chrome.h) {
+        if (top + height < size.y - edge - (chrome.h - top)) top = chrome.h + 4;
+        else left = chrome.w + 4;
       }
-      el.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0)`;
-      setBelow((prev) => (prev === nextBelow ? prev : nextBelow));
+      el.style.transform = `translate3d(${Math.round(left)}px, ${Math.round(top)}px, 0)`;
+      setBelow((current) => (current === nextBelow ? current : nextBelow));
     };
+
     place();
-    // `move` covers pan + flyTo frames, `zoom` the zoom animation, `resize`
-    // viewport changes — all cheap DOM writes.
     map.on("move zoom resize viewreset", place);
     return () => {
       map.off("move zoom resize viewreset", place);
     };
-  }, [map, lat, lon]);
+  }, [cluster.lat, cluster.lon, map]);
 
-  const arrow = (
-    <span
-      aria-hidden
-      className={`absolute left-1/2 h-2.5 w-2.5 -translate-x-1/2 rotate-45 border-slate-300/70 bg-white/80 ${
-        below ? "-top-1 border-l border-t" : "-bottom-1 border-b border-r"
-      }`}
-    />
-  );
+  const tier = densityTier(cluster.count, maxClusterCount);
+  const tierLabel = hoverTierLabel(tier);
 
-  if (target.kind === "cluster") {
-    const c = target.cluster;
-    const tier = densityTier(c.count, maxClusterCount);
-    const tierLabel = hoverTierLabel(tier);
-    return (
-      <div
-        ref={cardRef}
-        className="rise-in pointer-events-none absolute left-0 top-0 z-[1200] w-[248px] will-change-transform"
-      >
-        {/* TRANSLUCENT callout on the dark map — deliberately NOT a token:
-            crisp in BOTH themes, never blurs or dims the radar field behind
-            it (no backdrop-filter), and only ~80% opaque so the map reads
-            through it. Text is near-black for maximum contrast. */}
-        <div className="relative rounded-xl border border-slate-300/70 bg-white/80 p-3 shadow-[0_8px_22px_rgba(2,6,23,0.3)]">
-          {arrow}
-          <p className="truncate text-[12.5px] font-semibold text-slate-900">
-            {c.city}, {c.state}
-          </p>
-          <p className="mt-0.5 text-[11px] text-slate-500">
-            {regionOfState(c.state) ?? "Unmapped region"} region
-          </p>
-          <div className="my-2 h-px bg-slate-200" />
-          <p className="text-[11px] text-slate-600">
-            <span className="num font-semibold text-slate-900">{c.count}</span>{" "}
-            {c.count === 1 ? "carrier" : "carriers"} in this cluster
-          </p>
-          <p className="mt-0.5 text-[11px] text-slate-600">
-            Avg SOC <span className="num">{c.avgSoc === null ? "—" : `${c.avgSoc}%`}</span>
-            {"  ·  "}
-            <span className="font-medium" style={{ color: HEAT_TIER_COLOR[tier] }}>
-              {tierLabel}
-            </span>
-          </p>
-          <p className="mt-2 text-[11px] font-semibold text-amber-700">
-            Click to zoom in — every other carrier stays on the map
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  const p = target.point;
-  const color = STATUS_COLOR[p.status];
   return (
-    <div
-      ref={cardRef}
-      className="rise-in pointer-events-none absolute left-0 top-0 z-[1200] w-[248px] will-change-transform"
-    >
-      {/* translucent callout — no backdrop-filter, ~80% opaque (see cluster card) */}
-      <div className="relative rounded-xl border border-slate-300/70 bg-white/80 p-3 shadow-[0_8px_22px_rgba(2,6,23,0.3)]">
-        {arrow}
-        {/* identity: human label + status, exactly like a Maps place card */}
-        <div className="flex items-start justify-between gap-2">
-          <p className="truncate text-[12.5px] font-semibold text-slate-900">
-            {p.batteryLabel ?? p.chassis}
-          </p>
-          <span
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold"
-            style={{ color, borderColor: `${color}55`, background: `${color}1f` }}
-          >
-            <span className="h-1.5 w-1.5 rounded-full" style={{ background: color }} />
-            {STATUS_SHORT[p.status]}
-          </span>
-        </div>
-        <p className="num mt-0.5 truncate text-[10.5px] text-slate-400">
-          ID {p.vehicleId}
-          {p.batteryLabel ? ` · ${p.chassis}` : ""}
+    <div ref={cardRef} className="rise-in pointer-events-none absolute left-0 top-0 z-40 w-[248px] will-change-transform">
+      <div className="relative rounded-xl border border-slate-300/70 bg-white/90 p-3 shadow-[0_8px_22px_rgba(2,6,23,0.3)]">
+        <span
+          aria-hidden
+          className={`absolute left-1/2 h-2.5 w-2.5 -translate-x-1/2 rotate-45 border-slate-300/70 bg-white/90 ${
+            below ? "-top-1 border-l border-t" : "-bottom-1 border-b border-r"
+          }`}
+        />
+        <p className="truncate text-[12.5px] font-semibold text-slate-900">
+          {cluster.city}, {cluster.state}
         </p>
-
+        <p className="mt-0.5 text-[11px] text-slate-500">
+          {regionOfState(cluster.state) ?? "Unmapped region"} region
+        </p>
         <div className="my-2 h-px bg-slate-200" />
-
-        {/* live location */}
-        <p className="truncate text-[11.5px] text-slate-600">
-          <span className="font-semibold text-slate-900">{p.city ?? "Unmapped"}</span>
-          {p.state ? `, ${p.state}` : ""}
+        <p className="text-[11px] text-slate-600">
+          <span className="num font-semibold text-slate-900">{cluster.count}</span>{" "}
+          {cluster.count === 1 ? "carrier" : "carriers"} in this cluster
         </p>
-        <p className="num mt-0.5 text-[10.5px] text-slate-400">
-          {fmtCoord(p.lat, "N", "S")}, {fmtCoord(p.lon, "E", "W")}
+        <p className="mt-0.5 text-[11px] text-slate-600">
+          Average battery charge <span className="num">{cluster.avgSoc === null ? "—" : `${cluster.avgSoc}%`}</span>
+          {"  ·  "}
+          <span className="font-medium" style={{ color: HEAT_TIER_COLOR[tier] }}>{tierLabel}</span>
         </p>
-
-        {/* live vitals */}
-        {p.soc !== null && (
-          <div className="mt-2">
-            <div className="flex items-baseline justify-between text-[10.5px] text-slate-400">
-              <span className="font-semibold tracking-[0.08em]">SOC</span>
-              <span className="num text-slate-600">{p.soc}%</span>
-            </div>
-            <div className="mt-1 h-[3px] overflow-hidden rounded-full bg-slate-200">
-              <div
-                className="h-full rounded-full"
-                style={{ width: `${Math.min(100, Math.max(0, p.soc))}%`, background: color }}
-              />
-            </div>
-          </div>
-        )}
-        <p className="mt-2 text-[10px] uppercase tracking-[0.08em] text-slate-400">{p.ageLabel}</p>
+        <p className="mt-2 text-[11px] font-semibold text-amber-700">
+          Select to zoom in — all other carriers remain on the map
+        </p>
       </div>
     </div>
   );
@@ -446,20 +339,12 @@ function clusterSize(count: number, maxCount: number): number {
  * A single live truck = a LIGHT BLUE PULSING node (Google-Maps live-traffic
  * idiom). The pulse is a pure-CSS expanding ring on a divIcon — zero React
  * renders per frame, and `prefers-reduced-motion` stills it globally.
- * `STATUS_COLOR` survives in the hover card's status chip; the map itself
- * speaks one language: a live node is live.
+ * Hover only links the marker to its table row; it intentionally mounts no
+ * tooltip or card on the truck-context map.
  */
 const NODE_PX = 24;
 
-const VehicleMarker = memo(function VehicleMarker({
-  point,
-  onHoverIn,
-  onHoverOut,
-}: {
-  point: MapPoint;
-  onHoverIn: (kind: "point" | "cluster", id: string) => void;
-  onHoverOut: () => void;
-}) {
+const VehicleMarker = memo(function VehicleMarker({ point }: { point: MapPoint }) {
   const hovered = useIsHovered(point.vehicleId);
   const selected = useIsSelected(point.vehicleId);
   const hover = useTwin((s) => s.hover);
@@ -477,6 +362,7 @@ const VehicleMarker = memo(function VehicleMarker({
         // vehicleId is validated upstream against ^[A-Za-z0-9._-]{3,32}$ —
         // attribute-safe; no escaping needed.
         html: `<div class="live-node${active ? " is-active" : ""}" data-vehicle-id="${point.vehicleId}">
+                 <span class="sr-only">Truck ${point.vehicleId}</span>
                  <span class="live-node-ring" aria-hidden></span>
                  <span class="live-node-core" aria-hidden></span>
                </div>`,
@@ -488,17 +374,12 @@ const VehicleMarker = memo(function VehicleMarker({
     <Marker
       position={[point.lat, point.lon]}
       icon={icon}
-      keyboard={false}
+      keyboard
       eventHandlers={{
-        // onMouseOver -> the floating card + the table-row highlight link.
-        mouseover: () => {
-          hover(point.vehicleId, "map");
-          onHoverIn("point", point.vehicleId);
-        },
-        mouseout: () => {
-          hover(null);
-          onHoverOut();
-        },
+        // Marker hover is pointer linkage only. No individual-marker overlay
+        // is created, so battery context cannot leak into this truck map.
+        mouseover: () => hover(point.vehicleId, "map"),
+        mouseout: () => hover(null),
         click: () => {
           select(point.vehicleId, "map");
           // Readable radius, never a rooftop dive. NO filtering — selection
@@ -543,7 +424,7 @@ const ClusterMarker = memo(function ClusterMarker({
   cluster: MapCluster;
   maxCount: number;
   onDrill: (c: MapCluster) => void;
-  onHoverIn: (kind: "point" | "cluster", id: string) => void;
+  onHoverIn: (id: string) => void;
   onHoverOut: () => void;
 }) {
   const icon = useMemo(() => {
@@ -553,6 +434,7 @@ const ClusterMarker = memo(function ClusterMarker({
         iconSize: [NODE_PX, NODE_PX],
         iconAnchor: [NODE_PX / 2, NODE_PX / 2],
         html: `<div class="live-node" data-cluster-id="${cluster.id}">
+                 <span class="sr-only">One-carrier city location</span>
                  <span class="live-node-ring" aria-hidden></span>
                  <span class="live-node-core" aria-hidden></span>
                </div>`,
@@ -565,6 +447,7 @@ const ClusterMarker = memo(function ClusterMarker({
       iconSize: [size, size],
       iconAnchor: [size / 2, size / 2],
       html: `<div class="heat-blob heat-${tier}" style="width:${size}px;height:${size}px;--ping-delay:-${pingDelay(cluster.id)}s" data-cluster-id="${cluster.id}">
+               <span class="sr-only">City cluster with ${cluster.count} carriers</span>
                <span class="heat-halo" aria-hidden></span>
                <span class="heat-center" aria-hidden></span>
                <span class="heat-ping" aria-hidden></span>
@@ -582,7 +465,7 @@ const ClusterMarker = memo(function ClusterMarker({
         // never touches the store's geo/focus filters, so the other trucks
         // stay rendered while the camera flies in.
         click: () => onDrill(cluster),
-        mouseover: () => onHoverIn("cluster", cluster.id),
+        mouseover: () => onHoverIn(cluster.id),
         mouseout: onHoverOut,
       }}
     />
@@ -602,11 +485,6 @@ export default function LeafletFleetMap({
 }) {
   const exitLiveView = useTwin((s) => s.exitLiveView);
   const liveView = useTwin((s) => s.liveView);
-  // Row hover / deep links surface the same card on the map (origin "table"),
-  // and a click pins it. Read here — NOT per marker — so markers stay memo'd.
-  const tableHoveredId = useTwin((s) => (s.hovered?.origin === "table" ? s.hovered.vehicleId : null));
-  const selectedId = useTwin((s) => s.selected?.vehicleId ?? null);
-
   const [zoom, setZoom] = useState<number>(ZOOM.fleet);
   /**
    * The Leaflet map instance lives in STATE, not a ref: the hover card needs
@@ -627,12 +505,12 @@ export default function LeafletFleetMap({
   const [hover, setHover] = useState<HoverRef | null>(null);
   const closeTimer = useRef<number | null>(null);
 
-  const onHoverIn = useCallback((kind: "point" | "cluster", id: string) => {
+  const onHoverIn = useCallback((id: string) => {
     if (closeTimer.current !== null) {
       window.clearTimeout(closeTimer.current);
       closeTimer.current = null;
     }
-    setHover({ kind, id });
+    setHover({ id });
   }, []);
 
   const onHoverOut = useCallback(() => {
@@ -699,34 +577,17 @@ export default function LeafletFleetMap({
    */
   const onZoomChange = useCallback((z: number) => {
     setZoom(z);
-    setHover((h) => (h?.kind === "cluster" && z >= CLUSTER_BREAK ? null : h));
+    setHover((current) => (current && z >= CLUSTER_BREAK ? null : current));
   }, []);
 
-  /**
-   * The card always renders the CURRENT telemetry for its target: a streaming
-   * SOC/GPS update refreshes the open card in place, and a target that drops
-   * out of the feed closes the card rather than showing stale data.
-   * Priority: cursor > row-hover link > pinned selection.
-   */
-  const cardTarget: CardTarget | null = useMemo(() => {
-    const pointById = (id: string): CardTarget | null => {
-      const p = points.find((v) => v.vehicleId === id);
-      return p ? { kind: "point", point: p } : null;
-    };
-    if (hover) {
-      if (hover.kind === "cluster") {
-        const c = clusters.find((v) => v.id === hover.id);
-        return c ? { kind: "cluster", cluster: c } : null;
-      }
-      return pointById(hover.id);
-    }
-    if (tableHoveredId) {
-      const t = pointById(tableHoveredId);
-      if (t) return t;
-    }
-    if (selectedId) return pointById(selectedId);
-    return null;
-  }, [hover, clusters, points, tableHoveredId, selectedId]);
+  /** Only aggregate clusters may own map overlays. */
+  const hoveredCluster = useMemo(() => {
+    if (!hover) return null;
+    const cluster = clusters.find((item) => item.id === hover.id) ?? null;
+    // A one-carrier city is still an individual asset, not a legitimate
+    // aggregate. It gets the same zero-tooltip contract as every truck node.
+    return cluster && cluster.count > 1 ? cluster : null;
+  }, [clusters, hover]);
 
   /**
    * DEMO INSURANCE, tiered: see BASEMAPS. `failed` accumulates demoted
@@ -765,10 +626,8 @@ export default function LeafletFleetMap({
   };
 
   const center = useMemo<[number, number]>(() => {
-    if (points.length === 0) return INDIA_HOME.center;
-    const lat = points.reduce((s, p) => s + p.lat, 0) / points.length;
-    const lon = points.reduce((s, p) => s + p.lon, 0) / points.length;
-    return [lat, lon];
+    const centroid = geographicCentroid(points);
+    return centroid ? [centroid.lat, centroid.lon] : INDIA_HOME.center;
   }, [points]);
 
   /**
@@ -818,9 +677,11 @@ export default function LeafletFleetMap({
     // inherit it, and the OSM tile inversion filter keys off the same class.
     // The surrounding page stays light.
     <div
-      className={`canvas-dark relative ${heightClass} w-full overflow-hidden rounded-lg border border-line${
+      className={`canvas-dark relative isolate z-0 ${heightClass} w-full overflow-hidden rounded-lg border border-line${
         basemap === "osm-inverted" ? " basemap-osm" : ""
       }`}
+      role="region"
+      aria-label="Interactive fleet map"
       onMouseLeave={onMouseLeaveMap}
       onMouseEnter={cancelSnapBack}
     >
@@ -833,7 +694,7 @@ export default function LeafletFleetMap({
         zoomControl={false}
         scrollWheelZoom
         worldCopyJump
-        className="h-full w-full"
+        className="relative z-0 h-full w-full"
         style={{ background: "var(--surface-3)" }}
       >
         {/* Keyed on the provider: a demotion swaps the layer cleanly instead
@@ -872,39 +733,30 @@ export default function LeafletFleetMap({
                 onHoverOut={onHoverOut}
               />
             ))
-          : points.map((p) => (
-              <VehicleMarker key={p.vehicleId} point={p} onHoverIn={onHoverIn} onHoverOut={onHoverOut} />
-            ))}
+          : points.map((p) => <VehicleMarker key={p.vehicleId} point={p} />)}
       </MapContainer>
 
-      {/* Google-Maps-style hover card. z-[1200]: above Leaflet's panes
-          (<=700), its controls (<=1000) AND every page surface, so the card
-          can never slide behind a section; pointer-events-none so it can
-          never trap the cursor. */}
-      {cardTarget && map && (
-        <HoverCard
-          key={cardTarget.kind === "point" ? cardTarget.point.vehicleId : cardTarget.cluster.id}
+      {/* Aggregate hover detail only. The isolated, overflow-clipped map frame
+          guarantees this overlay cannot bleed into surrounding page panels. */}
+      {hoveredCluster && map && (
+        <ClusterHoverCard
+          key={hoveredCluster.id}
           map={map}
-          target={cardTarget}
+          cluster={hoveredCluster}
           maxClusterCount={maxCount}
         />
       )}
 
-      {/* ----------------------------------------------------- map chrome */}
-      {/* z-[1000]: Leaflet's markerPane (600) / popupPane (700) / controls
-          (up to 1000) all sit inside `.leaflet-container`, which does not
-          create its own stacking context — so at the old z-[500] a city
-          bubble could paint OVER the Exit Live View button and swallow its
-          clicks. Lifting the chrome above every pane makes the buttons
-          clickable everywhere on the map. */}
-      <div className="pointer-events-none absolute inset-0 z-[1000]">
+      {/* Map-local controls sit above Leaflet panes but below global dialogs. */}
+      <div className="pointer-events-none absolute inset-0 z-30">
         {/* zoom cluster */}
         <div className="pointer-events-auto absolute right-3 top-3 flex flex-col overflow-hidden rounded-lg border border-line bg-surface shadow-[var(--shadow)]">
           <button
             type="button"
             onClick={() => zoomBy(1)}
+            disabled={zoom >= ZOOM.max}
             aria-label="Zoom in"
-            className="grid h-8 w-8 cursor-pointer place-items-center text-base font-semibold text-ink-2 transition hover:bg-surface-3 hover:text-ink"
+            className="grid h-8 w-8 cursor-pointer place-items-center text-base font-semibold text-ink-2 transition hover:bg-surface-3 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
           >
             +
           </button>
@@ -912,8 +764,9 @@ export default function LeafletFleetMap({
           <button
             type="button"
             onClick={() => zoomBy(-1)}
+            disabled={zoom <= ZOOM.min}
             aria-label="Zoom out"
-            className="grid h-8 w-8 cursor-pointer place-items-center text-base font-semibold text-ink-2 transition hover:bg-surface-3 hover:text-ink"
+            className="grid h-8 w-8 cursor-pointer place-items-center text-base font-semibold text-ink-2 transition hover:bg-surface-3 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
           >
             −
           </button>

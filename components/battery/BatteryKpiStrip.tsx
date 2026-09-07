@@ -15,7 +15,7 @@ import type { TrustedVehicle } from "@/lib/trusted-telemetry";
  * Tiles 2 and 4 are the interesting ones:
  *
  *   "Charging Right Now" counts frames whose `charging_status` is MEASURED and
- *   equal to 1.  The whole tile is a <Link> to the Swap Station route.
+ *   equal to 1. The tile links to the Charging Station operating draft.
  *
  *   "Current Running Load" is exactly
  *        Total Load (kW) = Σ (active charging packs × instantaneous power draw)
@@ -41,23 +41,26 @@ export default function BatteryKpiStrip({
   const deployed = deployedPacks(packs);
   const load = runningLoadKw(packs);
 
-  const scopeNote = packs.length === totalPacks ? "across the whole fleet" : `in the filtered scope of ${packs.length}`;
-
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      <KpiCard label="Total battery assets" value={packs.length} tone="neutral" />
-
-      {/* The old click-through target (/digital-twin/swap-station) was removed
-          with the draft routes, so this card no longer pretends to navigate. */}
       <KpiCard
-        label="Batteries charging right now"
-        value={charging.value}
-        tone="info"
-        unavailableReason="Awaiting live data"
+        label="Total Battery Assets"
+        value={totalPacks}
+        tone="neutral"
+        hint={packs.length === totalPacks ? "Across the full live fleet" : `${packs.length} batteries match the current filters`}
       />
 
       <KpiCard
-        label="Deployed / in service"
+        label="Batteries Charging Right Now"
+        value={charging.value}
+        tone="info"
+        unavailableReason="Awaiting live data"
+        href="/digital-twin/charging-station"
+        linkLabel="Open charging station"
+      />
+
+      <KpiCard
+        label="Batteries Deployed in Service"
         value={deployed.value}
         tone="ok"
         unavailableReason="Awaiting live data"
@@ -71,7 +74,7 @@ export default function BatteryKpiStrip({
       />
 
       <KpiCard
-        label="Current running load"
+        label="Current Charging Power Load"
         value={load.value}
         unit="kW"
         tone="info"

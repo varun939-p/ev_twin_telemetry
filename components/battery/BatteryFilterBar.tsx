@@ -92,7 +92,7 @@ export default function BatteryFilterBar({
           )}
           {soc !== "all" && (
             <FilterChip tone="info" onClear={() => setSoc("all")}>
-              {SOC_BRACKETS.find((b) => b.id === soc)?.label} · packs with an unmeasured SOC are excluded
+              {SOC_BRACKETS.find((b) => b.id === soc)?.label} · batteries without a reported charge level are excluded
             </FilterChip>
           )}
         </div>
