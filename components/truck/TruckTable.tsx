@@ -7,6 +7,7 @@ import { StatusPill, Value } from "@/components/ui/Pill";
 import { EmptyState } from "@/components/ui/Surface";
 import DetailChevron from "@/components/ui/DetailChevron";
 import { scrollMapIntoView } from "@/lib/focus";
+import { normalizeGpsCoordinates } from "@/lib/gps";
 import { ZOOM } from "@/lib/map-data";
 import { useIsHovered, useIsSelected, useTwin } from "@/lib/store";
 import type { TruckRow } from "@/lib/fleet-metrics";
@@ -52,7 +53,11 @@ function SortHeader({
   className?: string;
 }) {
   return (
-    <th scope="col" className={`px-3 py-2 ${align === "right" ? "text-right" : "text-left"} ${className}`}>
+    <th
+      scope="col"
+      aria-sort={active ? (dir === "asc" ? "ascending" : "descending") : "none"}
+      className={`px-3 py-2 ${align === "right" ? "text-right" : "text-left"} ${className}`}
+    >
       <button
         type="button"
         onClick={onClick}
@@ -118,9 +123,11 @@ const Row = memo(function Row({
     // camera flies — the table sits below the fold, so the flight would
     // otherwise happen off-screen.
     scrollMapIntoView();
-    const lat = row.vehicle.values["latitude"];
-    const lon = row.vehicle.values["longitude"];
-    if (typeof lat === "number" && typeof lon === "number") requestFly(lat, lon, ZOOM.asset);
+    const coordinate = normalizeGpsCoordinates(
+      row.vehicle.values["latitude"],
+      row.vehicle.values["longitude"],
+    );
+    if (coordinate) requestFly(coordinate.lat, coordinate.lon, ZOOM.asset);
   };
 
   const socTone = row.soc === null ? "bg-ink-3" : row.soc < 20 ? "bg-danger" : row.soc < 50 ? "bg-warn" : "bg-ok";
@@ -131,7 +138,16 @@ const Row = memo(function Row({
       onMouseEnter={() => hover(row.vehicleId, "table")}
       onMouseLeave={() => hover(null)}
       onClick={openOnMap}
-      className={`cursor-pointer border-b border-line transition-colors last:border-0 ${
+      onKeyDown={(event) => {
+        if (event.currentTarget !== event.target) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          openOnMap();
+        }
+      }}
+      tabIndex={0}
+      aria-label={`Show ${row.chassis} on the fleet map`}
+      className={`cursor-pointer border-b border-line transition-colors last:border-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/40 ${
         selected
           ? "bg-accent-soft"
           : hovered
@@ -166,13 +182,13 @@ const Row = memo(function Row({
             <span className={`block h-full rounded-full ${socTone}`} style={{ width: `${row.soc ?? 0}%` }} />
           </span>
           <span className="num w-10 text-right text-[13px] font-semibold text-ink">
-            <Value value={row.soc} unit="%" reason="soc is not measured on this frame." />
+            <Value value={row.soc} unit="%" reason="Battery charge level was not reported for this reading." />
           </span>
         </div>
       </td>
 
       <td className="px-3 py-2 text-right">
-        <Value value={row.residualKm} unit=" km" className="text-[13px] text-ink" reason="residual_mileage_km not measured on this frame." />
+        <Value value={row.residualKm} unit=" km" className="text-[13px] text-ink" reason="Estimated driving range was not reported for this reading." />
       </td>
 
       <td className="px-3 py-2 text-right">
@@ -180,7 +196,7 @@ const Row = memo(function Row({
           value={row.odometerKm === null ? null : Math.round(row.odometerKm).toLocaleString("en-IN")}
           unit=" km"
           className="text-[13px] text-ink-2"
-          reason="odometer_km not measured on this frame."
+          reason="Distance travelled was not reported for this reading."
         />
       </td>
 
@@ -260,16 +276,16 @@ export default function TruckTable({
       <table className="w-full border-collapse text-left">
         <thead className="sticky top-0 z-10 bg-surface-2/95 backdrop-blur">
           <tr className="border-b border-line">
-            <SortHeader label="Carrier" active={sort.key === "id"} dir={sort.dir} onClick={() => toggle("id")} />
-            <SortHeader label="Status" active={sort.key === "status"} dir={sort.dir} onClick={() => toggle("status")} />
-            <SortHeader label="SOC" align="right" active={sort.key === "soc"} dir={sort.dir} onClick={() => toggle("soc")} />
-            <SortHeader label="Residual" align="right" active={sort.key === "residual"} dir={sort.dir} onClick={() => toggle("residual")} />
-            <SortHeader label="Odometer" align="right" active={sort.key === "odometer"} dir={sort.dir} onClick={() => toggle("odometer")} />
+            <SortHeader label="Truck identifier" active={sort.key === "id"} dir={sort.dir} onClick={() => toggle("id")} />
+            <SortHeader label="Operating status" active={sort.key === "status"} dir={sort.dir} onClick={() => toggle("status")} />
+            <SortHeader label="Battery charge level" align="right" active={sort.key === "soc"} dir={sort.dir} onClick={() => toggle("soc")} />
+            <SortHeader label="Estimated driving range" align="right" active={sort.key === "residual"} dir={sort.dir} onClick={() => toggle("residual")} />
+            <SortHeader label="Distance travelled" align="right" active={sort.key === "odometer"} dir={sort.dir} onClick={() => toggle("odometer")} />
             <th scope="col" className="px-3 py-2 text-left text-[11px] font-semibold text-ink-3">
-              Battery
+              Assigned battery
             </th>
             <th scope="col" className="px-3 py-2 text-right text-[11px] font-semibold text-ink-3">
-              Detail
+              View details
             </th>
           </tr>
         </thead>

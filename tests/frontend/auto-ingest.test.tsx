@@ -11,36 +11,44 @@ function mount(enabled = true) {
   return render(<AutoIngestTrigger source="waiting" sourceNote={null} enabled={enabled} />);
 }
 
+async function settle(fetcher: ReturnType<typeof vi.fn>) {
+  await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+}
+
 beforeEach(() => { sessionStorage.clear(); refresh.mockReset(); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
-describe("local bootstrap", () => {
+describe("silent local bootstrap", () => {
   it.each([
     [500, "text/plain", "Internal Server Error"],
     [502, "text/html", "<html>Bad gateway</html>"],
     [503, "application/json", "not actually json"],
-  ])("handles proxy HTTP %s without a JSON.parse crash", async (status, type, body) => {
+  ])("handles proxy HTTP %s without a JSON.parse crash or UI notification", async (status, type, body) => {
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     const fetcher = vi.fn().mockResolvedValue(new Response(body, { status, headers: { "Content-Type": type } }));
     vi.stubGlobal("fetch", fetcher);
     mount();
-    await screen.findByText(/Backend unreachable/);
-    expect(fetcher).toHaveBeenCalledTimes(1);
+    await settle(fetcher);
     expect(refresh).not.toHaveBeenCalled();
+    expect(screen.queryByRole("status")).toBeNull();
     expect(errors).not.toHaveBeenCalled();
   });
 
-  it("reports network failures clearly", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+  it("swallows network failures without rendering an ingestion toast", async () => {
+    const fetcher = vi.fn().mockRejectedValue(new TypeError("Failed to fetch"));
+    vi.stubGlobal("fetch", fetcher);
     mount();
-    await screen.findByText(/Backend unreachable/);
+    await settle(fetcher);
     expect(refresh).not.toHaveBeenCalled();
+    expect(screen.queryByRole("status")).toBeNull();
   });
 
   it("does not treat an auth rejection as successful ingestion", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ detail: "not authorized" }, { status: 401 })));
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ detail: "not authorized" }, { status: 401 }));
+    vi.stubGlobal("fetch", fetcher);
     mount();
-    await screen.findByText(/requires server authorization/);
+    await settle(fetcher);
     expect(refresh).not.toHaveBeenCalled();
   });
 
@@ -48,38 +56,42 @@ describe("local bootstrap", () => {
     const fetcher = vi.fn().mockResolvedValue(Response.json({ detail: "wait" }, { status }));
     vi.stubGlobal("fetch", fetcher);
     mount();
-    await screen.findByText(/running or cooling down/);
-    expect(fetcher).toHaveBeenCalledTimes(1);
+    await settle(fetcher);
     expect(refresh).not.toHaveBeenCalled();
   });
 
   it("does not call ingestion at all when production bootstrap is disabled", async () => {
-    const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
+    const fetcher = vi.fn();
+    vi.stubGlobal("fetch", fetcher);
     mount(false);
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
     expect(fetcher).not.toHaveBeenCalled();
+    expect(screen.queryByRole("status")).toBeNull();
   });
 
   it("tolerates disabled sessionStorage and refreshes after a real cycle", async () => {
     vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("denied"); });
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("denied"); });
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ ok: true, summary: { accepted: 8 } })));
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ ok: true, summary: { accepted: 8 } }));
+    vi.stubGlobal("fetch", fetcher);
     mount();
-    await screen.findByText(/Telemetry received/);
-    expect(refresh).toHaveBeenCalledOnce();
+    await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+    expect(screen.queryByRole("status")).toBeNull();
   });
 
-  it("does not claim data arrived when a cycle accepted zero vehicles", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ ok: true, summary: { accepted: 0 } })));
+  it("refreshes an honest zero-vehicle cycle without claiming data arrived", async () => {
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ ok: true, summary: { accepted: 0 } }));
+    vi.stubGlobal("fetch", fetcher);
     mount();
-    await screen.findByText(/accepted no vehicles/);
-    expect(refresh).toHaveBeenCalledOnce();
+    await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+    expect(screen.queryByRole("status")).toBeNull();
   });
 
-  it("rejects an HTML success page instead of saying data arrived", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("<html>login</html>", { headers: { "Content-Type": "text/html" } })));
+  it("rejects an HTML success page instead of refreshing", async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response("<html>login</html>", { headers: { "Content-Type": "text/html" } }));
+    vi.stubGlobal("fetch", fetcher);
     mount();
-    await screen.findByText(/unexpected response/);
+    await settle(fetcher);
     expect(refresh).not.toHaveBeenCalled();
   });
 
@@ -91,6 +103,7 @@ describe("local bootstrap", () => {
     expect(fetcher).toHaveBeenCalledOnce();
     expect(fetcher.mock.calls[0][0]).toBe("/api/ingest/run");
     expect(fetcher.mock.calls[0][1].headers).not.toHaveProperty("Authorization");
+    expect(screen.queryByRole("status")).toBeNull();
   });
 
   it("aborts an in-flight request on unmount", async () => {

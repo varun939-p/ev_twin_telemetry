@@ -19,6 +19,7 @@ import {
   numericValue,
   type TrustedVehicle,
 } from "@/lib/trusted-telemetry";
+import { normalizeGpsCoordinates } from "@/lib/gps";
 
 /* ------------------------------------------------------------------ filters */
 
@@ -28,10 +29,10 @@ export type EvFilter = "all" | "ev" | "non-ev";
 export type SocBracket = "all" | "gt20" | "gt50" | "gt80";
 
 export const SOC_BRACKETS: ReadonlyArray<{ id: SocBracket; label: string; min: number }> = [
-  { id: "all", label: "All SOC", min: -1 },
-  { id: "gt20", label: "SOC > 20%", min: 20 },
-  { id: "gt50", label: "SOC > 50%", min: 50 },
-  { id: "gt80", label: "SOC > 80%", min: 80 },
+  { id: "all", label: "All charge levels", min: -1 },
+  { id: "gt20", label: "Above 20%", min: 20 },
+  { id: "gt50", label: "Above 50%", min: 50 },
+  { id: "gt80", label: "Above 80%", min: 80 },
 ];
 
 export interface GeoSelection {
@@ -203,9 +204,10 @@ export function deriveBatteries(vehicles: TrustedVehicle[], limit = Number.POSIT
 /* -------------------------------------------------------------------- geo */
 
 export function vehicleGeo(vehicle: TrustedVehicle): { lat: number; lon: number } | null {
-  const lat = numericValue(vehicle, "latitude");
-  const lon = numericValue(vehicle, "longitude");
-  return lat === null || lon === null ? null : { lat, lon };
+  return normalizeGpsCoordinates(
+    numericValue(vehicle, "latitude"),
+    numericValue(vehicle, "longitude"),
+  );
 }
 
 export function vehicleCity(vehicle: TrustedVehicle): { name: string; state: string } | null {

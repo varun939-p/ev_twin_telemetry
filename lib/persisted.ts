@@ -60,3 +60,53 @@ export function usePersistedBool(key: string, fallback: boolean): [boolean, (nex
 
   return [value, set];
 }
+
+/**
+ * localStorage-backed string value with a hydration-safe `null` server
+ * snapshot. Keeping the snapshot primitive is important: returning a freshly
+ * parsed array from `getSnapshot` would make React treat every read as a store
+ * change. Callers can parse JSON with `useMemo` after subscribing.
+ */
+export function usePersistedString(key: string): [string | null, (next: string | null) => void] {
+  const subscribe = useCallback(
+    (onChange: () => void) => {
+      let set = listeners.get(key);
+      if (!set) {
+        set = new Set();
+        listeners.set(key, set);
+      }
+      set.add(onChange);
+      window.addEventListener("storage", onChange);
+      return () => {
+        set.delete(onChange);
+        window.removeEventListener("storage", onChange);
+      };
+    },
+    [key],
+  );
+
+  const getSnapshot = useCallback(() => {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  }, [key]);
+
+  const value = useSyncExternalStore(subscribe, getSnapshot, () => null);
+
+  const set = useCallback(
+    (next: string | null) => {
+      try {
+        if (next === null) localStorage.removeItem(key);
+        else localStorage.setItem(key, next);
+      } catch {
+        /* Storage is an enhancement; navigation still works without it. */
+      }
+      emit(key);
+    },
+    [key],
+  );
+
+  return [value, set];
+}

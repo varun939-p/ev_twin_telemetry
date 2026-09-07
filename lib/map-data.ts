@@ -7,8 +7,9 @@
  * reason about map data without pulling the map library.
  */
 
-import { REFERENCE_CITIES, formatAge, frameAgeHours } from "@/lib/trusted-telemetry";
+import { formatAge, frameAgeHours } from "@/lib/trusted-telemetry";
 import type { AssetStatus, TruckRow } from "@/lib/fleet-metrics";
+import { geographicCentroid, normalizeGpsCoordinates } from "@/lib/gps";
 
 /**
  * Zoom contract — the deep-zoom fix, in one place.
@@ -25,7 +26,6 @@ export interface MapPoint {
   lon: number;
   status: AssetStatus;
   soc: number | null;
-  batteryLabel: string | null;
   chassis: string;
   city: string | null;
   state: string | null;
@@ -86,20 +86,21 @@ export function buildMapPoints(rows: TruckRow[], now: Date = new Date()): { poin
   const unlocatable: TruckRow[] = [];
 
   for (const row of rows) {
-    const lat = row.vehicle.values["latitude"];
-    const lon = row.vehicle.values["longitude"];
-    if (typeof lat !== "number" || typeof lon !== "number") {
+    const coordinate = normalizeGpsCoordinates(
+      row.vehicle.values["latitude"],
+      row.vehicle.values["longitude"],
+    );
+    if (!coordinate) {
       unlocatable.push(row);
       continue;
     }
     const hours = row.observedAt ? frameAgeHours(row.observedAt, now) : Number.NaN;
     points.push({
       vehicleId: row.vehicleId,
-      lat,
-      lon,
+      lat: coordinate.lat,
+      lon: coordinate.lon,
       status: row.status,
       soc: row.soc,
-      batteryLabel: row.batteryLabel,
       chassis: row.chassis,
       city: row.place?.name ?? null,
       state: row.place?.state ?? null,
@@ -133,13 +134,14 @@ export function buildCityClusters(points: MapPoint[]): MapCluster[] {
   for (const [key, members] of byCity) {
     const [state, city] = key.split("::");
     const socs = members.map((m) => m.soc).filter((s): s is number => s !== null);
-    const anchor = REFERENCE_CITIES.find((c) => c.name === city && c.state === state);
+    const centroid = geographicCentroid(members);
+    if (!centroid) continue;
     clusters.push({
       id: key,
       city,
       state,
-      lat: members.reduce((s, m) => s + m.lat, 0) / members.length || anchor?.lat || 0,
-      lon: members.reduce((s, m) => s + m.lon, 0) / members.length || anchor?.lon || 0,
+      lat: centroid.lat,
+      lon: centroid.lon,
       count: members.length,
       avgSoc: socs.length ? Math.round(socs.reduce((s, v) => s + v, 0) / socs.length) : null,
       vehicleIds: members.map((m) => m.vehicleId),

@@ -1,9 +1,8 @@
 "use client";
 
 /**
- * The three operational panels management mandated, restored to the Central
- * Dashboard (the old /swap-station, /chargers and /dg routes fed these views
- * before they were collapsed into the canvas):
+ * The three core operational panels on the Central Dashboard. Their matching
+ * draft routes now provide deeper station and generator planning views:
  *
  *   1. Swap Station Operations — bay occupancy, the ACTIVE transaction, and
  *      the vehicle queue building up at the gate.
@@ -172,7 +171,7 @@ export default function FacilityPanels({
         {/* the queue: real inbound carriers waiting to dock */}
         <div className="border-t border-line px-5 py-2.5">
           <div className="flex items-center justify-between">
-            <p className="text-[11px] font-semibold tracking-[0.08em] text-ink-3">Vehicle queue</p>
+            <p className="text-[11px] font-semibold tracking-[0.08em] text-ink-3">Incoming truck queue</p>
             <Pill tone={inbound.length > 0 ? "info" : "neutral"}>{inbound.length} inbound</Pill>
           </div>
           {inbound.length > 0 && (
@@ -181,7 +180,7 @@ export default function FacilityPanels({
                 <li key={truck.vehicleId} className="flex items-center justify-between text-[11px]">
                   <span className="num truncate text-ink-2">{truck.carrierLabel}</span>
                   <span className="num text-ink-3">
-                    {truck.soc === null ? "SOC —" : `SOC ${truck.soc}%`} · {formatEta(truck.etaMinutes) ?? "ETA —"}
+                    {truck.soc === null ? "Charge unavailable" : `${truck.soc}% charge`} · {formatEta(truck.etaMinutes) ? `arrives in ${formatEta(truck.etaMinutes)}` : "arrival time unavailable"}
                   </span>
                 </li>
               ))}
@@ -192,7 +191,7 @@ export default function FacilityPanels({
 
       {/* 2 — CHARGER STATUS ---------------------------------------------- */}
       <Card>
-        <CardHeader eyebrow="Chargers" title="Dual-gun charging" actions={MODEL_BADGE} />
+        <CardHeader eyebrow="Charging station" title="Charging point activity" actions={MODEL_BADGE} />
         <Hairline />
         <div className="space-y-3 px-5 py-3">
           {site.chargers.map((charger) => (
@@ -232,11 +231,11 @@ export default function FacilityPanels({
       <Card>
         <CardHeader
           eyebrow="Power"
-          title="Grid & DG load"
+          title="Grid and generator power"
           actions={
             <>
               <Pill tone={site.dg.running ? "warn" : "ok"} dot pulse={site.dg.running}>
-                {site.dg.running ? "DG assisting" : "Grid stable"}
+                {site.dg.running ? "Generator assisting" : "Grid stable"}
               </Pill>
               {MODEL_BADGE}
             </>
@@ -246,14 +245,14 @@ export default function FacilityPanels({
         <div className="space-y-3 px-5 py-3">
           <div>
             <div className="flex items-baseline justify-between">
-              <p className="text-[12px] font-semibold text-ink">Site draw</p>
+              <p className="text-[12px] font-semibold text-ink">Total site power demand</p>
               <p className="num text-[12px] font-semibold text-ink">{site.totalDrawKw} kW</p>
             </div>
           </div>
 
           <div>
             <div className="flex items-baseline justify-between text-[11px]">
-              <p className="font-semibold text-ink-2">Grid import</p>
+              <p className="font-semibold text-ink-2">Power supplied by the grid</p>
               <p className="num text-ink-2">
                 {site.grid.importKw} / {site.grid.feederKw} kW
               </p>

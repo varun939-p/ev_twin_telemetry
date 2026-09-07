@@ -11,8 +11,37 @@ import {
   formatValue,
   type FieldStatus,
   type ParameterHealth,
+  type TelemetryParam,
   type TrustedVehicle,
 } from "@/lib/trusted-telemetry";
+
+/** Plain operator-facing names for every telemetry channel. */
+const FIELD_LABEL: Record<TelemetryParam, string> = {
+  soc: "Battery charge level",
+  soh: "Battery health",
+  odometer_km: "Distance travelled",
+  residual_mileage_km: "Estimated driving range",
+  charge_cycles: "Charge cycles",
+  battery_temp_c: "Battery temperature",
+  min_cell_v: "Lowest cell voltage",
+  max_cell_v: "Highest cell voltage",
+  max_temp_c: "Highest battery temperature",
+  min_temp_c: "Lowest battery temperature",
+  regen_kwh: "Energy recovered while braking",
+  speed_kmh: "Vehicle speed",
+  total_power_kwh: "Total electrical energy",
+  charging_status: "Charging status",
+  battery_avg_temp_c: "Average battery temperature",
+  battery_total_v: "Total battery voltage",
+  battery_current_a: "Battery current",
+  max_cell_v_cell_no: "Cell with the highest voltage",
+  min_cell_v_pack_no: "Pack with the lowest cell voltage",
+  min_cell_v_cell_no: "Cell with the lowest voltage",
+  max_temp_pack_no: "Pack with the highest temperature",
+  work_status: "Vehicle operating status",
+  latitude: "Latitude",
+  longitude: "Longitude",
+};
 
 /**
  * [Know More] pop-up — the full 24-parameter payload for one asset.
@@ -115,16 +144,10 @@ export default function TruckDetailModal({
                     key={field}
                     className="flex items-baseline justify-between gap-3 rounded-md px-1.5 py-1 odd:bg-surface/60"
                   >
-                    {/* Labels WRAP rather than truncate. "Battery Total
-                        Voltage" clipped to "Battery Total Volt…" in a panel
-                        whose whole job is to name all 24 channels precisely —
-                        the raw key underneath is the disambiguator and must
-                        stay whole too. */}
-                    <dt className="min-w-0 flex-1">
-                      <span className="block text-[12px] font-medium leading-snug text-ink">
-                        {info?.label ?? field}
-                      </span>
-                      <span className="num mt-0.5 block break-all text-[10px] leading-tight text-ink-3">{field}</span>
+                    {/* Plain labels wrap rather than exposing backend field
+                        keys or clipping important qualifiers. */}
+                    <dt className="min-w-0 flex-1 text-[12px] font-medium leading-snug text-ink">
+                      {FIELD_LABEL[field]}
                     </dt>
                     <dd className="shrink-0 text-right">
                       {status === "measured" && text !== null ? (

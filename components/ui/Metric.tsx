@@ -33,6 +33,7 @@ export function KpiCard({
   unavailableReason,
   icon,
   footer,
+  linkLabel = "Open details",
 }: {
   label: string;
   value: number | string | null;
@@ -44,6 +45,8 @@ export function KpiCard({
   unavailableReason?: string;
   icon?: ReactNode;
   footer?: ReactNode;
+  /** Human-readable destination copy for linked KPI cards. */
+  linkLabel?: string;
 }) {
   const accentText: Record<Tone, string> = {
     neutral: "text-ink",
@@ -95,7 +98,7 @@ export function KpiCard({
       >
         {body}
         <span className="mt-2 inline-flex items-center gap-1 text-[12px] font-medium text-accent opacity-80 transition group-hover:opacity-100">
-          Open swap station
+          {linkLabel}
           <svg viewBox="0 0 12 12" className="h-2.5 w-2.5" aria-hidden>
             <path d="M3 2l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
@@ -135,7 +138,7 @@ export function Metric({
       <p
         suppressHydrationWarning
         className={`num mt-1 text-[15px] font-semibold ${value === null ? "cursor-help text-ink-3" : accentText[tone]}`}
-        title={value === null ? (reason ?? "Not measured upstream — stored NULL, not zero.") : undefined}
+        title={value === null ? (reason ?? "The source did not report this value; it is unavailable rather than zero.") : undefined}
       >
         {value === null ? "—" : value}
         {unit && value !== null && <span className="ml-0.5 text-[12px] font-normal text-ink-3">{unit}</span>}

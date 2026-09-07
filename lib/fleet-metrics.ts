@@ -18,6 +18,7 @@ import {
   predictArrival,
   truckChassis,
   vehicleCity,
+  vehicleGeo,
   type BatteryIdentity,
   type SwapStation,
 } from "@/lib/fleet";
@@ -36,14 +37,14 @@ export const STATUS_LABEL: Record<AssetStatus, string> = {
   moving: "In service · moving",
   charging: "Charging",
   idle: "Idle · parked",
-  unknown: "No motion reading",
+  unknown: "Other / offline · no motion reading",
 };
 
 export const STATUS_SHORT: Record<AssetStatus, string> = {
   moving: "Moving",
   charging: "Charging",
   idle: "Idle",
-  unknown: "Unknown",
+  unknown: "Other / Offline",
 };
 
 /** Token names, not hex: the map, tables and canvas all read the same set so
@@ -422,7 +423,7 @@ export function truckAlerts(
     const label = truckChassis(v.vehicle_id);
     const age = ageComment(v, now);
 
-    const hasFix = numericValue(v, "latitude") !== null && numericValue(v, "longitude") !== null;
+    const hasFix = vehicleGeo(v) !== null;
     if (!hasFix) {
       alerts.push({
         id: `${v.vehicle_id}:no-fix`,

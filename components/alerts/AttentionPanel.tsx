@@ -65,12 +65,18 @@ export default function AttentionPanel({
   title,
   emptyMessage,
   onRowClick,
+  onAlertClick,
+  showScope = false,
 }: {
   alerts: TwinAlert[];
   title: string;
   emptyMessage: string;
   /** Defaults to publishing a store selection; override for page-local behaviour. */
   onRowClick?: (vehicleId: string) => void;
+  /** Aggregate panels can route according to the alert's battery/truck scope. */
+  onAlertClick?: (alert: TwinAlert) => void;
+  /** Labels battery and carrier rows when both scopes share one panel. */
+  showScope?: boolean;
 }) {
   const select = useTwin((s) => s.select);
   const hover = useTwin((s) => s.hover);
@@ -158,6 +164,12 @@ export default function AttentionPanel({
       else next.add(kind);
       return next;
     });
+
+  const activateAlert = (alert: TwinAlert) => {
+    if (onAlertClick) onAlertClick(alert);
+    else if (onRowClick) onRowClick(alert.vehicleId);
+    else select(alert.vehicleId, "table");
+  };
 
   const worst: AlertSeverity | null = counts.critical > 0 ? "critical" : counts.warning > 0 ? "warning" : counts.info > 0 ? "info" : null;
 
@@ -276,11 +288,11 @@ export default function AttentionPanel({
                         }}
                         onFocus={(e) => openPreview(alert.id, e.currentTarget)}
                         onBlur={closePreview}
-                        onClick={() => (onRowClick ? onRowClick(alert.vehicleId) : select(alert.vehicleId, "table"))}
+                        onClick={() => activateAlert(alert)}
                         onKeyDown={(e) => {
                           if (e.key === "Enter" || e.key === " ") {
                             e.preventDefault();
-                            (onRowClick ?? ((id: string) => select(id, "table")))(alert.vehicleId);
+                            activateAlert(alert);
                           }
                         }}
                         className="flex w-full cursor-pointer items-center gap-3 px-4 py-2.5 text-left transition hover:bg-surface-3/70 focus:outline-none focus-visible:bg-surface-3"
@@ -295,6 +307,11 @@ export default function AttentionPanel({
                           <span className="block truncate text-xs font-medium text-ink">{alert.title}</span>
                           <span className="num block truncate text-[11px] text-ink-3">{alert.vehicleId}</span>
                         </span>
+                        {showScope && (
+                          <Pill tone={alert.scope === "battery" ? "info" : "neutral"} className="shrink-0">
+                            {alert.scope === "battery" ? "Battery" : "Carrier"}
+                          </Pill>
+                        )}
                         {alert.metric && (
                           <span className="num shrink-0 text-[12px] font-semibold text-ink-2">{alert.metric}</span>
                         )}
@@ -350,7 +367,7 @@ export default function AttentionPanel({
           return (
             <div
               role="tooltip"
-              className="rise-in pointer-events-none fixed z-[1200] rounded-xl border border-line-strong bg-surface/95 p-3 shadow-[0_10px_28px_rgba(0,0,0,0.4)]"
+              className="rise-in pointer-events-none fixed z-[80] rounded-xl border border-line-strong bg-surface/95 p-3 shadow-[0_10px_28px_rgba(0,0,0,0.4)]"
               style={{ left, top, width: POPOVER_W }}
             >
               <div className="flex items-center gap-2">

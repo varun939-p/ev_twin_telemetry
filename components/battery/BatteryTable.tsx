@@ -84,7 +84,16 @@ const Row = memo(function Row({ row, onKnowMore }: { row: BatteryRow; onKnowMore
       onMouseEnter={() => hover(row.vehicleId, "table")}
       onMouseLeave={() => hover(null)}
       onClick={() => select(row.vehicleId, "table")}
-      className={`cursor-pointer border-b border-line transition-colors last:border-0 ${
+      onKeyDown={(event) => {
+        if (event.currentTarget !== event.target) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          select(row.vehicleId, "table");
+        }
+      }}
+      tabIndex={0}
+      aria-label={`Select ${row.batteryId}`}
+      className={`cursor-pointer border-b border-line transition-colors last:border-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/40 ${
         selected
           ? "bg-accent-soft"
           : hovered
@@ -107,7 +116,7 @@ const Row = memo(function Row({ row, onKnowMore }: { row: BatteryRow; onKnowMore
               {row.batteryId}
             </p>
             <p className="num truncate text-[11px] text-ink-3">
-              {row.slot === null ? "slot —" : `slot ${row.slot}`} · {row.place?.name ?? "unmapped"}
+              {row.slot === null ? "Battery slot unavailable" : `Battery slot ${row.slot}`} · {row.place?.name ?? "Location unavailable"}
             </p>
           </div>
         </div>
@@ -131,17 +140,17 @@ const Row = memo(function Row({ row, onKnowMore }: { row: BatteryRow; onKnowMore
             <span className={`block h-full rounded-full ${socTone}`} style={{ width: `${row.soc ?? 0}%` }} />
           </span>
           <span className={`num w-10 text-right text-[13px] font-semibold ${critical ? "text-danger" : "text-ink"}`}>
-            <Value value={row.soc} unit="%" reason="soc not measured on this frame." />
+            <Value value={row.soc} unit="%" reason="Battery charge level was not reported for this reading." />
           </span>
         </div>
       </td>
 
       <td className="px-3 py-2 text-right">
-        <Value value={row.soh} unit="%" className="text-[13px] text-ink" reason="soh not measured on this frame." />
+        <Value value={row.soh} unit="%" className="text-[13px] text-ink" reason="Battery health was not reported for this reading." />
       </td>
 
       <td className="px-3 py-2 text-right">
-        <Value value={row.cycles} className="text-[13px] text-ink-2" reason="charge_cycles not measured on this frame." />
+        <Value value={row.cycles} className="text-[13px] text-ink-2" reason="Charge-cycle count was not reported for this reading." />
       </td>
 
       <td className="px-3 py-2">
@@ -194,7 +203,11 @@ export default function BatteryTable({
   }, [rows, sort]);
 
   const header = (key: SortKey, label: string, align: "left" | "right" = "left") => (
-    <th scope="col" className={`px-3 py-2 ${align === "right" ? "text-right" : "text-left"}`}>
+    <th
+      scope="col"
+      aria-sort={sort.key === key ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}
+      className={`px-3 py-2 ${align === "right" ? "text-right" : "text-left"}`}
+    >
       <button
         type="button"
         onClick={() => setSort((p) => ({ key, dir: p.key === key && p.dir === "asc" ? "desc" : "asc" }))}
@@ -215,7 +228,7 @@ export default function BatteryTable({
       <div className="p-4">
         <EmptyState
           title="No packs match the current filters"
-          hint="SOC brackets exclude packs whose charge level is not measured — widen the bracket to see them."
+          hint="Charge-level filters exclude batteries without a reported charge reading — widen the filter to see them."
         />
       </div>
     );
@@ -226,21 +239,21 @@ export default function BatteryTable({
       <table className="w-full border-collapse text-left">
         <thead className="sticky top-0 z-10 bg-surface-2/95 backdrop-blur">
           <tr className="border-b border-line">
-            {header("battery", "Battery")}
+            {header("battery", "Battery identifier")}
             <th scope="col" className="px-3 py-2 text-left text-[11px] font-semibold text-ink-3">
-              Carrier / Truck ID
+              Assigned truck identifier
             </th>
-            {header("soc", "SOC", "right")}
-            {header("soh", "SOH", "right")}
-            {header("cycles", "Cycles", "right")}
+            {header("soc", "State of charge", "right")}
+            {header("soh", "Battery health", "right")}
+            {header("cycles", "Charge cycles", "right")}
             <th scope="col" className="px-3 py-2 text-left text-[11px] font-semibold text-ink-3">
-              Status
+              Operating status
             </th>
             <th scope="col" className="px-3 py-2 text-right text-[11px] font-semibold text-ink-3">
-              Nearest hub
+              Nearest swap station
             </th>
             <th scope="col" className="px-3 py-2 text-right text-[11px] font-semibold text-ink-3">
-              Detail
+              View details
             </th>
           </tr>
         </thead>
