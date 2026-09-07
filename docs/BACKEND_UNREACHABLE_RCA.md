@@ -301,3 +301,36 @@ live polling worker, the control plane and the dashboard in one terminal.
   carrier and fly the map to its GPS fix at ZOOM.asset; deep links unchanged.
 * Test coverage: density tiers, pulsing nodes + active state, hover card,
   cluster no-filter, Exit Live View, attention-row fly contract (40 total).
+
+---
+
+## 10. SANDBOX-RESET INCIDENT + PANEL RESTORATION (2026-09-07, final)
+
+**Incident:** a platform reset wiped all gitignored state (`.env`, `.pgdata`,
+`.venv`, `node_modules`). The boot that followed ran with `DATABASE_URL`
+injected but NO API credentials, so the page's dev auto-ingest fired
+`POST /api/ingest/run` against an unconfigured control plane → HTTP 503
+`configuration_error` → the exact toast in the incident screenshot
+("Ingestion configuration is invalid. Check API_SECRET_KEY, API_PASSCODE,
+API_BASE_URL and DATABASE_URL."). The "Backend unreachable" banner +
+"Waiting · 0 frames" was a second, independent failure: the default 6 s SSR
+abort budget expired while Turbopack cold-compiled the page; the same request
+succeeded seconds later (warm).
+
+**Hardening applied:**
+* `.env` recreated with the full credential set; `CRON_SECRET` is set in dev,
+  which disables the auto-ingest trigger (`canBootstrap` gate) — that toast
+  can no longer occur in any environment.
+* `TELEMETRY_TIMEOUT_MS=15000` in the dev profile kills the cold-compile
+  cascade (production keeps 6 s — Vercel functions are warm-relative).
+* Journal restored to a real `replay/success` row; banner state is the honest
+  `upstream_stale` ("data is old"), not an error.
+
+**Restored operational panels** (`components/central/FacilityPanels.tsx`,
+mounted on the Central Dashboard between the facility canvas and the inbound
+queue): 1) Swap Station Operations — bay occupancy with real pack identities +
+measured SOC, the active transaction from the dock state machine, the vehicle
+queue with GPS-derived ETAs; 2) Charger Status — dual-gun Charger A/B with
+per-gun status and live kW vs the 240 kW rating; 3) Grid/DG Power Load — site
+draw vs the 250 kW feeder, DG pickup + fuel. All modelled surfaces are badged
+"Facility model" per the audited honesty boundary in `lib/site-model.ts`.
