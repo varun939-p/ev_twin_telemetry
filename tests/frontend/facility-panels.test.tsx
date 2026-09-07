@@ -69,7 +69,7 @@ describe("FacilityPanels — the three operational panels", () => {
     expect(screen.getByText(/Grid stable|DG assisting/)).toBeTruthy();
     // feeder budget line (250 kW model) and the modelled-load footnote
     expect(screen.getByText(/\/ 250 kW/)).toBeTruthy();
-    expect(screen.getByText(/modelled until the site controller publishes/)).toBeTruthy();
+    expect(screen.getByText(/Modelled load until the site controller/)).toBeTruthy();
   });
 
   it("badges every modelled surface (honesty boundary)", () => {

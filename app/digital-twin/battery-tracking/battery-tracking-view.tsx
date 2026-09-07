@@ -16,8 +16,8 @@
  * pack row; clicking a scatter point selects it and scrolls the table to it.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import AttentionPanel from "@/components/alerts/AttentionPanel";
 import BatteryFilterBar from "@/components/battery/BatteryFilterBar";
@@ -25,6 +25,7 @@ import BatteryKpiStrip from "@/components/battery/BatteryKpiStrip";
 import BatteryTable from "@/components/battery/BatteryTable";
 import TruckDetailModal from "@/components/truck/TruckDetailModal";
 import { Card, CardHeader, Hairline, PageHeading } from "@/components/ui/Surface";
+import { truckFocusHref } from "@/lib/focus";
 import PanelErrorBoundary from "@/components/ui/PanelErrorBoundary";
 import { Pill } from "@/components/ui/Pill";
 import {
@@ -108,6 +109,22 @@ export default function BatteryTrackingView({ data }: { data: TrustedTelemetryDo
    * Resolved against BOTH the frame id and the display label ("Battery 7"),
    * so the link keeps working whichever identity a caller has to hand.
    */
+  const router = useRouter();
+
+  /**
+   * FOCUS ROUTING (mandate): a battery alert row has no map on THIS page, so
+   * clicking it must ROUTE — land on Truck Telemetry with `?vehicle_id=`,
+   * whose deep-link handler auto-scrolls to the fleet map and flies to the
+   * carrier that carries this pack. Before this, the click only flipped an
+   * in-page store pointer nothing on this page could act on.
+   */
+  const routeAlertToMap = useCallback(
+    (vehicleId: string) => {
+      router.push(truckFocusHref(vehicleId));
+    },
+    [router],
+  );
+
   const handled = useRef<string | null>(null);
   const deepLink = searchParams.get("battery_id");
 
@@ -136,6 +153,7 @@ export default function BatteryTrackingView({ data }: { data: TrustedTelemetryDo
           alerts={alerts}
           title="Need Attention — Batteries"
           emptyMessage="No pack anomalies in the current scope. Carrier alerts live on Truck Telemetry."
+          onRowClick={routeAlertToMap}
         />
       </PanelErrorBoundary>
 

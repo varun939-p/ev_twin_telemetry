@@ -15,14 +15,18 @@ export function Card({
   className = "",
   as: As = "section",
   padded = false,
+  id,
 }: {
   children: ReactNode;
   className?: string;
   as?: "section" | "div" | "article" | "aside";
   padded?: boolean;
+  /** DOM anchor for cross-page scroll targets (e.g. the fleet map card). */
+  id?: string;
 }) {
   return (
     <As
+      id={id}
       className={`rounded-xl border border-line bg-surface shadow-[var(--shadow)] ${padded ? "p-5" : ""} ${className}`}
     >
       {children}

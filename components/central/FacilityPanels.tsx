@@ -71,13 +71,43 @@ export default function FacilityPanels({
 }) {
   const [tick, setTick] = useState(0);
 
-  // 1 Hz sim clock — identical contract to SiteCanvas (tick 0 = shared frame).
+  /**
+   * 1 Hz sim clock — identical contract to SiteCanvas (tick 0 = shared frame).
+   * Performance contract: the clock STOPS when the document is hidden
+   * (background tab) and when the operator prefers reduced motion — the
+   * facility model is a progression, so freezing it costs nothing visually
+   * and saves a re-render/second forever the panel is unseen. The tick
+   * resyncs to 0 on resume so the modelled bays never jump stale distance.
+   */
   useEffect(() => {
     const reduced =
       typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (reduced) return;
-    const id = setInterval(() => setTick((t) => t + 1), 1000);
-    return () => clearInterval(id);
+    // Single interval, owned by the effect: visibility flips stop/start the
+    // SAME handle, so hide/show cycles can never stack clocks.
+    let id: number | null = null;
+    const start = () => {
+      if (id === null) id = window.setInterval(() => setTick((t) => t + 1), 1000);
+    };
+    const stop = () => {
+      if (id !== null) {
+        window.clearInterval(id);
+        id = null;
+      }
+    };
+    if (!document.hidden) start();
+    const onVisibility = () => {
+      if (document.hidden) stop();
+      else {
+        setTick(0); // resync — the modelled bays never jump stale distance
+        start();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      stop();
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, []);
 
   const site = useMemo(() => simulateSite(tick, packs, inbound, station), [tick, packs, inbound, station]);
@@ -121,12 +151,15 @@ export default function FacilityPanels({
               </span>
               {bay.soc !== null ? (
                 <>
+                  {/* SOC bar IS the bay's live state (real measured floor,
+                      modelled progression) — a second kW number per row would
+                      restate the same fact the Power panel totals. */}
                   <span className="num w-10 text-right text-[11px] text-ink-2">{bay.soc}%</span>
-                  <span className="w-16">
+                  <span className="w-20">
                     <KwBar kw={bay.soc} rated={100} tone={bay.status === "full" ? "bg-accent" : "bg-ok"} />
                   </span>
-                  <span className="num w-16 text-right text-[11px] text-ink-3">
-                    {bay.kw > 0 ? `${bay.kw} kW` : bay.status === "full" ? "ready" : "—"}
+                  <span className="w-14 text-right text-[10.5px] font-medium text-ink-3">
+                    {bay.status === "full" ? "ready" : bay.status === "dispatching" ? "release" : "charging"}
                   </span>
                 </>
               ) : (
@@ -190,8 +223,7 @@ export default function FacilityPanels({
             </div>
           ))}
           <p className="border-t border-line pt-2 text-[10.5px] leading-relaxed text-ink-3">
-            Bay + gun load is modelled until the site controller publishes charger telemetry. Bay occupants are real
-            packs with measured SOC.
+            Modelled load until the site controller publishes charger telemetry — occupants are real packs.
           </p>
         </div>
       </Card>
@@ -217,7 +249,6 @@ export default function FacilityPanels({
               <p className="text-[12px] font-semibold text-ink">Site draw</p>
               <p className="num text-[12px] font-semibold text-ink">{site.totalDrawKw} kW</p>
             </div>
-            <p className="mt-0.5 text-[10.5px] text-ink-3">bays {site.bays.reduce((s, b) => s + b.kw, 0)} kW · guns {site.chargers.reduce((s, c) => s + c.totalKw, 0)} kW</p>
           </div>
 
           <div>

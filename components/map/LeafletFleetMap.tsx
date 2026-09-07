@@ -23,6 +23,10 @@
  *                     deterministic flight to INDIA_HOME. Exactly one code
  *                     path moves the camera for a reset, so it cannot race
  *                     itself and cannot land anywhere but the wide frame.
+ *   cursor leaves  -> MOUSE-LEAVE SNAP-BACK: after a 350 ms debounce the
+ *                     camera glides home to the wide fleet overview, so a
+ *                     zoomed-in frame is never left stranded. Re-entering
+ *                     the map cancels the pending snap.
  *
  * HOVER CARD (Google-Maps-style)
  * ------------------------------
@@ -62,7 +66,15 @@ import type { GeoJsonObject } from "geojson";
 import { useIsHovered, useIsSelected, useTwin } from "@/lib/store";
 import { regionOfState } from "@/lib/fleet";
 import { STATUS_SHORT, type AssetStatus } from "@/lib/fleet-metrics";
-import { ZOOM, type MapCluster, type MapPoint } from "@/lib/map-data";
+import {
+  HEAT_TIER_COLOR,
+  HEAT_TIER_LABEL,
+  ZOOM,
+  densityTier,
+  type HeatTier,
+  type MapCluster,
+  type MapPoint,
+} from "@/lib/map-data";
 
 import "leaflet/dist/leaflet.css";
 
@@ -251,12 +263,8 @@ const fmtCoord = (v: number, pos: "N" | "E", neg: "S" | "W") =>
  * animation or a pan costs nothing. Flips below the marker when there is no
  * room above (the flip is state, but only changes on the boundary frame).
  */
-/** Concrete hex for the heat tiers — mirrors the CSS custom properties. */
-const HEAT_TIER_COLOR: Record<"low" | "medium" | "high", string> = {
-  low: "#4ade80",
-  medium: "#fbbf24",
-  high: "#f87171",
-};
+/** The tier label for a cluster hover card — vocabulary shared with the map legend. */
+const hoverTierLabel = (tier: HeatTier) => HEAT_TIER_LABEL[tier];
 
 function HoverCard({
   map,
@@ -283,6 +291,13 @@ function HoverCard({
       const size = map.getSize();
       const w = el.offsetWidth;
       const h = el.offsetHeight;
+      // The anchor left the frame (snap-back, pan, fly-away): retire the card
+      // instead of clamping it to an edge and pointing at nothing.
+      const MARGIN = 80;
+      const offscreen =
+        pt.x < -MARGIN || pt.x > size.x + MARGIN || pt.y < -MARGIN || pt.y > size.y + MARGIN;
+      el.style.visibility = offscreen ? "hidden" : "visible";
+      if (offscreen) return;
       const x = Math.min(Math.max(pt.x - w / 2, EDGE), Math.max(EDGE, size.x - w - EDGE));
       const nextBelow = pt.y - h - GAP < EDGE;
       const y = nextBelow ? pt.y + GAP : pt.y - h - GAP;
@@ -310,7 +325,7 @@ function HoverCard({
   if (target.kind === "cluster") {
     const c = target.cluster;
     const tier = densityTier(c.count, maxClusterCount);
-    const tierLabel = tier === "high" ? "Severe density" : tier === "medium" ? "Medium density" : "Low density";
+    const tierLabel = hoverTierLabel(tier);
     return (
       <div
         ref={cardRef}
@@ -405,19 +420,7 @@ function HoverCard({
 
 /* ----------------------------------------------------------------- markers */
 
-/**
- * Density tier for the heatmap clusters: ratio of the city count to the
- * busiest city, so the palette self-calibrates to ANY fleet size (10 trucks
- * or 10,000) instead of hardcoding absolute thresholds that go stale.
- */
-function densityTier(count: number, maxCount: number): "low" | "medium" | "high" {
-  const ratio = maxCount > 0 ? count / maxCount : 0;
-  if (ratio >= 0.66) return "high";
-  if (ratio >= 0.33) return "medium";
-  return "low";
-}
-
-/** Pixel diameter of a cluster bubble: sqrt scaling (area ~ count). */
+/** Pixel diameter of a cluster field: sqrt scaling (area ~ count). */
 function clusterSize(count: number, maxCount: number): number {
   const ratio = maxCount > 0 ? count / maxCount : 0;
   return Math.round(Math.min(84, Math.max(40, 40 + Math.sqrt(ratio) * 34)));
@@ -492,10 +495,27 @@ const VehicleMarker = memo(function VehicleMarker({
 });
 
 /**
- * City aggregate = a DENSITY HEATMAP bubble. Colour encodes relative density
- * (green -> amber -> red, self-calibrated to the busiest city), the soft glow
- * radius grows with sqrt(count), and the crisp core keeps the count as real
- * text. Pure CSS on a divIcon — no canvas, no per-frame renders.
+ * Deterministic phase offset for a cluster's radar pings, derived from the
+ * cluster id: without it every city would pulse in lockstep (a metronome is
+ * exactly the toy rhythm this overhaul removes). Negative delays start the
+ * animation mid-cycle, so a freshly mounted field is already "sweeping".
+ */
+function pingDelay(id: string): number {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
+  return Math.abs(h % 36) / 10;
+}
+
+/**
+ * City aggregate = a DENSITY RADAR cell, not a bubble.
+ *
+ * Three translucent layers only — a light tier-tinted halo that breathes and
+ * two thin radar rings expanding outward, phase-shifted per cluster. NO count
+ * text and NO solid core: an enterprise radar reads shape first, detail on
+ * demand — the existing hover card carries the city, the exact count, the
+ * average SOC and the tier. A city with a SINGLE carrier is one live truck,
+ * so it renders in the same light-blue pulsing-node language as every other
+ * lone asset instead of drawing a field around a dot.
  */
 const ClusterMarker = memo(function ClusterMarker({
   cluster,
@@ -511,18 +531,27 @@ const ClusterMarker = memo(function ClusterMarker({
   onHoverOut: () => void;
 }) {
   const icon = useMemo(() => {
+    if (cluster.count === 1) {
+      return L.divIcon({
+        className: "",
+        iconSize: [NODE_PX, NODE_PX],
+        iconAnchor: [NODE_PX / 2, NODE_PX / 2],
+        html: `<div class="live-node" data-cluster-id="${cluster.id}">
+                 <span class="live-node-ring" aria-hidden></span>
+                 <span class="live-node-core" aria-hidden></span>
+               </div>`,
+      });
+    }
     const size = clusterSize(cluster.count, maxCount);
     const tier = densityTier(cluster.count, maxCount);
     return L.divIcon({
       className: "",
       iconSize: [size, size],
       iconAnchor: [size / 2, size / 2],
-      html: `<div class="heat-blob heat-${tier}" style="width:${size}px;height:${size}px" data-cluster-id="${cluster.id}">
-               <span class="heat-glow" aria-hidden></span>
-               <span class="heat-core">
-                 <span class="num heat-count">${cluster.count}</span>
-                 <span class="heat-city">${cluster.city}</span>
-               </span>
+      html: `<div class="heat-blob heat-${tier}" style="width:${size}px;height:${size}px;--ping-delay:-${pingDelay(cluster.id)}s" data-cluster-id="${cluster.id}">
+               <span class="heat-halo" aria-hidden></span>
+               <span class="heat-ping" aria-hidden></span>
+               <span class="heat-ping heat-ping-late" aria-hidden></span>
              </div>`,
     });
   }, [cluster, maxCount]);
@@ -570,6 +599,11 @@ export default function LeafletFleetMap({
    */
   const [map, setMap] = useState<L.Map | null>(null);
   const mapRef = useCallback((instance: L.Map | null) => setMap(instance), []);
+  /** Stable read for the snap-back timer, which must not re-bind on mount. */
+  const mapRefCurrent = useRef<L.Map | null>(null);
+  useEffect(() => {
+    mapRefCurrent.current = map;
+  }, [map]);
 
   /** Cursor-driven card target. A short close-lag stops flicker while the
    *  cursor crosses the gaps between neighbouring markers. */
@@ -601,6 +635,43 @@ export default function LeafletFleetMap({
   }, []);
 
   useEffect(() => closeHoverNow, [closeHoverNow]);
+
+  /**
+   * MOUSE-LEAVE SNAP-BACK (fleet-overview guarantee)
+   *
+   * When the cursor physically leaves the map container, the camera glides
+   * back to the default wide fleet frame — an operator who drifts off the map
+   * (or wheel-zooms into one city and leaves) never strands the overview for
+   * the next person at the console. Mechanics:
+   *
+   *   * 350 ms debounce — brushing the border or the legend must not yank
+   *     the camera; a genuine exit does.
+   *   * re-entering cancels the pending snap (the operator came back).
+   *   * fires ONLY from a drifted frame (zoom above the fleet level, or a
+   *     live drill-down) — an overview already at home never animates.
+   *   * reads the map + store imperatively at fire time, so the callback
+   *     stays stable without mirroring liveView into another ref.
+   *   * hover state is closed immediately either way (existing contract).
+   */
+  const snapTimer = useRef<number | null>(null);
+  const cancelSnapBack = useCallback(() => {
+    if (snapTimer.current !== null) {
+      window.clearTimeout(snapTimer.current);
+      snapTimer.current = null;
+    }
+  }, []);
+  const onMouseLeaveMap = useCallback(() => {
+    closeHoverNow();
+    cancelSnapBack();
+    snapTimer.current = window.setTimeout(() => {
+      snapTimer.current = null;
+      const instance = mapRefCurrent.current;
+      if (!instance) return;
+      if (instance.getZoom() <= ZOOM.fleet && !useTwin.getState().liveView) return;
+      instance.flyTo(INDIA_HOME.center, INDIA_HOME.zoom, { duration: 0.9 });
+    }, 350);
+  }, [closeHoverNow, cancelSnapBack]);
+  useEffect(() => cancelSnapBack, [cancelSnapBack]);
 
   /**
    * Zoom events may not be followed by a `mouseout` — crossing CLUSTER_BREAK
@@ -733,7 +804,8 @@ export default function LeafletFleetMap({
       className={`canvas-dark relative ${heightClass} w-full overflow-hidden rounded-lg border border-line${
         basemap === "osm-inverted" ? " basemap-osm" : ""
       }`}
-      onMouseLeave={closeHoverNow}
+      onMouseLeave={onMouseLeaveMap}
+      onMouseEnter={cancelSnapBack}
     >
       <MapContainer
         ref={mapRef}
@@ -866,8 +938,14 @@ export default function LeafletFleetMap({
           </span>
           {(["low", "medium", "high"] as const).map((t) => (
             <span key={t} className="flex items-center gap-1.5 text-[11px] font-medium text-ink-2">
-              <span className="h-2 w-2 rounded-full" style={{ background: HEAT_TIER_COLOR[t] }} />
-              {t === "high" ? "severe" : t} density
+              <span
+                className="inline-block h-2.5 w-2.5 rounded-full"
+                style={{
+                  border: `1px solid ${HEAT_TIER_COLOR[t]}`,
+                  background: `${HEAT_TIER_COLOR[t]}33`,
+                }}
+              />
+              {hoverTierLabel(t)}
             </span>
           ))}
         </div>

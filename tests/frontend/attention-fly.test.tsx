@@ -7,7 +7,7 @@
  * requestFly) is covered by the wiring in the component; this test pins the
  * AttentionPanel side, which previously only selected without flying.
  */
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import AttentionPanel from "@/components/alerts/AttentionPanel";
@@ -53,5 +53,34 @@ describe("AttentionPanel — click-to-zoom wiring", () => {
     fireEvent.click(screen.getByText("No GPS fix for 6 h"));
     // No crash + the row renders; store assertions live in the map tests.
     expect(screen.getByText("TRK-042")).toBeTruthy();
+  });
+});
+
+describe("AttentionPanel — hover severity preview (map tier language)", () => {
+  it("previews a critical alert with the SEVERE density tier the map paints", async () => {
+    render(<AttentionPanel alerts={[alert]} title="Need Attention — Carriers" emptyMessage="none" />);
+    const row = screen.getByText("No GPS fix for 6 h").closest("[role='button']")!;
+
+    // 90 ms intent delay, then the fixed-position preview opens…
+    fireEvent.mouseEnter(row);
+    const tip = await screen.findByRole("tooltip", {}, { timeout: 1500 });
+    // …with the row's identity, the alert comment, and the shared tier
+    // vocabulary: critical maps to the HIGH tier ("Severe density").
+    expect(tip.textContent).toContain("TRK-042");
+    expect(tip.textContent).toContain("The last measured position is 6 hours old.");
+    expect(tip.textContent).toContain("Severe density");
+    expect(tip.textContent).toContain("Critical");
+
+    // leaving the row retires the preview
+    fireEvent.mouseLeave(row);
+    await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
+  });
+
+  it("maps warning alerts to the MEDIUM tier and info to LOW", async () => {
+    const warning: TwinAlert = { ...alert, id: "a2", severity: "warning", title: "SOC at 22%" };
+    render(<AttentionPanel alerts={[warning]} title="Need Attention — Carriers" emptyMessage="none" />);
+    fireEvent.mouseEnter(screen.getByText("SOC at 22%").closest("[role='button']")!);
+    const tip = await screen.findByRole("tooltip", {}, { timeout: 1500 });
+    expect(tip.textContent).toContain("Medium density");
   });
 });

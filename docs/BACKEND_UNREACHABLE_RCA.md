@@ -334,3 +334,42 @@ queue with GPS-derived ETAs; 2) Charger Status — dual-gun Charger A/B with
 per-gun status and live kW vs the 240 kW rating; 3) Grid/DG Power Load — site
 draw vs the 250 kW feeder, DG pickup + fuel. All modelled surfaces are badged
 "Facility model" per the audited honesty boundary in `lib/site-model.ts`.
+
+---
+
+## 11. UI OVERHAUL — ENTERPRISE RADAR MAP + FOCUS ROUTING (2026-09-07, final)
+
+**Map aesthetics (Phase 1).** The solid numbered cluster bubbles are gone.
+A city aggregate is now three translucent layers on a divIcon: a light,
+tier-tinted breathing halo (`heat-halo`) and two thin radar rings expanding
+outward (`heat-ping`, staggered half a period, phase-shifted per cluster via a
+`--ping-delay` custom property hashed from the cluster id, so the field never
+pulses in lockstep). No count or city text is painted on the map — detail
+lives on the hover card. A single-carrier city renders as the same light-blue
+blinking node as every lone truck (`live-node`, added `live-node-blink`).
+Tier colours are pre-mixed toward white in CSS `color-mix`, and the whole
+animation set is stilled under `prefers-reduced-motion`.
+
+**Focus routing (Phase 2).** `lib/focus.ts` is the single routing vocabulary:
+off-page sources navigate `?vehicle_id=` (Central rows, Battery table, and now
+Battery-page alert rows — previously they only flipped an in-page pointer with
+no map to act on); the Truck Telemetry deep-link handler auto-scrolls to the
+map card (`#carrier-map`), selects and flies to the measured GPS fix. On-page
+sources (carrier alerts, fleet rows) scroll + fly directly. Mouse-leave
+snap-back: 350 ms debounced, re-enter cancellable, fires only from a drifted
+frame, one flight to the wide-India overview. Hover severity previews in the
+Need Attention panels render a fixed-position popover (escapes the scroll
+container) in the SAME tier vocabulary the map paints (`SEVERITY_TIER` →
+`HEAT_TIER_COLOR`), sharing `lib/map-data.ts` so no alert surface ever
+imports Leaflet.
+
+**Central panels (Phase 3).** FacilityPanels: the 1 Hz model clock now stops
+when the document is hidden and resyncs on return (single interval handle —
+no stacked clocks); redundant fields stripped (per-bay kW column — the SOC bar
+is the bay state; the bays+guns arithmetic restatement under Site draw);
+footnotes condensed. All mandated content (active transaction, 4 real bays,
+queue, dual-gun chargers, grid/DG) is intact.
+
+**Proof:** 50/50 frontend tests (radar structure, singleton nodes, snap-back,
+preview tiers, focus wiring), production build compiles, pytest green,
+served stylesheet contains the new keyframes with zero solid-core classes.

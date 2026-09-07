@@ -341,7 +341,12 @@ body {
   .pulse-emissive,
   .row-pulse,
   .rise-in,
-  .live-node-ring {
+  .live-node-ring,
+  .live-node-core,
+  .heat-ping,
+  .heat-halo,
+  .severity-preview-dot::before,
+  .severity-preview-dot::after {
     animation: none !important;
   }
 }
@@ -393,11 +398,12 @@ body {
 }
 
 /* ------------------------------------------------------------------ live
- * nodes + density heat bubbles (LeafletFleetMap)
+ * nodes + density radar field (LeafletFleetMap)
  *
- * Live GPS node: a solid light-blue core with an expanding, fading ring —
- * the "this dot is moving right now" idiom. Pure CSS keyframes on a divIcon,
- * so 100 nodes cost nothing and `prefers-reduced-motion` stills them below.
+ * Live GPS node: a solid light-blue core that BLINKS continuously under an
+ * expanding, fading ring — the "this dot is moving right now" idiom. Pure CSS
+ * keyframes on a divIcon, so 100 nodes cost nothing and
+ * `prefers-reduced-motion` stills them below.
  */
 .live-node {
   position: relative;
@@ -414,6 +420,7 @@ body {
   background: #63b3ff;
   border: 1.5px solid rgba(255, 255, 255, 0.9);
   box-shadow: 0 0 6px rgba(99, 179, 255, 0.75);
+  animation: live-node-blink 2.2s ease-in-out infinite;
   transition: background 0.15s ease;
 }
 .live-node-ring {
@@ -430,9 +437,19 @@ body {
   background: #a8d4ff;
   border-color: #ffffff;
   box-shadow: 0 0 10px rgba(140, 200, 255, 0.95);
+  animation-duration: 1.2s;
 }
 .live-node.is-active .live-node-ring {
   animation-duration: 1.2s;
+}
+@keyframes live-node-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
 }
 @keyframes live-node-pulse {
   0% {
@@ -450,65 +467,112 @@ body {
 }
 
 /*
- * Density heat bubble: a soft radial glow (the "heat") under a crisp core
- * disc that carries the count as real text. Tier colour arrives via
- * `--heat`, set by the heat-low/medium/high classes.
+ * DENSITY RADAR FIELD — the enterprise replacement for the old solid numbered
+ * bubbles. A cluster is now three translucent layers, nothing more:
+ *
+ *   .heat-halo   a highly transparent radial gradient in a LIGHT tint of the
+ *                tier colour, breathing slowly (the "heat" under the sweep)
+ *   .heat-ping   two thin radar rings expanding outward and fading, staggered
+ *                half a period apart, phase-shifted per cluster via
+ *                `--ping-delay` so a city field never pulses in lockstep
+ *
+ * There is deliberately NO text inside a cluster: the count and the city live
+ * on the hover card, the way an enterprise radar reads — shape first, detail
+ * on demand. Tier colour arrives via `--heat`, set by the tier classes below,
+ * pre-mixed toward white so the field stays light over the dark basemap.
  */
 .heat-blob {
-  --heat: #4ade80; /* low by default */
+  --heat: color-mix(in srgb, #4ade80 55%, white); /* low by default */
   position: relative;
   cursor: pointer;
 }
 .heat-blob.heat-medium {
-  --heat: #fbbf24;
+  --heat: color-mix(in srgb, #fbbf24 58%, white);
 }
 .heat-blob.heat-high {
-  --heat: #f87171;
+  --heat: color-mix(in srgb, #f87171 60%, white);
 }
-.heat-glow {
+.heat-halo {
   position: absolute;
   inset: 0;
   border-radius: 9999px;
   background: radial-gradient(
     circle,
-    color-mix(in srgb, var(--heat) 48%, transparent) 0%,
-    color-mix(in srgb, var(--heat) 20%, transparent) 46%,
-    transparent 72%
+    color-mix(in srgb, var(--heat) 26%, transparent) 0%,
+    color-mix(in srgb, var(--heat) 13%, transparent) 42%,
+    color-mix(in srgb, var(--heat) 4%, transparent) 62%,
+    transparent 76%
   );
-  transition: opacity 0.15s ease;
+  border: 1px solid color-mix(in srgb, var(--heat) 38%, transparent);
+  animation: heat-breathe 3.6s ease-in-out infinite;
+  transition: filter 0.15s ease;
 }
-.heat-blob:hover .heat-glow {
-  opacity: 0.85;
+.heat-blob:hover .heat-halo {
+  filter: brightness(1.12) saturate(1.15);
 }
-.heat-core {
+.heat-ping {
   position: absolute;
   inset: 0;
-  margin: auto;
-  width: 62%;
-  height: 62%;
   border-radius: 9999px;
-  display: grid;
-  place-items: center;
-  align-content: center;
-  gap: 1px;
-  border: 1.5px solid color-mix(in srgb, var(--heat) 75%, white 10%);
-  background: color-mix(in srgb, var(--surface) 76%, var(--heat) 24%);
-  backdrop-filter: blur(2px);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  border: 1.5px solid color-mix(in srgb, var(--heat) 52%, transparent);
+  opacity: 0;
+  animation: heat-radar 3.6s cubic-bezier(0.2, 0.6, 0.4, 1) infinite;
+  animation-delay: var(--ping-delay, 0s);
 }
-.heat-count {
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1;
-  color: var(--ink);
+.heat-ping-late {
+  animation-delay: calc(var(--ping-delay, 0s) + 1.8s);
 }
-.heat-city {
-  max-width: 92%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 9px;
-  font-weight: 500;
-  line-height: 1.1;
-  color: var(--ink-2);
+@keyframes heat-radar {
+  0% {
+    transform: scale(0.55);
+    opacity: 0.8;
+  }
+  80% {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+}
+@keyframes heat-breathe {
+  0%,
+  100% {
+    opacity: 0.72;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/*
+ * Severity preview popover (AttentionPanel) — the same tier language as the
+ * radar field: a small pulsing tier dot with its own expanding ring, so a
+ * hovered alert previews EXACTLY how its cluster will read on the map.
+ */
+.severity-preview-dot {
+  position: relative;
+  width: 10px;
+  height: 10px;
+  border-radius: 9999px;
+  flex-shrink: 0;
+}
+.severity-preview-dot::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: var(--tier);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--tier) 65%, transparent);
+  animation: live-node-blink 2.2s ease-in-out infinite;
+}
+.severity-preview-dot::after {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: 9999px;
+  border: 1.5px solid var(--tier);
+  opacity: 0;
+  animation: live-node-pulse 2.2s cubic-bezier(0.2, 0.6, 0.4, 1) infinite;
 }
