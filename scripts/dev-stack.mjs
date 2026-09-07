@@ -193,12 +193,17 @@ async function main() {
   const dbEnv = { DATABASE_URL: dbUrl };
 
   // 2. DATA — replay the REAL captured fleet unless live credentials exist.
+  //    WORKER=off skips the polling worker even when credentials are present —
+  //    for firewalled dev machines where the upstream is unreachable anyway.
   const apiKey = envOf("API_SECRET_KEY");
   const apiPass = envOf("API_PASSCODE");
   const liveCreds = Boolean(apiKey && apiPass);
   const replayEnabled = envOf("REPLAY_CAPTURE").toLowerCase() !== "false";
+  const workerOff = envOf("WORKER").toLowerCase() === "off";
 
-  if (liveCreds) {
+  if (liveCreds && workerOff) {
+    console.log("[stack] ⚠ WORKER=off — live polling disabled for this session (firewalled machine)");
+  } else if (liveCreds) {
     console.log("[stack] ✓ upstream credentials present — LIVE polling mode");
     run("worker", py, ["-m", "telemetry", "run"], dbEnv, "\x1b[33m");
   } else {

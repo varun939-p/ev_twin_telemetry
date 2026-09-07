@@ -1,0 +1,66 @@
+name: Ingest telemetry (near-live cadence for Vercel Hobby)
+
+# ---------------------------------------------------------------------------
+# Vercel Hobby permits cron jobs ONLY once per day (sub-daily expressions fail
+# at deploy time), so near-live ingestion needs an EXTERNAL scheduler. This
+# workflow is that scheduler: it calls the deployed control plane's
+# GET /api/cron/ingest — the exact endpoint Vercel's own daily cron hits —
+# with the CRON_SECRET bearer token, every 30 minutes.
+#
+# The route is idempotent and safe to double-trigger: the control plane holds a
+# per-instance single-flight lock (409) and a 45 s cooldown (429), and this
+# job treats 200 / 409 / 429 as healthy outcomes.
+#
+# ONE-TIME SETUP (repo -> Settings -> Secrets and variables -> Actions):
+#   TELEMETRY_PRODUCTION_URL  e.g. https://ev-twin-telemetry.vercel.app
+#   TELEMETRY_CRON_SECRET     the same value as the CRON_SECRET env var set
+#                             on the Vercel project
+#
+# Cost: ~1 runner-minute per run (~1,440 min/month at every-30-min) — inside
+# GitHub Actions' free tier for private repos. On a PUBLIC repo you can raise
+# the cadence to "*/10" (free, unlimited minutes).
+#
+# The daily Vercel cron (vercel.json, 0 18 * * *) stays in place as the
+# guaranteed baseline if this workflow is ever disabled after 60 days of
+# repository inactivity (GitHub's scheduled-workflow policy).
+# ---------------------------------------------------------------------------
+
+on:
+  schedule:
+    - cron: "*/30 * * * *" # every 30 minutes; use "*/10" on a public repo
+  workflow_dispatch: {} # manual run from the Actions tab
+
+permissions: {} # none — the job only makes an outbound HTTPS call
+
+concurrency:
+  group: telemetry-ingest
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Trigger one ingestion cycle on the deployed control plane
+        env:
+          PRODUCTION_URL: ${{ secrets.TELEMETRY_PRODUCTION_URL }}
+          CRON_SECRET: ${{ secrets.TELEMETRY_CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "$PRODUCTION_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "::error::Set TELEMETRY_PRODUCTION_URL and TELEMETRY_CRON_SECRET in repo secrets."
+            exit 1
+          fi
+          code=$(curl -s -o /tmp/ingest.json -w "%{http_code}" \
+            --max-time 120 \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            -H "Accept: application/json" \
+            "$PRODUCTION_URL/api/cron/ingest")
+          echo "POST/GET /api/cron/ingest -> HTTP $code"
+          head -c 600 /tmp/ingest.json; echo
+          # 200 = cycle completed (success or partial)
+          # 409 = a cycle is already running; 429 = within the cooldown window
+          case "$code" in
+            200|409|429) exit 0 ;;
+            *) exit 1 ;; # 401/403 auth misconfigured; 5xx = control plane/upstream problem
+          esac

@@ -183,3 +183,86 @@ the full checklist is in `DEPLOYMENT.md`.
 * `package.json` — `dev:all` (+ `dev:frontend` alias); `dev` unchanged.
 * `Makefile` — `make devstack`.
 * `.gitignore` — `.pgdata/`.
+
+---
+
+## 8. LIVE CREDENTIALS + VERCEL HOBBY RUNBOOK (2026-09-07 addendum)
+
+Real credentials were integrated and the pipeline verified end-to-end. The
+operator-supplied `.env` (API + Neon) is installed locally and gitignored; the
+live cycle was proven against the REAL engine code and REAL data.
+
+### 8.1 Evidence chain (what was proven, and from where)
+
+| Claim | Evidence |
+|---|---|
+| Upstream `track.blueenergymotors.com` is UP | Portal fetched successfully ("BEM eVehicle Telemetry", active-vehicle grid) |
+| The credentials are valid for this upstream | Operator's own capture (2026-09-04): `POST /api/auth/api-token` → token, tier-1+tier-2 fetch, `"accepted": 100` on the SAME `DATABASE_URL` |
+| The live code path is correct | Engine auth+fetch+validate+retry fired against the real endpoint in `once --dry-run`; 177 Python tests (auth, two-tier merge, retry/backoff, 401 recovery, journaling, live-date resolution) pass |
+| The dashboard serves the real fleet | `GET /api/telemetry/trusted` → 100 real vehicles; page chip "Connected · 100 frames · 8/24"; "100 of 100 carriers"; 10 moving / 0 charging / 90 idle |
+| Cron auth is Vercel-exact | `GET /api/cron/ingest` without Bearer → **401**; Vercel Cron sends `Authorization: Bearer $CRON_SECRET` automatically |
+| THIS sandbox cannot reach Neon or the vendor | Egress allowlist: TLS to `*.neon.tech:443/5432` and `track.blueenergymotors.com:443` is reset at the handshake (IPv4+IPv6), while `registry.npmjs.org` answers 200. **Environment-only restriction** — desktops, GitHub Actions runners and Vercel have normal egress |
+
+### 8.2 Vercel Hobby plan — the hard limits (researched)
+
+* Cron jobs on Hobby run **at most once per day**; sub-daily expressions fail
+  deployment. Precision is per-hour (±59 min), UTC only.
+  (Vercel docs: "Usage & Pricing for Cron Jobs".)
+* Function `maxDuration` on this project is pinned to **60 s** in
+  `vercel.json` — one full cycle (~13 s measured for 100 vehicles + auth +
+  writes) fits comfortably.
+* Therefore the near-live cadence is delivered by an **external scheduler**:
+  `.github/workflows/ingest-cron.yml` calls `GET /api/cron/ingest` with the
+  Bearer secret **every 30 minutes** (≈1,440 free Actions-minutes/month on a
+  private repo; raise to `*/10` on a public repo). The daily Vercel cron
+  (`0 18 * * *` = 23:30 IST) remains the guaranteed baseline.
+* Double-triggering is safe: the control plane single-flights cycles (409) and
+  enforces a 45 s cooldown (429); the workflow treats both as healthy.
+
+### 8.3 Exact configuration surfaces
+
+**Local desktop `.env`** (mirrors the verified setup; values as supplied by the
+operator — `API_BASE_URL`, `API_SECRET_KEY`, `API_PASSCODE`,
+`DATABASE_URL` = the Neon **pooled** URL, plus):
+```
+BACKEND_URL=http://127.0.0.1:8000
+TELEMETRY_DOC_PATH=/api/telemetry/trusted
+TELEMETRY_HEALTH_PATH=/api/health
+TELEMETRY_REVALIDATE_SECONDS=30
+TELEMETRY_TIMEOUT_MS=6000
+CRON_SECRET=<any long random string — same value you set on Vercel>
+POLL_INTERVAL_SECONDS=300        # local continuous worker cadence
+REQUIRE_ALL_FIELDS=false
+LIVE_DATE_FALLBACK=true
+```
+Then: `npm run dev:all` → boots PostgreSQL check (Neon used directly), the
+live polling worker, the control plane and the dashboard in one terminal.
+
+**Vercel project → Settings → Environment Variables** (Production + Preview):
+
+| Variable | Value | Why |
+|---|---|---|
+| `DATABASE_URL` | the Neon **pooled** URL (`…-pooler…`) | serverless-friendly driver/pooling; NullPool is forced automatically |
+| `API_SECRET_KEY` / `API_PASSCODE` | as supplied | engine authentication |
+| `API_BASE_URL` | `https://track.blueenergymotors.com` | explicit > implicit |
+| `CRON_SECRET` | long random string (rotate the one shared in chat) | ingest routes fail closed on Vercel without it |
+| `POLL_INTERVAL_SECONDS` | `1800` | matches the external 30-min scheduler so diagnostics do not flag "overdue" |
+| `TELEMETRY_REVALIDATE_SECONDS` | `30` | dashboard freshness window |
+| `TELEMETRY_TIMEOUT_MS` | `6000` | abort budget |
+| `BACKEND_URL` / `TELEMETRY_API_URL` | **DO NOT SET** | loopback cannot exist in serverless; own-origin rewrite is correct |
+
+**GitHub repo → Settings → Secrets and variables → Actions:**
+
+| Secret | Value |
+|---|---|
+| `TELEMETRY_PRODUCTION_URL` | e.g. `https://ev-twin-telemetry.vercel.app` |
+| `TELEMETRY_CRON_SECRET` | identical to Vercel's `CRON_SECRET` |
+
+### 8.4 Security notes
+
+* The API passcode and a Vercel OIDC token were shared through chat: **rotate
+  the passcode** (re-issue the API client) and delete the stale `.env.local`
+  (its `TELEMETRY_SOURCE=snapshot` architecture is retired; the OIDC token in
+  it is already expired).
+* `.env` is gitignored; a full-history scan confirms neither secret was ever
+  committed.
