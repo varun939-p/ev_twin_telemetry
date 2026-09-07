@@ -561,13 +561,22 @@ export default function SiteCanvas({
             <g key={charger.id} {...linkProps(charger.id, "/digital-twin/charging-station", `${charger.label} — open Charging Station`)}>
               <polygon points={tile(c, 40, 32)} fill="var(--plate)" stroke="var(--line-strong)" strokeWidth={1} />
               <Solid box={box} top="var(--surface-2)" left="var(--surface-3)" right="var(--plate)" opacity={hovered ? 0.92 : 1} />
+              <polygon points={tile([c[0], c[1] + 28], 30, 24)} fill="var(--surface-3)" stroke="var(--line-strong)" strokeWidth="1" />
+              <rect x={box.crown[0] - 12} y={box.crown[1] - 32} width="24" height="12" rx="2" fill="var(--accent-soft)" stroke="var(--accent)" strokeWidth="1" />
+              <path d={`M ${box.crown[0] - 8} ${box.crown[1] - 26} h 16`} stroke="var(--info)" strokeWidth="1.5" opacity=".8" />
+              {[-8, 0, 8].map((offset) => <path key={`vent-${charger.id}-${offset}`} d={`M ${c[0] + offset - 10} ${c[1] + 14} h 5`} stroke="var(--ink-3)" strokeWidth="1" opacity=".7" />)}
               {live && (
                 <>
                   <polygon points={box.top} fill="var(--ok)" opacity={0.18} stroke="var(--ok)" strokeWidth={1} />
                   <polygon points={box.top} fill="var(--ok)" filter="url(#glow)" className="pulse-emissive" />
                 </>
               )}
-              {/* two guns */}
+              {/* dual charging guns and their grounded cable loops */}
+              {charger.guns.map((gun, gi) => {
+                const gx = box.crown[0] + (gi === 0 ? -30 : 30);
+                const gy = box.crown[1] + 30 + gi * 16;
+                return <path key={`cable-${gun.id}`} d={`M ${box.crown[0]} ${box.crown[1] + 20} C ${gx - 8} ${gy + 18}, ${gx + 12} ${gy + 28}, ${gx} ${gy + 8}`} fill="none" stroke="var(--ink-3)" strokeWidth="2" strokeLinecap="round" opacity=".8" />;
+              })}
               {charger.guns.map((gun, gi) => {
                 // Guns hang off the kerb side of the unit, clear of the roof —
                 // they were previously drawn over the top face and the kW
