@@ -266,3 +266,38 @@ live polling worker, the control plane and the dashboard in one terminal.
   it is already expired).
 * `.env` is gitignored; a full-history scan confirms neither secret was ever
   committed.
+
+---
+
+## 9. PHASE 1 SELF-VERIFICATION + PHASE 2 MAP OVERHAUL (2026-09-07)
+
+### 9.1 End-to-end verification results (all executed, all passing)
+
+| Check | Result |
+|---|---|
+| Full mechanical cycle: scheduler→route→auth→cycle→upstream→DB→document | `GET /api/cron/ingest` w/ Bearer → **200** in 0.2 s: auth → tier-1+2 fetch → validate → write → journal; document served the cycle |
+| Route auth (Vercel-exact) | no Bearer → **401**; cooldown double-trigger → **429** (workflow treats both 200/409/429 as healthy) |
+| GitHub Actions step script (the SHIPPED text, extracted from the committed YAML) | all 6 branches verified against a stub: 200/409/429 → exit 0; 401/500 → exit 1; missing secrets → exit 1 |
+| vercel.json Hobby legality (`tools/verify_deploy_config.py`) | cron once-per-day ✓, maxDuration 60 ✓, function deps complete ✓ |
+| Test suites | 177 Python + 40 frontend, `next build` compiles |
+| Data integrity of the served fleet | served vehicle-id set **EXACTLY equals** the operator's real capture (100/100, zero synthetic rows) |
+
+### 9.2 Advanced map UI (components/map/LeafletFleetMap.tsx + globals.css)
+
+* **Intelligent base map:** primary = Esri World Dark Gray Canvas (native
+  high-contrast dark, keyless); on `tileerror` → OSM + CSS inversion
+  (`.basemap-osm`-scoped filter; CARTO began key-gating raster basemaps in
+  late Aug 2026, so it is a fallback, never a default); last resort → the
+  vendored India GeoJSON. Failover is automatic and permanent-per-session.
+* **Density heatmap clusters:** numbered bubbles replaced by tiered heat
+  blobs — green (low) / amber (medium) / red (severe) — **self-calibrated to
+  the busiest city** (count/max ratio), sqrt-scaled glow, crisp core keeps
+  count + city as real text. Camera-only drill unchanged.
+* **Live pulsing nodes:** every individual truck is a light-blue node with a
+  pure-CSS expanding ring (`.live-node-ring`, 2.2 s loop; 1.2 s when
+  selected/hovered); `prefers-reduced-motion` stills it; zero React renders.
+* **Cross-component click-to-zoom:** Carrier Fleet rows (existing `openOnMap`)
+  and Need-Attention rows (new `onRowClick={focusAlertOnMap}`) both select the
+  carrier and fly the map to its GPS fix at ZOOM.asset; deep links unchanged.
+* Test coverage: density tiers, pulsing nodes + active state, hover card,
+  cluster no-filter, Exit Live View, attention-row fly contract (40 total).

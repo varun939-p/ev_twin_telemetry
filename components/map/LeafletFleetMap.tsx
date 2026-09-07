@@ -55,7 +55,7 @@
  */
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CircleMarker, GeoJSON, MapContainer, Marker, TileLayer, useMap, useMapEvents } from "react-leaflet";
+import { GeoJSON, MapContainer, Marker, TileLayer, useMap, useMapEvents } from "react-leaflet";
 import L from "leaflet";
 import type { GeoJsonObject } from "geojson";
 
@@ -87,27 +87,39 @@ const STATUS_COLOR: Record<AssetStatus, string> = {
 };
 
 /**
- * BASEMAP: OpenStreetMap standard raster tiles.
+ * BASEMAP — a health-based failover chain, chosen for 2026 realities:
  *
- * CARTO's basemaps.cartocdn.com now returns an API-key error for
- * unauthenticated traffic, which is why the map surfaced "API KEY REQUIRED".
- * OSM's standard layer needs no key and no account — identical behaviour on a
- * laptop, a Vercel preview, or production.
+ *   1. Esri World Dark Gray Canvas (primary). A NATIVE high-contrast dark
+ *      basemap designed for enterprise data overlays — no CSS tricks, no API
+ *      key, keyless on server.arcgisonline.com under Esri's basemap terms.
+ *   2. OSM standard + CSS inversion (fallback). CARTO's dark raster began
+ *      key-gating in late Aug 2026 (watermarked "API KEY REQUIRED"), so the
+ *      dark variant of OSM is still produced in CSS (`.basemap-osm` filter in
+ *      globals.css) — one warm cache, theme toggles never re-download tiles.
+ *   3. Vendored India GeoJSON (offline). When every tile CDN is unreachable
+ *      (conference wifi, locked-down proxies), the map degrades to surveyed
+ *      vector borders + live markers instead of a grey rectangle.
  *
- * One URL serves both themes. OSM only publishes a light cartography, so the
- * dark variant is produced in CSS (`.dark .leaflet-tile` in globals.css)
- * rather than by swapping tile servers — that keeps a single warm HTTP cache
- * and means toggling the theme never re-downloads 20 tiles.
- *
- * Attribution is REQUIRED by the OSM tile usage policy and is rendered by the
- * control in the corner; do not remove it.
+ * The first `tileerror` on a provider demotes it once; the GeoJSON layer only
+ * mounts after the OSM tier has also failed. Attribution is REQUIRED by the
+ * providers' terms and is rendered by the corner control.
  */
-const TILES = {
-  url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-  attribution:
-    '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-  maxNativeZoom: 19,
+const BASEMAPS = {
+  "esri-dark": {
+    url: "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}",
+    attribution:
+      "Tiles &copy; Esri &mdash; Esri, HERE, Garmin, &copy; <a href=\"https://www.openstreetmap.org/copyright\">OpenStreetMap</a> contributors",
+    maxNativeZoom: 16,
+  },
+  "osm-inverted": {
+    url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    attribution:
+      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    maxNativeZoom: 19,
+  },
 } as const;
+
+type Basemap = keyof typeof BASEMAPS;
 
 /* ------------------------------------------------------------ camera glue */
 
@@ -239,7 +251,22 @@ const fmtCoord = (v: number, pos: "N" | "E", neg: "S" | "W") =>
  * animation or a pan costs nothing. Flips below the marker when there is no
  * room above (the flip is state, but only changes on the boundary frame).
  */
-function HoverCard({ map, target }: { map: L.Map; target: CardTarget }) {
+/** Concrete hex for the heat tiers — mirrors the CSS custom properties. */
+const HEAT_TIER_COLOR: Record<"low" | "medium" | "high", string> = {
+  low: "#4ade80",
+  medium: "#fbbf24",
+  high: "#f87171",
+};
+
+function HoverCard({
+  map,
+  target,
+  maxClusterCount,
+}: {
+  map: L.Map;
+  target: CardTarget;
+  maxClusterCount: number;
+}) {
   const cardRef = useRef<HTMLDivElement | null>(null);
   const [below, setBelow] = useState(false);
 
@@ -282,6 +309,8 @@ function HoverCard({ map, target }: { map: L.Map; target: CardTarget }) {
 
   if (target.kind === "cluster") {
     const c = target.cluster;
+    const tier = densityTier(c.count, maxClusterCount);
+    const tierLabel = tier === "high" ? "Severe density" : tier === "medium" ? "Medium density" : "Low density";
     return (
       <div
         ref={cardRef}
@@ -302,6 +331,10 @@ function HoverCard({ map, target }: { map: L.Map; target: CardTarget }) {
           </p>
           <p className="mt-0.5 text-[11px] text-ink-2">
             Avg SOC <span className="num">{c.avgSoc === null ? "—" : `${c.avgSoc}%`}</span>
+            {"  ·  "}
+            <span className="font-medium" style={{ color: HEAT_TIER_COLOR[tier] }}>
+              {tierLabel}
+            </span>
           </p>
           <p className="mt-2 text-[11px] font-medium text-accent">
             Click to zoom in — every other carrier stays on the map
@@ -372,6 +405,33 @@ function HoverCard({ map, target }: { map: L.Map; target: CardTarget }) {
 
 /* ----------------------------------------------------------------- markers */
 
+/**
+ * Density tier for the heatmap clusters: ratio of the city count to the
+ * busiest city, so the palette self-calibrates to ANY fleet size (10 trucks
+ * or 10,000) instead of hardcoding absolute thresholds that go stale.
+ */
+function densityTier(count: number, maxCount: number): "low" | "medium" | "high" {
+  const ratio = maxCount > 0 ? count / maxCount : 0;
+  if (ratio >= 0.66) return "high";
+  if (ratio >= 0.33) return "medium";
+  return "low";
+}
+
+/** Pixel diameter of a cluster bubble: sqrt scaling (area ~ count). */
+function clusterSize(count: number, maxCount: number): number {
+  const ratio = maxCount > 0 ? count / maxCount : 0;
+  return Math.round(Math.min(84, Math.max(40, 40 + Math.sqrt(ratio) * 34)));
+}
+
+/**
+ * A single live truck = a LIGHT BLUE PULSING node (Google-Maps live-traffic
+ * idiom). The pulse is a pure-CSS expanding ring on a divIcon — zero React
+ * renders per frame, and `prefers-reduced-motion` stills it globally.
+ * `STATUS_COLOR` survives in the hover card's status chip; the map itself
+ * speaks one language: a live node is live.
+ */
+const NODE_PX = 24;
+
 const VehicleMarker = memo(function VehicleMarker({
   point,
   onHoverIn,
@@ -387,19 +447,29 @@ const VehicleMarker = memo(function VehicleMarker({
   const select = useTwin((s) => s.select);
   const requestFly = useTwin((s) => s.requestFly);
 
-  const color = STATUS_COLOR[point.status];
   const active = hovered || selected;
 
+  const icon = useMemo(
+    () =>
+      L.divIcon({
+        className: "",
+        iconSize: [NODE_PX, NODE_PX],
+        iconAnchor: [NODE_PX / 2, NODE_PX / 2],
+        // vehicleId is validated upstream against ^[A-Za-z0-9._-]{3,32}$ —
+        // attribute-safe; no escaping needed.
+        html: `<div class="live-node${active ? " is-active" : ""}" data-vehicle-id="${point.vehicleId}">
+                 <span class="live-node-ring" aria-hidden></span>
+                 <span class="live-node-core" aria-hidden></span>
+               </div>`,
+      }),
+    [active, point.vehicleId],
+  );
+
   return (
-    <CircleMarker
-      center={[point.lat, point.lon]}
-      radius={active ? 9 : 5.5}
-      pathOptions={{
-        color: active ? "#ffffff" : color,
-        weight: active ? 2.5 : 1.5,
-        fillColor: color,
-        fillOpacity: point.status === "unknown" ? 0.35 : 0.9,
-      }}
+    <Marker
+      position={[point.lat, point.lon]}
+      icon={icon}
+      keyboard={false}
       eventHandlers={{
         // onMouseOver -> the floating card + the table-row highlight link.
         mouseover: () => {
@@ -421,32 +491,41 @@ const VehicleMarker = memo(function VehicleMarker({
   );
 });
 
-/** City aggregate: a divIcon so the count is real text, not a canvas glyph. */
+/**
+ * City aggregate = a DENSITY HEATMAP bubble. Colour encodes relative density
+ * (green -> amber -> red, self-calibrated to the busiest city), the soft glow
+ * radius grows with sqrt(count), and the crisp core keeps the count as real
+ * text. Pure CSS on a divIcon — no canvas, no per-frame renders.
+ */
 const ClusterMarker = memo(function ClusterMarker({
   cluster,
+  maxCount,
   onDrill,
   onHoverIn,
   onHoverOut,
 }: {
   cluster: MapCluster;
+  maxCount: number;
   onDrill: (c: MapCluster) => void;
   onHoverIn: (kind: "point" | "cluster", id: string) => void;
   onHoverOut: () => void;
 }) {
   const icon = useMemo(() => {
-    const size = Math.min(64, 34 + Math.round(Math.sqrt(cluster.count) * 5));
+    const size = clusterSize(cluster.count, maxCount);
+    const tier = densityTier(cluster.count, maxCount);
     return L.divIcon({
       className: "",
       iconSize: [size, size],
       iconAnchor: [size / 2, size / 2],
-      // Neutral, not accent. A city aggregate is a navigational affordance,
-      // not a call to action.
-      html: `<div style="width:${size}px;height:${size}px" class="grid place-items-center rounded-full border border-line-strong bg-surface/85 backdrop-blur-sm cursor-pointer transition hover:border-accent hover:bg-surface">
-               <span class="num text-[13px] font-bold leading-none text-ink">${cluster.count}</span>
-               <span class="text-[10px] font-medium text-ink-2 leading-none mt-0.5">${cluster.city}</span>
+      html: `<div class="heat-blob heat-${tier}" style="width:${size}px;height:${size}px" data-cluster-id="${cluster.id}">
+               <span class="heat-glow" aria-hidden></span>
+               <span class="heat-core">
+                 <span class="num heat-count">${cluster.count}</span>
+                 <span class="heat-city">${cluster.city}</span>
+               </span>
              </div>`,
     });
-  }, [cluster.count, cluster.city]);
+  }, [cluster, maxCount]);
 
   return (
     <Marker
@@ -562,13 +641,8 @@ export default function LeafletFleetMap({
   }, [hover, clusters, points, tableHoveredId, selectedId]);
 
   /**
-   * DEMO INSURANCE: raster tiles come from a CDN, and conference wifi (or a
-   * locked-down corporate proxy) blocks CDNs more often than anyone admits.
-   * On the first `tileerror` we lazily pull the vendored MIT-licensed India
-   * boundary geometry and draw it as a vector basemap, so the map degrades to
-   * "real surveyed borders + live markers" instead of a grey rectangle.
-   * The 300 KB GeoJSON is imported ONLY on that failure path, so the happy
-   * path never pays for it.
+   * DEMO INSURANCE, tiered: see BASEMAPS. `failed` accumulates demoted
+   * providers; the vendored GeoJSON mounts only after BOTH tile tiers failed.
    */
   interface Fallback {
     geo: GeoJsonObject;
@@ -577,23 +651,29 @@ export default function LeafletFleetMap({
     fill: string;
   }
   const [fallbackGeo, setFallbackGeo] = useState<Fallback | null>(null);
-  const tileErrorRef = useRef(false);
+  const [basemap, setBasemap] = useState<Basemap>("esri-dark");
+  const demotedRef = useRef<Set<Basemap>>(new Set());
   const onTileError = () => {
-    if (tileErrorRef.current) return;
-    tileErrorRef.current = true;
-    import("@/data/india_states.json")
-      .then((mod) =>
-        setFallbackGeo({
-          geo: (mod.default ?? mod) as unknown as GeoJsonObject,
-          // Resolved here, in an event handler, rather than during render:
-          // the DOM exists, so `.canvas-dark` is present and the tokens
-          // resolve to the DARK set. React 19 also forbids reading refs
-          // during render, which rules out doing this inline in the style.
-          stroke: cssVar("--line-strong", "rgba(255,255,255,0.16)"),
-          fill: cssVar("--surface-3", "#202127"),
-        }),
-      )
-      .catch(() => undefined);
+    if (basemap === "esri-dark" && !demotedRef.current.has("esri-dark")) {
+      demotedRef.current.add("esri-dark");
+      setBasemap("osm-inverted");
+      return;
+    }
+    if (basemap === "osm-inverted" && demotedRef.current.size >= 1 && !fallbackGeo) {
+      import("@/data/india_states.json")
+        .then((mod) =>
+          setFallbackGeo({
+            geo: (mod.default ?? mod) as unknown as GeoJsonObject,
+            // Resolved here, in an event handler, rather than during render:
+            // the DOM exists, so `.canvas-dark` is present and the tokens
+            // resolve to the DARK set. React 19 also forbids reading refs
+            // during render, which rules out doing this inline in the style.
+            stroke: cssVar("--line-strong", "rgba(255,255,255,0.16)"),
+            fill: cssVar("--surface-3", "#202127"),
+          }),
+        )
+        .catch(() => undefined);
+    }
   };
 
   const center = useMemo<[number, number]>(() => {
@@ -641,6 +721,8 @@ export default function LeafletFleetMap({
   };
 
   const showClusters = zoom < CLUSTER_BREAK && clusters.length > 0;
+  /** Busiest city — the density palette self-calibrates against it. */
+  const maxCount = useMemo(() => clusters.reduce((m, c) => Math.max(m, c.count), 0), [clusters]);
 
   return (
     // `canvas-dark` scopes the dark token set to the map only: the overlay
@@ -648,7 +730,9 @@ export default function LeafletFleetMap({
     // inherit it, and the OSM tile inversion filter keys off the same class.
     // The surrounding page stays light.
     <div
-      className={`canvas-dark relative ${heightClass} w-full overflow-hidden rounded-lg border border-line`}
+      className={`canvas-dark relative ${heightClass} w-full overflow-hidden rounded-lg border border-line${
+        basemap === "osm-inverted" ? " basemap-osm" : ""
+      }`}
       onMouseLeave={closeHoverNow}
     >
       <MapContainer
@@ -659,19 +743,19 @@ export default function LeafletFleetMap({
         maxZoom={ZOOM.max}
         zoomControl={false}
         scrollWheelZoom
-        preferCanvas
         worldCopyJump
         className="h-full w-full"
         style={{ background: "var(--surface-3)" }}
       >
-        {/* NOT keyed on the theme: one OSM layer serves both, and the dark
-            variant is a CSS filter. Re-keying here would throw away the tile
-            cache on every toggle. */}
+        {/* Keyed on the provider: a demotion swaps the layer cleanly instead
+            of fighting a warm cache of failed URLs. On the OSM tier the dark
+            variant is a CSS filter scoped to `.basemap-osm` (globals.css). */}
         <TileLayer
-          url={TILES.url}
-          attribution={TILES.attribution}
+          key={basemap}
+          url={BASEMAPS[basemap].url}
+          attribution={BASEMAPS[basemap].attribution}
           maxZoom={ZOOM.max}
-          maxNativeZoom={TILES.maxNativeZoom}
+          maxNativeZoom={BASEMAPS[basemap].maxNativeZoom}
           eventHandlers={{ tileerror: onTileError }}
         />
 
@@ -693,6 +777,7 @@ export default function LeafletFleetMap({
               <ClusterMarker
                 key={c.id}
                 cluster={c}
+                maxCount={maxCount}
                 onDrill={drill}
                 onHoverIn={onHoverIn}
                 onHoverOut={onHoverOut}
@@ -711,6 +796,7 @@ export default function LeafletFleetMap({
           key={cardTarget.kind === "point" ? cardTarget.point.vehicleId : cardTarget.cluster.id}
           map={map}
           target={cardTarget}
+          maxClusterCount={maxCount}
         />
       )}
 
@@ -767,12 +853,21 @@ export default function LeafletFleetMap({
           {fallbackGeo && <span className="ml-1 text-warn">· offline basemap</span>}
         </div>
 
-        {/* legend */}
+        {/* legend — live nodes + density tiers (status detail lives on the
+            hover card; the map speaks two visual languages: pulsing = live,
+            bubble colour = density) */}
         <div className="pointer-events-none absolute bottom-3 left-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-line bg-surface/90 px-2.5 py-1.5 backdrop-blur-sm">
-          {(["moving", "charging", "idle", "unknown"] as AssetStatus[]).map((s) => (
-            <span key={s} className="flex items-center gap-1.5 text-[11px] font-medium text-ink-2">
-              <span className="h-2 w-2 rounded-full" style={{ background: STATUS_COLOR[s] }} />
-              {s}
+          <span className="flex items-center gap-1.5 text-[11px] font-medium text-ink-2">
+            <span className="relative inline-flex h-2.5 w-2.5">
+              <span className="absolute inset-0 rounded-full border border-[#63b3ff]" style={{ opacity: 0.55 }} />
+              <span className="absolute inset-0 m-auto h-1.5 w-1.5 rounded-full bg-[#63b3ff]" />
+            </span>
+            live node
+          </span>
+          {(["low", "medium", "high"] as const).map((t) => (
+            <span key={t} className="flex items-center gap-1.5 text-[11px] font-medium text-ink-2">
+              <span className="h-2 w-2 rounded-full" style={{ background: HEAT_TIER_COLOR[t] }} />
+              {t === "high" ? "severe" : t} density
             </span>
           ))}
         </div>

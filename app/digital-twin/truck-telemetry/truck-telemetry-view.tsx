@@ -21,7 +21,7 @@
  *   owns the other, which is what keeps the hover link cycle-free.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 
 import AttentionPanel from "@/components/alerts/AttentionPanel";
@@ -64,6 +64,23 @@ export default function TruckTelemetryView({ data }: { data: TrustedTelemetryDoc
   const scoped = useMemo(() => applyVehicleFilters(vehicles, filters, sites), [vehicles, filters, sites]);
   const rows = useMemo(() => truckRows(scoped, registry), [scoped, registry]);
   const alerts = useMemo(() => truckAlerts(scoped, sites), [scoped, sites]);
+
+  /**
+   * Cross-component click-to-zoom: an alert-row click selects the carrier AND
+   * flies the map to its live GPS position at the readable asset radius (the
+   * table rows do the same via TruckTable.openOnMap). Trucks without a
+   * measured fix are selected but cannot be flown to honestly.
+   */
+  const focusAlertOnMap = useCallback(
+    (vehicleId: string) => {
+      select(vehicleId, "table");
+      const row = rows.find((r) => r.vehicleId === vehicleId);
+      const lat = row?.vehicle.values["latitude"];
+      const lon = row?.vehicle.values["longitude"];
+      if (typeof lat === "number" && typeof lon === "number") requestFly(lat, lon, ZOOM.asset);
+    },
+    [rows, select, requestFly],
+  );
 
   const { points, unlocatable } = useMemo(() => buildMapPoints(rows), [rows]);
   const clusters = useMemo(() => buildCityClusters(points), [points]);
@@ -145,6 +162,7 @@ export default function TruckTelemetryView({ data }: { data: TrustedTelemetryDoc
           alerts={alerts}
           title="Need Attention — Carriers"
           emptyMessage="No carrier anomalies in the current scope. Battery chemistry alerts live on Battery Tracking."
+          onRowClick={focusAlertOnMap}
         />
       </PanelErrorBoundary>
 
