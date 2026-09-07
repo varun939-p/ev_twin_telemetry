@@ -73,7 +73,7 @@
  * Dark data canvas. Scoped token override — NOT a theme.
  * ------------------------------------------------------------------------- */
 .canvas-dark {
-  --canvas: #14161a;
+  --canvas: #0f172a;
   --surface: #191b20;
   --surface-2: #1e2027;
   --surface-3: #23262d;
