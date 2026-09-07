@@ -23,7 +23,7 @@ import Link from "next/link";
 import { useMemo } from "react";
 import { useRouter } from "next/navigation";
 
-import RealFacilityScene from "@/components/central/RealFacilityScene";
+import SiteCanvas from "@/components/central/SiteCanvas";
 import { KpiCard } from "@/components/ui/Metric";
 import { Pill } from "@/components/ui/Pill";
 import { Card, CardHeader, Hairline, PageHeading } from "@/components/ui/Surface";
@@ -120,7 +120,7 @@ export default function CentralView({ data }: { data: TrustedTelemetryDocument }
       <Card>
         <div className="p-2 sm:p-3">
           <PanelErrorBoundary name="Facility canvas" resetKey={data.generated_at}>
-            <RealFacilityScene packs={sitePacks} inbound={inbound} station={station} />
+            <SiteCanvas packs={sitePacks} inbound={inbound} station={station} />
           </PanelErrorBoundary>
         </div>
       </Card>
