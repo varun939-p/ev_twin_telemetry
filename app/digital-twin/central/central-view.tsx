@@ -23,7 +23,6 @@ import Link from "next/link";
 import { useMemo } from "react";
 import { useRouter } from "next/navigation";
 
-import FacilityPanels from "@/components/central/FacilityPanels";
 import SiteCanvas from "@/components/central/SiteCanvas";
 import { KpiCard } from "@/components/ui/Metric";
 import { Pill } from "@/components/ui/Pill";
@@ -45,8 +44,8 @@ import type { InboundSeed, PackSeed } from "@/lib/site-model";
 import { numericValue, type TrustedTelemetryDocument } from "@/lib/trusted-telemetry";
 
 const DRILL_DOWNS = [
-  { href: "/digital-twin/truck-telemetry", label: "Truck Telemetry", hint: "Carrier map, alerts, 24-param detail" },
-  { href: "/digital-twin/battery-tracking", label: "Battery Tracking", hint: "Pack register, SOH, live SOC" },
+  { href: "/digital-twin/truck-telemetry", label: "Truck Telemetry", hint: "Map and alerts" },
+  { href: "/digital-twin/battery-tracking", label: "Battery Tracking", hint: "Packs and alerts" },
 ];
 
 export default function CentralView({ data }: { data: TrustedTelemetryDocument }) {
@@ -109,6 +108,10 @@ export default function CentralView({ data }: { data: TrustedTelemetryDocument }
     () => selectedVehicles.filter((v) => isEvVehicle(v) && (numericValue(v, "soc") ?? 100) < SOC_CRITICAL).length,
     [selectedVehicles],
   );
+  const reserve = useMemo(() => {
+    const measured = sitePacks.map((pack) => pack.soc).filter((soc): soc is number => soc !== null);
+    return measured.length ? Math.round(measured.reduce((sum, soc) => sum + soc, 0) / measured.length) : null;
+  }, [sitePacks]);
   const attentionAlerts = useMemo(() => [...batteryAlerts(selectedVehicles, registry, sites), ...truckAlerts(selectedVehicles, sites)], [selectedVehicles, registry, sites]);
 
   return (
@@ -126,10 +129,10 @@ export default function CentralView({ data }: { data: TrustedTelemetryDocument }
         <KpiCard label="Batteries at Site" value={sitePacks.length} tone="neutral" />
         <KpiCard label="Low Battery Alerts" value={belowReserve} tone={belowReserve > 0 ? "danger" : "ok"} />
         <KpiCard label="Active Trucks" value={inService} tone="ok" />
-        <KpiCard label="Battery Reserve %" value={sitePacks.length ? Math.round(sitePacks.reduce((sum, pack) => sum + (pack.soc ?? 0), 0) / sitePacks.length) : null} unit="%" tone="accent" />
+        <KpiCard label="Battery Reserve %" value={reserve} unit="%" tone="accent" />
       </div>
-      <PanelErrorBoundary name="Facility panels" resetKey={data.generated_at}>
-        <FacilityPanels packs={sitePacks} inbound={inbound} station={station} />
+      <PanelErrorBoundary name="Combined attention" resetKey={data.generated_at}>
+        <AttentionPanel alerts={attentionAlerts} title="Need Attention — Fleet" emptyMessage="No alerts for selected sites." onRowClick={(vehicleId) => router.push(`/digital-twin/truck-telemetry?vehicle_id=${encodeURIComponent(vehicleId)}`)} />
       </PanelErrorBoundary>
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
         <Card className="xl:col-span-2">
@@ -137,11 +140,8 @@ export default function CentralView({ data }: { data: TrustedTelemetryDocument }
           <Hairline />
           {inbound.length === 0 ? <p className="px-5 py-8 text-center text-xs text-ink-3">No carriers are currently moving toward the selected sites.</p> : <ul className="scroll-thin max-h-[260px] divide-y divide-line overflow-y-auto">{inbound.slice(0, 12).map((truck) => <li key={truck.vehicleId}><Link href={`/digital-twin/truck-telemetry?vehicle_id=${encodeURIComponent(truck.vehicleId)}`} className="flex items-center gap-3 px-5 py-2.5 transition hover:bg-surface-2"><span className="num min-w-0 flex-1 truncate text-xs font-medium text-ink">{truck.carrierLabel}</span><span className="num text-[12px] text-ink-2">{truck.soc === null ? "SOC —" : `SOC ${truck.soc}%`}</span><span className="num text-[12px] text-ink-3">{truck.distanceKm ?? "—"} km</span><Pill tone="info">{formatEta(truck.etaMinutes) ?? "ETA —"}</Pill></Link></li>)}</ul>}
         </Card>
-        <Card><CardHeader eyebrow="Navigate" title="Asset telemetry" description="Open a detailed view for the selected fleet." /><Hairline /><ul className="divide-y divide-line">{DRILL_DOWNS.map((item) => <li key={item.href}><Link href={item.href} className="flex items-center gap-3 px-5 py-3 transition hover:bg-surface-2"><span className="min-w-0 flex-1"><span className="block text-xs font-medium text-ink">{item.label}</span><span className="block text-[11px] text-ink-3">{item.hint}</span></span><span className="text-accent" aria-hidden>→</span></Link></li>)}</ul></Card>
+        <Card><CardHeader eyebrow="Navigate" title="Asset telemetry" /><Hairline /><ul className="divide-y divide-line">{DRILL_DOWNS.map((item) => <li key={item.href}><Link href={item.href} className="flex items-center gap-3 px-5 py-3 transition hover:bg-surface-2"><span className="min-w-0 flex-1"><span className="block text-xs font-medium text-ink">{item.label}</span><span className="block text-[11px] text-ink-3">{item.hint}</span></span><span className="text-accent" aria-hidden>→</span></Link></li>)}</ul></Card>
       </div>
-      <PanelErrorBoundary name="Combined attention" resetKey={data.generated_at}>
-        <AttentionPanel alerts={attentionAlerts} title="Need Attention — Fleet" emptyMessage="All selected batteries and trucks are within the current operating thresholds." onRowClick={(vehicleId) => router.push(`/digital-twin/truck-telemetry?vehicle_id=${encodeURIComponent(vehicleId)}`)} />
-      </PanelErrorBoundary>
     </div>
   );
 }

@@ -303,6 +303,16 @@ export default function SiteCanvas({
             <stop offset="0%" stopColor="var(--surface-2)" />
             <stop offset="100%" stopColor="var(--surface-3)" />
           </linearGradient>
+          <linearGradient id="sky" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor="#263b55" stopOpacity=".95" />
+            <stop offset="55%" stopColor="#182536" stopOpacity=".72" />
+            <stop offset="100%" stopColor="#14161a" stopOpacity=".98" />
+          </linearGradient>
+          <linearGradient id="road-light" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor="var(--surface)" stopOpacity=".7" />
+            <stop offset="50%" stopColor="var(--accent)" stopOpacity=".22" />
+            <stop offset="100%" stopColor="var(--surface)" stopOpacity=".55" />
+          </linearGradient>
           <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
             <feGaussianBlur stdDeviation="6" result="b" />
             <feMerge>
@@ -310,7 +320,14 @@ export default function SiteCanvas({
               <feMergeNode in="SourceGraphic" />
             </feMerge>
           </filter>
+          <filter id="soft-shadow" x="-30%" y="-30%" width="160%" height="180%">
+            <feDropShadow dx="0" dy="12" stdDeviation="10" floodColor="#05070d" floodOpacity=".42" />
+          </filter>
         </defs>
+
+        <rect width={VIEW.w} height={VIEW.h} fill="url(#sky)" />
+        <path d="M0 120 C240 38 420 140 650 70 S1000 34 1200 110" fill="none" stroke="var(--accent)" strokeOpacity=".16" strokeWidth="2" />
+        <path d="M0 150 C280 75 460 170 720 96 S1040 70 1200 140" fill="none" stroke="var(--info)" strokeOpacity=".1" strokeWidth="1" />
 
         {/* ---------------------------------------------------- ground */}
         <polygon points={ground} fill="url(#plate)" stroke="var(--line-strong)" strokeWidth={1.5} />
@@ -330,10 +347,10 @@ export default function SiteCanvas({
         <path
           d={ROAD.map((p, i) => `${i === 0 ? "M" : "L"} ${p[0]} ${p[1]}`).join(" ")}
           fill="none"
-          stroke="var(--surface)"
-          strokeWidth={2}
+          stroke="url(#road-light)"
+          strokeWidth={3}
           strokeDasharray="10 12"
-          opacity={0.8}
+          opacity={0.95}
         />
         <text x={72} y={196} className="fill-[var(--ink-3)] text-[12px]" style={{ fontSize: 11 }}>
           Entry
