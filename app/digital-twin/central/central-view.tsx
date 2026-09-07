@@ -22,6 +22,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
+import FacilityPanels from "@/components/central/FacilityPanels";
 import SiteCanvas from "@/components/central/SiteCanvas";
 import { KpiCard } from "@/components/ui/Metric";
 import { Pill } from "@/components/ui/Pill";
@@ -171,6 +172,12 @@ export default function CentralView({ data }: { data: TrustedTelemetryDocument }
           </PanelErrorBoundary>
         </div>
       </Card>
+
+      {/* 2b — the three operational panels (swap bays, chargers, grid/DG),
+          fed by the same real telemetry + audited facility model ---------- */}
+      <PanelErrorBoundary name="Facility panels" resetKey={data.generated_at}>
+        <FacilityPanels packs={sitePacks} inbound={inbound} station={station} />
+      </PanelErrorBoundary>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
         {/* 3 — inbound queue -------------------------------------------- */}

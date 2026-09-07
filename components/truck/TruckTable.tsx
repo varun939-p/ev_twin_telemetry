@@ -6,6 +6,7 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { StatusPill, Value } from "@/components/ui/Pill";
 import { EmptyState } from "@/components/ui/Surface";
 import DetailChevron from "@/components/ui/DetailChevron";
+import { scrollMapIntoView } from "@/lib/focus";
 import { ZOOM } from "@/lib/map-data";
 import { useIsHovered, useIsSelected, useTwin } from "@/lib/store";
 import type { TruckRow } from "@/lib/fleet-metrics";
@@ -113,6 +114,10 @@ const Row = memo(function Row({
 
   const openOnMap = () => {
     select(row.vehicleId, "table");
+    // Focus contract: a fleet-row click brings the map into view before the
+    // camera flies — the table sits below the fold, so the flight would
+    // otherwise happen off-screen.
+    scrollMapIntoView();
     const lat = row.vehicle.values["latitude"];
     const lon = row.vehicle.values["longitude"];
     if (typeof lat === "number" && typeof lon === "number") requestFly(lat, lon, ZOOM.asset);

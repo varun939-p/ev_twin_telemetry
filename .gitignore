@@ -61,3 +61,6 @@ next-env.d.ts
 /frontend/.next/
 .vercel
 .env*
+
+# local dev database (pgserver) — real PostgreSQL data directory
+.pgdata/

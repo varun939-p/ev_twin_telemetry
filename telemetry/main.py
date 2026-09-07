@@ -164,6 +164,23 @@ def _mask_url(url: str) -> str:
 # ---------------------------------------------------------------------------
 # health
 # ---------------------------------------------------------------------------
+@app.get("/", include_in_schema=False)
+def root() -> dict:
+    """Landing pointer for anything that opens the DATA plane by mistake.
+
+    The control plane serves JSON APIs only; the human UI lives on the
+    Next.js dashboard port (3000 locally). If a preview pane or a browser
+    lands here, tell it where the pixels are instead of a bare 404.
+    """
+    web_port = os.getenv("PORT", "3000")
+    return {
+        "service": "EV twin telemetry control plane (API only — no UI here)",
+        "dashboard": f"http://localhost:{web_port}/digital-twin/central",
+        "health": "/api/health",
+        "telemetry": "/api/telemetry/trusted",
+    }
+
+
 @app.get("/health")
 @app.get("/api/health")
 def health() -> JSONResponse:

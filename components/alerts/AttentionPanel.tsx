@@ -1,12 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import InfoTip from "@/components/ui/InfoTip";
 import { useSocTrend } from "@/lib/soc-history";
 import { Pill, type Tone } from "@/components/ui/Pill";
 import { useTwin } from "@/lib/store";
 import { ALERT_KIND_LABEL, type AlertKind, type AlertSeverity, type TwinAlert } from "@/lib/fleet-metrics";
+import { HEAT_TIER_COLOR, HEAT_TIER_LABEL, type HeatTier } from "@/lib/map-data";
 
 /**
  * "Need Attention" banner.
@@ -40,6 +41,19 @@ const SEVERITY_TONE: Record<AlertSeverity, Tone> = {
 
 const SEVERITY_RANK: Record<AlertSeverity, number> = { critical: 0, warning: 1, info: 2 };
 
+/**
+ * Severity -> density tier. One visual vocabulary everywhere: a CRITICAL row
+ * previews in the exact red the map paints a severe-density radar cell with,
+ * so an operator learns one colour language, not two.
+ */
+const SEVERITY_TIER: Record<AlertSeverity, HeatTier> = {
+  critical: "high",
+  warning: "medium",
+  info: "low",
+};
+
+const densityTierLabelFor = (tier: HeatTier) => HEAT_TIER_LABEL[tier].replace(" density", "").toLowerCase();
+
 const SEVERITY_LABEL: Record<AlertSeverity, string> = {
   critical: "Critical",
   warning: "Warning",
@@ -63,6 +77,51 @@ export default function AttentionPanel({
   const [severityFilter, setSeverityFilter] = useState<AlertSeverity | "all">("all");
   const [collapsed, setCollapsed] = useState(false);
   const [expandedKinds, setExpandedKinds] = useState<ReadonlySet<AlertKind>>(new Set());
+
+  /**
+   * HOVER SEVERITY PREVIEW (mandate): hovering an alert row opens a fixed-
+   * position popover that previews the row with the MAP's density colour
+   * logic — pulsing tier dot, tier label, the alert's comment and metric —
+   * before the operator commits to the click.
+   *
+   * `position: fixed` anchored to the row's bounding rect is deliberate: the
+   * row list is an `overflow-y-auto` container, and an absolutely-positioned
+   * popover would be clipped at the container edge (and scroll away under a
+   * static anchor). A 90 ms intent delay stops previews strobing while the
+   * cursor sweeps the list; any scroll of the list retires the stale anchor.
+   */
+  const [preview, setPreview] = useState<{ alertId: string; rect: DOMRect } | null>(null);
+  const previewTimer = useRef<number | null>(null);
+
+  const closePreview = useCallback(() => {
+    if (previewTimer.current !== null) {
+      window.clearTimeout(previewTimer.current);
+      previewTimer.current = null;
+    }
+    setPreview(null);
+  }, []);
+
+  const openPreview = useCallback((alertId: string, el: HTMLElement) => {
+    const rect = el.getBoundingClientRect();
+    if (previewTimer.current !== null) window.clearTimeout(previewTimer.current);
+    previewTimer.current = window.setTimeout(() => {
+      previewTimer.current = null;
+      setPreview({ alertId, rect });
+    }, 90);
+  }, []);
+
+  useEffect(() => closePreview, [closePreview]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onScrollOrResize = () => closePreview();
+    window.addEventListener("scroll", onScrollOrResize, { passive: true });
+    window.addEventListener("resize", onScrollOrResize);
+    return () => {
+      window.removeEventListener("scroll", onScrollOrResize);
+      window.removeEventListener("resize", onScrollOrResize);
+    };
+  }, [closePreview]);
 
   const counts = useMemo(() => {
     const c: Record<AlertSeverity, number> = { critical: 0, warning: 0, info: 0 };
@@ -110,9 +169,12 @@ export default function AttentionPanel({
   const headerTint =
     worst === "critical" ? "bg-danger-soft" : worst === "warning" ? "bg-warn-soft" : "bg-surface-2";
 
+  // overflow-hidden REMOVED deliberately: it clipped the row InfoTip
+  // popovers at the panel edge (the "comment text missing behind the
+  // section" bug). The header carries its own top rounding instead.
   return (
-    <section className={`overflow-hidden rounded-xl border bg-surface ${frame} shadow-[var(--shadow)]`} aria-label={title}>
-      <header className={`flex flex-wrap items-center gap-3 px-4 py-3 ${headerTint}`}>
+    <section className={`rounded-xl border bg-surface ${frame} shadow-[var(--shadow)]`} aria-label={title}>
+      <header className={`flex flex-wrap items-center gap-3 rounded-t-xl px-4 py-3 ${headerTint}`}>
         <span
           className={`grid h-7 w-7 shrink-0 place-items-center rounded-full ${
             worst === "critical" ? "bg-danger text-white" : worst === "warning" ? "bg-warn text-white" : "bg-surface-3 text-ink-3"
@@ -163,7 +225,11 @@ export default function AttentionPanel({
       </header>
 
       {alerts.length > 0 && !collapsed && (
-        <div className="scroll-thin max-h-[17rem] overflow-y-auto border-t border-line/70">
+        <div
+          className="scroll-thin max-h-[17rem] overflow-y-auto border-t border-line/70"
+          onScroll={closePreview}
+          onMouseLeave={closePreview}
+        >
           {groups.map((group) => {
             const expanded = expandedKinds.has(group.kind);
             const shown = expanded ? group.items : group.items.slice(0, PREVIEW_ROWS);
@@ -200,8 +266,16 @@ export default function AttentionPanel({
                       <div
                         role="button"
                         tabIndex={0}
-                        onMouseEnter={() => hover(alert.vehicleId, "table")}
-                        onMouseLeave={() => hover(null)}
+                        onMouseEnter={(e) => {
+                          hover(alert.vehicleId, "table");
+                          openPreview(alert.id, e.currentTarget);
+                        }}
+                        onMouseLeave={() => {
+                          hover(null);
+                          closePreview();
+                        }}
+                        onFocus={(e) => openPreview(alert.id, e.currentTarget)}
+                        onBlur={closePreview}
                         onClick={() => (onRowClick ? onRowClick(alert.vehicleId) : select(alert.vehicleId, "table"))}
                         onKeyDown={(e) => {
                           if (e.key === "Enter" || e.key === " ") {
@@ -256,6 +330,52 @@ export default function AttentionPanel({
           )}
         </div>
       )}
+
+      {/* hover severity preview — fixed-position, so it escapes the scroll
+          container; pointer-events-none, so it can never trap the cursor */}
+      {preview &&
+        (() => {
+          const alert = visible.find((a) => a.id === preview.alertId);
+          if (!alert) return null;
+          const tier = SEVERITY_TIER[alert.severity];
+          const color = HEAT_TIER_COLOR[tier];
+          const POPOVER_W = 288;
+          const margin = 12;
+          // Anchor: right edge of the row, below it; flip above when the row
+          // sits in the bottom band of the viewport. Both axes clamped.
+          const left = Math.max(margin, Math.min(preview.rect.right - POPOVER_W, window.innerWidth - POPOVER_W - margin));
+          const estimatedH = 132;
+          const flip = preview.rect.bottom + estimatedH > window.innerHeight - margin;
+          const top = flip ? preview.rect.top - estimatedH - 6 : preview.rect.bottom + 6;
+          return (
+            <div
+              role="tooltip"
+              className="rise-in pointer-events-none fixed z-[1200] rounded-xl border border-line-strong bg-surface/95 p-3 shadow-[0_10px_28px_rgba(0,0,0,0.4)]"
+              style={{ left, top, width: POPOVER_W }}
+            >
+              <div className="flex items-center gap-2">
+                <span className="severity-preview-dot" style={{ ["--tier" as string]: color }} aria-hidden />
+                <span className="text-[12px] font-semibold text-ink">{alert.label}</span>
+                <span
+                  className="ml-auto rounded-full border px-1.5 py-0.5 text-[10px] font-semibold"
+                  style={{ color, borderColor: `${color}55`, background: `${color}1f` }}
+                >
+                  {SEVERITY_LABEL[alert.severity]}
+                </span>
+              </div>
+              <p className="mt-1.5 text-[11.5px] leading-relaxed text-ink-2">{alert.comment}</p>
+              <div className="my-2 h-px bg-line" />
+              <div className="flex items-center justify-between text-[10.5px] text-ink-3">
+                <span className="num">{alert.vehicleId}</span>
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: color }} aria-hidden />
+                  {HEAT_TIER_LABEL[tier]} — radar {densityTierLabelFor(tier)} on the map
+                </span>
+                {alert.metric && <span className="num font-semibold text-ink-2">{alert.metric}</span>}
+              </div>
+            </div>
+          );
+        })()}
 
     </section>
   );

@@ -340,7 +340,14 @@ body {
   .pulse-soft,
   .pulse-emissive,
   .row-pulse,
-  .rise-in {
+  .rise-in,
+  .live-node-ring,
+  .live-node-core,
+  .heat-ping,
+  .heat-halo,
+  .heat-center,
+  .severity-preview-dot::before,
+  .severity-preview-dot::after {
     animation: none !important;
   }
 }
@@ -382,6 +389,214 @@ body {
  * then the saturation and contrast are pulled back so the map recedes behind
  * the markers instead of competing with them.
  */
-.canvas-dark .leaflet-tile {
+/**
+ * The inversion ONLY applies on the OSM fallback tier (`.basemap-osm` on the
+ * map root, set by LeafletFleetMap). The primary Esri World Dark Gray Canvas
+ * ships natively dark and must NOT be double-processed.
+ */
+.canvas-dark.basemap-osm .leaflet-tile {
   filter: invert(1) hue-rotate(180deg) brightness(0.92) contrast(0.92) saturate(0.72);
+}
+
+/* ------------------------------------------------------------------ live
+ * nodes + density radar field (LeafletFleetMap)
+ *
+ * Live GPS node: a solid light-blue core that BLINKS continuously under an
+ * expanding, fading ring — the "this dot is moving right now" idiom. Pure CSS
+ * keyframes on a divIcon, so 100 nodes cost nothing and
+ * `prefers-reduced-motion` stills them below.
+ */
+.live-node {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+.live-node-core {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 11px;
+  height: 11px;
+  border-radius: 9999px;
+  background: #7cc4ff;
+  border: 1.5px solid rgba(255, 255, 255, 0.95);
+  box-shadow:
+    0 0 8px rgba(124, 196, 255, 0.9),
+    0 0 2px rgba(255, 255, 255, 0.9) inset;
+  animation: live-node-blink 1.6s ease-in-out infinite;
+  transition: background 0.15s ease;
+}
+.live-node-ring {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 12px;
+  height: 12px;
+  border-radius: 9999px;
+  border: 2px solid rgba(99, 179, 255, 0.85);
+  animation: live-node-pulse 2.2s cubic-bezier(0.2, 0.6, 0.4, 1) infinite;
+}
+.live-node.is-active .live-node-core {
+  background: #b8dcff;
+  border-color: #ffffff;
+  box-shadow:
+    0 0 12px rgba(160, 210, 255, 1),
+    0 0 3px rgba(255, 255, 255, 0.95) inset;
+  animation-duration: 1.2s;
+}
+.live-node.is-active .live-node-ring {
+  animation-duration: 1.2s;
+}
+@keyframes live-node-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+@keyframes live-node-pulse {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.9;
+  }
+  70% {
+    transform: scale(2.7);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(2.7);
+    opacity: 0;
+  }
+}
+
+/*
+ * DENSITY RADAR FIELD — the enterprise replacement for the old solid numbered
+ * bubbles. A cluster is now three translucent layers, nothing more:
+ *
+ *   .heat-halo   a highly transparent radial gradient in a LIGHT tint of the
+ *                tier colour, breathing slowly (the "heat" under the sweep)
+ *   .heat-ping   two thin radar rings expanding outward and fading, staggered
+ *                half a period apart, phase-shifted per cluster via
+ *                `--ping-delay` so a city field never pulses in lockstep
+ *
+ * There is deliberately NO text inside a cluster: the count and the city live
+ * on the hover card, the way an enterprise radar reads — shape first, detail
+ * on demand. Tier colour arrives via `--heat`, set by the tier classes below,
+ * pre-mixed toward white so the field stays light over the dark basemap.
+ */
+.heat-blob {
+  --heat: color-mix(in srgb, #4ade80 55%, white); /* low by default */
+  position: relative;
+  cursor: pointer;
+}
+.heat-blob.heat-medium {
+  --heat: color-mix(in srgb, #fbbf24 58%, white);
+}
+.heat-blob.heat-high {
+  --heat: color-mix(in srgb, #f87171 60%, white);
+}
+.heat-halo {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--heat) 34%, transparent) 0%,
+    color-mix(in srgb, var(--heat) 16%, transparent) 40%,
+    color-mix(in srgb, var(--heat) 6%, transparent) 60%,
+    transparent 78%
+  );
+  border: 1px solid color-mix(in srgb, var(--heat) 45%, transparent);
+  animation: heat-breathe 3.2s ease-in-out infinite;
+  transition: filter 0.15s ease;
+}
+/* Luminous core of the field: a tiny light disc that gives the cell a
+   centre of mass without ever carrying text — the "hot reading" of a radar
+   blip. Light-mixed so it reads as glow, not a solid bubble. */
+.heat-center {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 26%;
+  height: 26%;
+  border-radius: 9999px;
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, white 55%, var(--heat)) 0%,
+    color-mix(in srgb, var(--heat) 45%, transparent) 70%,
+    transparent 100%
+  );
+  filter: blur(0.5px);
+  animation: heat-breathe 3.2s ease-in-out infinite;
+}
+.heat-blob:hover .heat-halo {
+  filter: brightness(1.12) saturate(1.15);
+}
+.heat-ping {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  border: 1.5px solid color-mix(in srgb, var(--heat) 60%, transparent);
+  opacity: 0;
+  animation: heat-radar 3.2s cubic-bezier(0.2, 0.6, 0.4, 1) infinite;
+  animation-delay: var(--ping-delay, 0s);
+}
+.heat-ping-late {
+  animation-delay: calc(var(--ping-delay, 0s) + 1.6s);
+}
+@keyframes heat-radar {
+  0% {
+    transform: scale(0.55);
+    opacity: 0.85;
+  }
+  80% {
+    transform: scale(2.05);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(2.05);
+    opacity: 0;
+  }
+}
+@keyframes heat-breathe {
+  0%,
+  100% {
+    opacity: 0.65;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/*
+ * Severity preview popover (AttentionPanel) — the same tier language as the
+ * radar field: a small pulsing tier dot with its own expanding ring, so a
+ * hovered alert previews EXACTLY how its cluster will read on the map.
+ */
+.severity-preview-dot {
+  position: relative;
+  width: 10px;
+  height: 10px;
+  border-radius: 9999px;
+  flex-shrink: 0;
+}
+.severity-preview-dot::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: var(--tier);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--tier) 65%, transparent);
+  animation: live-node-blink 2.2s ease-in-out infinite;
+}
+.severity-preview-dot::after {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: 9999px;
+  border: 1.5px solid var(--tier);
+  opacity: 0;
+  animation: live-node-pulse 2.2s cubic-bezier(0.2, 0.6, 0.4, 1) infinite;
 }

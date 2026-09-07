@@ -43,6 +43,42 @@ export interface MapCluster {
   vehicleIds: string[];
 }
 
+/**
+ * The shared DENSITY TIER vocabulary — the one place where a severity colour
+ * is decided. The map bubbles, the map legend, the hover cards AND the
+ * "Need Attention" hover previews all read these, so a red radar ring on the
+ * map and a red preview popover on an alert row are provably the same tier.
+ *
+ * Lives here (not in the Leaflet component) because the alert panel must not
+ * import a module that pulls `leaflet` into the battery-page bundle.
+ */
+export type HeatTier = "low" | "medium" | "high";
+
+/** Concrete hex for the heat tiers — mirrors the CSS custom properties. */
+export const HEAT_TIER_COLOR: Record<HeatTier, string> = {
+  low: "#4ade80",
+  medium: "#fbbf24",
+  high: "#f87171",
+};
+
+export const HEAT_TIER_LABEL: Record<HeatTier, string> = {
+  low: "Low density",
+  medium: "Medium density",
+  high: "Severe density",
+};
+
+/**
+ * Density tier: ratio of the city count to the busiest city, so the palette
+ * self-calibrates to ANY fleet size (10 trucks or 10,000) instead of
+ * hardcoding absolute thresholds that go stale.
+ */
+export function densityTier(count: number, maxCount: number): HeatTier {
+  const ratio = maxCount > 0 ? count / maxCount : 0;
+  if (ratio >= 0.66) return "high";
+  if (ratio >= 0.33) return "medium";
+  return "low";
+}
+
 /** Only rows with a MEASURED fix are plotted; the rest are reported as
  *  unlocatable by the caller rather than pinned at (0, 0). */
 export function buildMapPoints(rows: TruckRow[], now: Date = new Date()): { points: MapPoint[]; unlocatable: TruckRow[] } {

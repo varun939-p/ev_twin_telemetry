@@ -21,7 +21,7 @@
  *   owns the other, which is what keeps the hover link cycle-free.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 
 import AttentionPanel from "@/components/alerts/AttentionPanel";
@@ -32,6 +32,7 @@ import TruckTable from "@/components/truck/TruckTable";
 import { Card, CardHeader, Hairline, PageHeading } from "@/components/ui/Surface";
 import PanelErrorBoundary from "@/components/ui/PanelErrorBoundary";
 import { Pill } from "@/components/ui/Pill";
+import { MAP_ANCHOR_ID, scrollMapIntoView, VEHICLE_DEEP_LINK_PARAM } from "@/lib/focus";
 import { applyVehicleFilters, batteryRegistry, buildGeoIndex, deriveSites, isEvVehicle } from "@/lib/fleet";
 import { truckAlerts, truckRows, type TruckRow } from "@/lib/fleet-metrics";
 import { buildCityClusters, buildMapPoints, ZOOM } from "@/lib/map-data";
@@ -65,6 +66,24 @@ export default function TruckTelemetryView({ data }: { data: TrustedTelemetryDoc
   const rows = useMemo(() => truckRows(scoped, registry), [scoped, registry]);
   const alerts = useMemo(() => truckAlerts(scoped, sites), [scoped, sites]);
 
+  /**
+   * Cross-component click-to-zoom: an alert-row click selects the carrier AND
+   * flies the map to its live GPS position at the readable asset radius (the
+   * table rows do the same via TruckTable.openOnMap). Trucks without a
+   * measured fix are selected but cannot be flown to honestly.
+   */
+  const focusAlertOnMap = useCallback(
+    (vehicleId: string) => {
+      select(vehicleId, "table");
+      scrollMapIntoView(); // the alert panel sits BELOW the map — go to it
+      const row = rows.find((r) => r.vehicleId === vehicleId);
+      const lat = row?.vehicle.values["latitude"];
+      const lon = row?.vehicle.values["longitude"];
+      if (typeof lat === "number" && typeof lon === "number") requestFly(lat, lon, ZOOM.asset);
+    },
+    [rows, select, requestFly],
+  );
+
   const { points, unlocatable } = useMemo(() => buildMapPoints(rows), [rows]);
   const clusters = useMemo(() => buildCityClusters(points), [points]);
 
@@ -76,24 +95,31 @@ export default function TruckTelemetryView({ data }: { data: TrustedTelemetryDoc
 
   /* --------------------------------------------------------- deep links */
 
-  /** `?vehicle_id=<id>` from Battery Tracking: select it and fly to it once. */
+  /**
+   * `?vehicle_id=<id>` deep links — the landing half of the cross-page focus
+   * contract. Central Dashboard rows, Battery Tracking rows and battery
+   * alerts all navigate here; the contract is: land on this page, AUTO-SCROLL
+   * to the map, select the carrier and fly/zoom to its live GPS fix.
+   *
+   * A carrier whose frame carries no measured fix is selected and scrolled to
+   * but never flown to — an invented coordinate would be a fabrication, so
+   * the map stays at the fleet frame and the table row pulses instead.
+   */
   const handledLink = useRef<string | null>(null);
-  const deepLink = searchParams.get("vehicle_id");
+  const deepLink = searchParams.get(VEHICLE_DEEP_LINK_PARAM);
 
   useEffect(() => {
     if (!deepLink || handledLink.current === deepLink) return;
+    handledLink.current = deepLink;
     const match = vehicles.find(
       (v) => v.vehicle_id === deepLink || v.vehicle_id.replace(/_EV\d+$/i, "") === deepLink,
     );
+    scrollMapIntoView();
     if (!match) return;
-    handledLink.current = deepLink;
     select(match.vehicle_id, "link");
     const lat = match.values["latitude"];
     const lon = match.values["longitude"];
     if (typeof lat === "number" && typeof lon === "number") requestFly(lat, lon, ZOOM.asset);
-    // No scrollIntoView. `select(..., "link")` above pulses the arriving row
-    // and flies the map to it; that is enough to locate the asset without
-    // seizing the scroll position the operator chose.
   }, [deepLink, vehicles, select, requestFly]);
 
   /* ------------------------------------------------------------- render */
@@ -119,7 +145,7 @@ export default function TruckTelemetryView({ data }: { data: TrustedTelemetryDoc
       />
 
       {/* 1 — MAP, absolute top, full width ------------------------------- */}
-      <Card>
+      <Card id={MAP_ANCHOR_ID} className="scroll-mt-16">
         <div className="p-3">
           <PanelErrorBoundary name="Carrier map" resetKey={data.generated_at}>
             <FleetMap points={points} clusters={clusters} heightClass="h-[440px]" />
@@ -145,6 +171,7 @@ export default function TruckTelemetryView({ data }: { data: TrustedTelemetryDoc
           alerts={alerts}
           title="Need Attention — Carriers"
           emptyMessage="No carrier anomalies in the current scope. Battery chemistry alerts live on Battery Tracking."
+          onRowClick={focusAlertOnMap}
         />
       </PanelErrorBoundary>
 
