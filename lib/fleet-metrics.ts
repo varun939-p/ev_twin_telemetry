@@ -31,20 +31,22 @@ import {
 
 /* ------------------------------------------------------------- live status */
 
-export type AssetStatus = "moving" | "charging" | "idle" | "unknown";
+export type AssetStatus = "moving" | "charging" | "idle" | "stopped" | "unknown";
 
 export const STATUS_LABEL: Record<AssetStatus, string> = {
-  moving: "In service · moving",
+  moving: "In service · moving / run",
   charging: "Charging",
-  idle: "Idle · parked",
+  idle: "Idle · ready",
+  stopped: "Stopped",
   unknown: "Other / offline · no motion reading",
 };
 
 export const STATUS_SHORT: Record<AssetStatus, string> = {
-  moving: "Moving",
+  moving: "Active",
   charging: "Charging",
   idle: "Idle",
-  unknown: "Other / Offline",
+  stopped: "Stopped",
+  unknown: "Unknown",
 };
 
 /** Token names, not hex: the map, tables and canvas all read the same set so
@@ -53,21 +55,38 @@ export const STATUS_TOKEN: Record<AssetStatus, "ok" | "accent" | "warn" | "ink-3
   moving: "ok",
   charging: "accent",
   idle: "warn",
+  stopped: "ink-3",
   unknown: "ink-3",
 };
 
 /**
  * Live state of one frame.
  *
- * Order matters: `charging_status === 1` outranks a zero speed reading, and a
- * missing speed channel is reported as `unknown` rather than folded into
- * "idle" -- a truck we cannot hear from is not a truck standing still.
+ * Integrated with Blue Energy operating code dictionary:
+ * - workst: 0 Init, 1 Ready-Green, 2 Start, 3 Run/Working, 4 Stop
+ * - chg_status: 0 Not charging, 1 Charging
+ * - status(card): Active, Charging, Idle, Stopped, Unknown
+ *
+ * Precedence:
+ * 1. charging_status === 1 => "charging" (Charging)
+ * 2. work_status === "4" => "stopped" (Stopped)
+ * 3. speed > 0 or work_status === "3" => "moving" (Active)
+ * 4. speed === 0 or work_status in ("0", "1", "2") => "idle" (Idle)
+ * 5. otherwise => "unknown" (Unknown)
  */
 export function assetStatus(vehicle: TrustedVehicle): AssetStatus {
   if (numericValue(vehicle, "charging_status") === 1) return "charging";
+  const workSt =
+    vehicle.values.work_status !== null && vehicle.values.work_status !== undefined
+      ? String(vehicle.values.work_status).trim()
+      : null;
+  if (workSt === "4") return "stopped";
   const speed = numericValue(vehicle, "speed_kmh");
-  if (speed === null) return "unknown";
-  return speed > 0 ? "moving" : "idle";
+  if (speed !== null && speed > 0) return "moving";
+  if (workSt === "3") return "moving";
+  if (speed === 0 || (workSt !== null && ["0", "1", "2"].includes(workSt))) return "idle";
+  if (speed === null && workSt === null) return "unknown";
+  return "idle";
 }
 
 /* --------------------------------------------------------- power + energy */

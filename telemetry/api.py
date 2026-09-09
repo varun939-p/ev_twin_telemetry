@@ -164,6 +164,20 @@ class UpstreamClient:
         """The exact tier-2 GET URL for one vehicle (descriptive, see above)."""
         return self._full_url(self.settings.vehicle_url(vehicle_id), None)
 
+    def stream_request_url(self) -> str:
+        """The exact SSE stream URL (descriptive)."""
+        return self._full_url(self.settings.stream_url(), None)
+
+    def stream_events(self, token: str):
+        """Iterate over SSE events from GET /api/v1/stream."""
+        url = self.settings.stream_url()
+        headers = {"Authorization": f"Bearer {token}", "Accept": "text/event-stream"}
+        with self.session.get(url, headers=headers, stream=True, timeout=self.settings.request_timeout) as resp:
+            resp.raise_for_status()
+            for line in resp.iter_lines(decode_unicode=True):
+                if line:
+                    yield line
+
     @staticmethod
     def _full_url(url: str, params: dict[str, str] | None) -> str:
         """`base_url + path` plus the encoded query string, exactly as sent.

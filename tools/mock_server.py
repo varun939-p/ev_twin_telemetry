@@ -84,7 +84,7 @@ class Fleet:
 
     def __init__(self, count: int, all_fields: bool) -> None:
         self.all_fields = all_fields
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         self.tokens: dict[str, float] = {}       # token -> issued_at (monotonic)
         self.revoked_before = 0.0                # monotonic cutoff
         self.fail_remaining = 0
@@ -316,6 +316,38 @@ class Fleet:
                 )
             return frame
 
+    def dashboard_payload(self, vehicle: str | None = None, date: str | None = None) -> dict[str, Any]:
+        """GET /api/v1/dashboard payload: all vehicles with full parameters in a dict."""
+        with self.lock:
+            if self.scenario is not None:
+                live_date: str = self.scenario["live_date"]
+                dead: int = self.scenario["dead"]
+                effective = date or datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
+                if effective != live_date:
+                    dead_day = datetime.strptime(live_date, "%Y-%m-%d") - timedelta(days=12)
+                    dead_ts = dead_day.strftime("%Y-%m-%d") + " 10:00:00"
+                    vehicles: dict[str, Any] = {}
+                    for vid in list(self.state)[: max(0, dead)]:
+                        if vehicle and vehicle.upper() not in vid:
+                            continue
+                        vehicles[vid] = {"last_updated": dead_ts, "battery": None}
+                    return {"ok": True, "vehicles": vehicles}
+            vehicles = {}
+            for vid in sorted(self.state):
+                if vehicle and vehicle.upper() not in vid:
+                    continue
+                detail = self.vehicle_detail(vid)
+                if detail:
+                    frame = dict(detail)
+                    battery = frame.pop("battery", None)
+                    if isinstance(battery, dict):
+                        frame.update(battery)
+                    vehicles[vid] = frame
+            return {
+                "ok": True,
+                "vehicles": vehicles,
+            }
+
     # ------------------------------------------------------------------ auth
     def issue_token(self) -> dict[str, Any]:
         with self.lock:
@@ -473,6 +505,35 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        if path == "/api/v1/dashboard":
+            auth = self.headers.get("Authorization", "")
+            token = auth[7:].strip() if auth.lower().startswith("bearer ") else None
+            if not self.fleet.token_valid(token):
+                with self.fleet.lock:
+                    self.fleet.counts["data_401"] += 1
+                self._send(401, {"ok": False, "auth": "required", "error": "token expired or missing"})
+                return
+
+            if self.fleet.take_failure():
+                self._send(500, {"ok": False, "error": "internal server error"})
+                return
+
+            if self.fleet.latency_ms:
+                time.sleep(self.fleet.latency_ms / 1000.0)
+
+            date = query.get("date", [None])[0]
+            if date is not None:
+                try:
+                    datetime.strptime(date, "%Y-%m-%d")
+                except ValueError:
+                    self._send(400, {"ok": False, "error": "bad date format, expected YYYY-MM-DD"})
+                    return
+
+            with self.fleet.lock:
+                self.fleet.counts["data"] += 1
+            self._send(200, self.fleet.dashboard_payload(vehicle=query.get("vehicle", [None])[0], date=date))
+            return
+
         if path.startswith("/api/v1/vehicles/"):
             # Tier 2: the live diagnostic frame for one vehicle.
             auth = self.headers.get("Authorization", "")
@@ -490,14 +551,22 @@ class Handler(BaseHTTPRequestHandler):
             if self.fleet.latency_ms:
                 time.sleep(self.fleet.latency_ms / 1000.0)
 
-            vehicle_id = unquote(path[len("/api/v1/vehicles/"):]).strip().upper()
+            subpath = unquote(path[len("/api/v1/vehicles/"):]).strip()
+            is_live = False
+            if subpath.endswith("/live"):
+                subpath = subpath[:-5]
+                is_live = True
+            vehicle_id = subpath.strip().upper()
             with self.fleet.lock:
                 self.fleet.counts["detail"] += 1
             frame = self.fleet.vehicle_detail(vehicle_id)
             if frame is None:
                 self._send(404, {"ok": False, "error": f"unknown vehicle {vehicle_id}"})
                 return
-            self._send(200, frame)
+            if is_live:
+                self._send(200, {"ok": True, "vehicle": vehicle_id, "parameters": frame})
+            else:
+                self._send(200, frame)
             return
 
         if path == "/api/v1/vehicles":

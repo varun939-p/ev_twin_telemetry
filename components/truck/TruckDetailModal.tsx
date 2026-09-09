@@ -136,8 +136,22 @@ export default function TruckDetailModal({
                 const info = meta.get(field);
                 const status = (vehicle.field_status[field] ?? "absent_upstream") as FieldStatus;
                 const raw = vehicle.values[field] ?? null;
-                const text = formatValue(raw, info?.unit ?? "");
+                const text = formatValue(raw, info?.unit ?? "", field);
                 const error = vehicle.field_errors.find((e) => e.field === field);
+
+                // Check if this is a BMS un-reported / 255 sentinel value on cell/pack indexing channels
+                const isBmsNotReported =
+                  (field === "max_cell_v_cell_no" ||
+                    field === "min_cell_v_cell_no" ||
+                    field === "min_cell_v_pack_no" ||
+                    field === "max_temp_pack_no") &&
+                  (raw === null ||
+                    raw === 255 ||
+                    error?.raw === 255 ||
+                    error?.raw === 255.0 ||
+                    error?.error?.toLowerCase().includes("sentinel") ||
+                    status === "field_error" ||
+                    status === "null_upstream");
 
                 return (
                   <div
@@ -152,6 +166,10 @@ export default function TruckDetailModal({
                     <dd className="shrink-0 text-right">
                       {status === "measured" && text !== null ? (
                         <span className="num text-[13px] font-semibold text-ink">{text}</span>
+                      ) : isBmsNotReported ? (
+                        <Pill tone="neutral" title="BMS not reported (255 sentinel treated as null)">
+                          Not Reported
+                        </Pill>
                       ) : (
                         <Pill
                           tone={STATUS_TONE[status]}

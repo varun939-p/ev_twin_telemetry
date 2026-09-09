@@ -258,10 +258,10 @@ def test_credentials_never_appear_in_the_vehicles_query(settings, mock_api):
 
 
 # ----------------------------------------------------- endpoint migration
-def test_data_endpoint_is_the_v1_vehicles_route(settings):
-    """The engine must address /api/v1/vehicles, never the retired route."""
-    assert settings.vehicles_path == "/api/v1/vehicles"
-    assert settings.vehicles_url().endswith("/api/v1/vehicles")
+def test_data_endpoint_is_the_v1_dashboard_route(settings):
+    """The engine addresses /api/v1/dashboard for full fleet live telemetry."""
+    assert settings.vehicles_path == "/api/v1/dashboard"
+    assert settings.vehicles_url().endswith("/api/v1/dashboard")
     assert "dashboard-parameters" not in settings.vehicles_url()
 
 
@@ -269,15 +269,15 @@ def test_vehicles_request_url_carries_the_filters_and_no_credentials(settings, m
     settings.api_date = "2026-08-28"
     settings.api_vehicle_filter = "AP39WG"
     url = UpstreamClient(settings).vehicles_request_url()
-    assert url.endswith("/api/v1/vehicles?date=2026-08-28&vehicle=AP39WG")
+    assert url.endswith("/api/v1/dashboard?date=2026-08-28&vehicle=AP39WG")
     assert settings.api_secret_key not in url
     assert settings.api_passcode not in url
 
 
 # ------------------------------------------------------- tier-2 detail endpoint
-def test_detail_endpoint_url_is_derived_from_the_vehicles_path(settings):
+def test_detail_endpoint_url_points_to_live_route(settings):
     url = UpstreamClient(settings).vehicle_request_url("M456D745")
-    assert url.endswith("/api/v1/vehicles/M456D745")
+    assert url.endswith("/api/v1/vehicles/M456D745/live")
     assert settings.api_secret_key not in url
     assert settings.api_passcode not in url
 
@@ -293,11 +293,13 @@ def test_detail_endpoint_serves_the_live_diagnostic_frame(settings, mock_api):
     vid = next(iter(fleet_summary["vehicles"]))
     detail = client.fetch_vehicle(tok, vid)
 
-    assert isinstance(detail, dict) and "last_updated" in detail
-    battery = detail["battery"]
+    assert isinstance(detail, dict)
+    params = detail.get("parameters", detail)
+    assert "last_updated" in params
+    battery = params.get("battery")
     assert isinstance(battery, dict), "tier-1 summary shape leaked into tier 2"
     assert "batt_v" in battery and "chg_status" in battery
-    assert "batt_temp" in detail
+    assert "batt_temp" in params
 
 
 def test_detail_endpoint_404_is_not_retried(client, settings, mock_api):
@@ -344,4 +346,5 @@ def test_default_base_url_is_the_blue_energy_upstream():
 
     defaults = Settings(_env_file=None)
     assert defaults.api_base_url == "https://track.blueenergymotors.com"
-    assert defaults.vehicles_url() == "https://track.blueenergymotors.com/api/v1/vehicles"
+    assert defaults.vehicles_url() == "https://track.blueenergymotors.com/api/v1/dashboard"
+    assert defaults.stream_url() == "https://track.blueenergymotors.com/api/v1/stream"

@@ -23,6 +23,7 @@ build/
 .vscode/
 .idea/
 .DS_Store
+.zcode/
 
 # Runtime artifacts
 /.cache/

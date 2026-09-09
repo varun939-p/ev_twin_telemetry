@@ -160,19 +160,27 @@ def merge_vehicle_frames(summary_frame: dict[str, Any], detail_response: Any) ->
         return summary_frame
 
     detail = detail_response
-    inner = detail.get("vehicle")
-    if isinstance(inner, dict) and len(detail) <= 3:
-        detail = inner  # envelope tolerance: {"ok": true, "vehicle": {...}}
+    if isinstance(detail.get("parameters"), dict):
+        inner_params = detail["parameters"]
+        sources = (
+            detail,
+            inner_params,
+            inner_params.get("battery") if isinstance(inner_params.get("battery"), dict) else {},
+        )
+    else:
+        inner = detail.get("vehicle")
+        if isinstance(inner, dict) and len(detail) <= 3:
+            detail = inner  # envelope tolerance: {"ok": true, "vehicle": {...}}
+        sources = (detail, detail.get("battery") if isinstance(detail.get("battery"), dict) else {})
 
     merged = {
         key: value
         for key, value in summary_frame.items()
         if key != "battery" and not isinstance(value, dict)
     }
-    sources = (detail, detail.get("battery") if isinstance(detail.get("battery"), dict) else {})
     for source in sources:
         for key, value in source.items():
-            if key == "battery" or isinstance(value, dict) or value is None:
+            if key in ("battery", "parameters") or isinstance(value, dict) or value is None:
                 continue
             merged[key] = value
     return merged
@@ -383,6 +391,20 @@ def _coerce_by_spec(value: Any, info: ValidationInfo) -> Any:
         raise ValueError(f"not a number: {value!r}") from exc
     if number != number:  # NaN
         return None
+
+    # Blue Energy BMS 255 Sentinel:
+    # "255 sentinel: BMS not reported sentinel, treat as null."
+    # Cell/pack indexing channels and bounded channels send 255 (0xFF) when not reported.
+    if (
+        spec.name in (
+            "max_cell_v_cell_no",
+            "min_cell_v_cell_no",
+            "min_cell_v_pack_no",
+            "max_temp_pack_no",
+        )
+        or (spec.maximum is not None and spec.maximum < 255)
+    ) and int(round(number)) == 255:
+        return None
     # P1 (Min/Max Bypass): the physical-limit checks must run BEFORE any return.
     # The old code returned the rounded integer above them, so integer fields
     # (charging_status, cell numbers, cycles) skipped their bounds entirely.
@@ -496,6 +518,15 @@ class VehiclesPayload(BaseModel):
     """
 
     model_config = ConfigDict(extra="ignore")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _extract_vehicles_container(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "vehicles" not in data:
+            if "data" in data and isinstance(data["data"], (dict, list)):
+                data = dict(data)
+                data["vehicles"] = data["data"]
+        return data
 
     ok: bool = True
     summary: dict[str, Any] | None = None

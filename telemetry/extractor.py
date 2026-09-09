@@ -325,45 +325,10 @@ class TelemetryExtractor:
             return payload, 0, 0
 
         # Skip tier-2 detail fetches if the fleet payload already carries complete
-        # telemetry (e.g. from /api/dashboard-parameters) or if vehicles_path is not /api/v1/vehicles.
-        if not self.settings.vehicles_path.startswith("/api/v1/vehicles"):
-            return payload, 0, 0
+        # telemetry (e.g. from /api/v1/dashboard or full diagnostic frames).
         first_frame = next(iter(payload.vehicles.values()), {})
-        if isinstance(first_frame, dict) and any(k in first_frame for k in ("batt_temp", "min_cell_v", "battery_total_v", "batt_volt")):
+        if isinstance(first_frame, dict) and any(k in first_frame for k in ("batt_temp", "min_cell_v", "battery_total_v", "batt_volt", "max_cell_v")):
             return payload, 0, 0
-
-        # Fast path for live production upstream: attempt single-request bulk enrichment
-        # via /api/dashboard-parameters before falling back to per-vehicle requests.
-        try:
-            bulk_data = run_with_reauth(
-                self.tokens,
-                lambda token: self.client._request(
-                    "GET",
-                    f"{self.settings.api_base_url}/api/dashboard-parameters",
-                    headers={"Authorization": f"Bearer {token}"},
-                    label="dashboard-parameters bulk",
-                    endpoint="vehicles",
-                ),
-                label="dashboard-parameters bulk",
-            )
-            if isinstance(bulk_data, dict) and isinstance(bulk_data.get("vehicles"), dict):
-                dash_vehicles = bulk_data["vehicles"]
-                enriched = 0
-                for vehicle_id in list(payload.vehicles):
-                    if vehicle_id in dash_vehicles:
-                        payload.vehicles[vehicle_id] = merge_vehicle_frames(
-                            payload.vehicles[vehicle_id], dash_vehicles[vehicle_id]
-                        )
-                        enriched += 1
-                if enriched > 0:
-                    log.info("tier 2: bulk enriched %d/%d vehicle(s) via /api/dashboard-parameters", enriched, len(payload.vehicles))
-                    self.metrics.inc("twin_detail_requests_total", value=1.0)
-                    return payload, enriched, 0
-        except Exception as exc:
-            log.debug(
-                "tier 2: bulk /api/dashboard-parameters unavailable (%s) -- falling back to per-vehicle detail fetch",
-                exc.__class__.__name__,
-            )
 
         vehicle_ids = list(payload.vehicles)
         workers = min(self.settings.detail_fetch_workers, len(vehicle_ids))
