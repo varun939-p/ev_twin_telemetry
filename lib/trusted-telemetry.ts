@@ -497,11 +497,45 @@ export function formatAge(hours: number): string {
   return `${Math.round(hours / 24)} d`;
 }
 
+/** Operating code dictionaries confirmed by Blue Energy */
+export const WORK_STATUS_LABEL: Record<string, string> = {
+  "0": "Init",
+  "1": "Ready-Green",
+  "2": "Start",
+  "3": "Run/Working",
+  "4": "Stop",
+};
+
+export const CHARGING_STATUS_LABEL: Record<string, string> = {
+  "0": "Not charging",
+  "1": "Charging",
+};
+
 /** Display a validated value.  `null` must never become "0" -- callers render
  *  the unavailable state instead; this returns null so they can branch. */
-export function formatValue(value: ParamValue, unit: string): string | null {
+export function formatValue(value: ParamValue, unit: string, field?: string): string | null {
   if (value === null || value === undefined || value === "") return null;
+  if (field === "work_status" || (typeof value === "string" && WORK_STATUS_LABEL[value])) {
+    const key = String(value).trim();
+    if (WORK_STATUS_LABEL[key]) {
+      return `${WORK_STATUS_LABEL[key]} (${key})`;
+    }
+  }
+  if (field === "charging_status" && (value === 0 || value === 1 || value === "0" || value === "1")) {
+    const key = String(value).trim();
+    if (CHARGING_STATUS_LABEL[key]) {
+      return CHARGING_STATUS_LABEL[key];
+    }
+  }
   if (typeof value === "number") {
+    // 255 sentinel guard on cell and pack index channels
+    if (
+      field &&
+      ["max_cell_v_cell_no", "min_cell_v_cell_no", "min_cell_v_pack_no", "max_temp_pack_no"].includes(field) &&
+      value === 255
+    ) {
+      return null;
+    }
     const abs = Math.abs(value);
     const text = abs >= 1000 ? value.toLocaleString("en-IN", { maximumFractionDigits: 0 }) : abs >= 100 ? value.toFixed(0) : abs >= 10 ? value.toFixed(1) : value.toFixed(2);
     return unit ? `${text} ${unit}` : text;

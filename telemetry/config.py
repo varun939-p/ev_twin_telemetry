@@ -37,14 +37,12 @@ class Settings(BaseSettings):
     api_secret_key: str = Field(default="", description="secret_key issued with the API client")
     api_passcode: str = Field(default="", description="passcode issued with the API client (shown once)")
     auth_path: str = "/api/auth/api-token"
-    # Data endpoints -- two-tier live contract (verified 2026-09 via Postman).
-    # Tier 1: `/api/v1/vehicles` returns a high-level fleet summary in which
-    #         every vehicle frame carries `"battery": null`.
-    # Tier 2: `/api/v1/vehicles/{vehicle_id}` returns the complete live
-    #         diagnostic frame, including the battery block.
-    # When available upstream, `/api/dashboard-parameters` is automatically checked
-    # for full 24-channel telemetry across the fleet in a single request.
-    vehicles_path: str = "/api/v1/vehicles"
+    # Data endpoints -- Blue Energy v1 integration.
+    # Bulk fleet: `/api/v1/dashboard` returns all vehicles with full 24 live parameters.
+    # Single vehicle: `/api/v1/vehicles/{id}/live` returns live diagnostics for one truck.
+    # SSE push: `/api/v1/stream` Server-Sent Events stream (7s push cadence).
+    vehicles_path: str = "/api/v1/dashboard"
+    stream_path: str = "/api/v1/stream"
     request_timeout: float = Field(default=20.0, gt=0)
 
     # -------------------------------------------------- two-tier fetching
@@ -227,8 +225,12 @@ class Settings(BaseSettings):
         return f"{self.api_base_url}{self.vehicles_path}"
 
     def vehicle_url(self, vehicle_id: str) -> str:
-        """Tier-2 detail endpoint for one vehicle (`/api/v1/vehicles/{id}`)."""
-        return f"{self.vehicles_url()}/{quote(vehicle_id.strip().upper(), safe='')}"
+        """Tier-2 live diagnostic endpoint for one vehicle (`/api/v1/vehicles/{id}/live`)."""
+        return f"{self.api_base_url}/api/v1/vehicles/{quote(vehicle_id.strip().upper(), safe='')}/live"
+
+    def stream_url(self) -> str:
+        """Server-Sent Events stream endpoint (`/api/v1/stream`)."""
+        return f"{self.api_base_url}{self.stream_path}"
 
     def validate_required(self) -> None:
         """Fail fast at start-up instead of 30 minutes into a run."""

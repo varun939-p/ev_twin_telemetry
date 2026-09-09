@@ -420,3 +420,75 @@ def test_auth_response_rejects_empty_token():
 
 def test_generated_model_has_one_field_per_parameter_plus_timestamp():
     assert len(VehicleParams.model_fields) == len(PARAM_SPECS) + 1
+
+
+def test_bms_255_sentinel_coerces_to_none():
+    """BMS not reported sentinel (255) must be stored as None on cell/pack indexing channels."""
+    result = _parse(
+        {
+            **GUIDE_FRAME,
+            "max_cv_cell": 255,
+            "min_cv_cell": 255.0,
+            "min_cv_batt": 255,
+            "max_temp_batt": 255,
+        }
+    )
+    assert result.accepted == 1
+    values = result.ok[0].values
+    assert values["max_cell_v_cell_no"] is None
+    assert values["min_cell_v_cell_no"] is None
+    assert values["min_cell_v_pack_no"] is None
+    assert values["max_temp_pack_no"] is None
+
+
+def test_valid_cell_number_is_preserved():
+    """In-bounds cell and battery numbers should not be coerced to None."""
+    result = _parse(
+        {
+            **GUIDE_FRAME,
+            "max_cv_cell": 12,
+            "min_cv_cell": 1,
+            "min_cv_batt": 3,
+            "max_temp_batt": 2,
+        }
+    )
+    assert result.accepted == 1
+    values = result.ok[0].values
+    assert values["max_cell_v_cell_no"] == 12
+    assert values["min_cell_v_cell_no"] == 1
+    assert values["min_cell_v_pack_no"] == 3
+    assert values["max_temp_pack_no"] == 2
+
+
+def test_vehicles_payload_accepts_data_container():
+    """Payloads wrapped in {"data": [...]} validate through VehiclesPayload."""
+    raw = {
+        "ok": True,
+        "data": [
+            {"vehicle": "AP39WG5383", **GUIDE_FRAME},
+        ],
+    }
+    payload = VehiclesPayload.model_validate(raw)
+    assert "AP39WG5383" in payload.vehicles
+
+
+def test_merge_vehicle_frames_unpacks_live_parameters():
+    """merge_vehicle_frames extracts parameters from /api/v1/vehicles/{id}/live envelopes."""
+    summary = {"vehicle": "TEST1", "soc": 50.0, "speed": 0.0}
+    detail = {
+        "ok": True,
+        "vehicle": "TEST1",
+        "parameters": {
+            "batt_volt": 630.0,
+            "batt_temp": 28.5,
+            "workst": 1,
+            "max_cv_cell": 255.0,
+        },
+    }
+    merged = merge_vehicle_frames(summary, detail)
+    assert merged["batt_volt"] == 630.0
+    assert merged["batt_temp"] == 28.5
+    assert merged["workst"] == 1
+    assert merged["max_cv_cell"] == 255.0
+    assert merged["soc"] == 50.0
+

@@ -157,6 +157,7 @@ def test_two_tier_pipeline_populates_battery_telemetry():
             api_secret_key="sk_mock_9f8e7d6c5b4a",
             api_passcode="MockPasscode123",
             database_url="sqlite://",
+            vehicles_path="/api/v1/vehicles",
             _env_file=None,
             # tiny harness fleet: keep the live-date resolver out of these
             # unit-level paths (covered in tests/test_live_date.py)
@@ -208,6 +209,7 @@ def test_detail_fetch_failure_keeps_the_summary_frame():
             api_secret_key="sk_mock_9f8e7d6c5b4a",
             api_passcode="MockPasscode123",
             database_url="sqlite://",
+            vehicles_path="/api/v1/vehicles",
             _env_file=None,
             # tiny harness fleet: keep the live-date resolver out of these
             # unit-level paths (covered in tests/test_live_date.py)
@@ -232,3 +234,44 @@ def test_detail_fetch_failure_keeps_the_summary_frame():
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_dashboard_bulk_pipeline_populates_battery_telemetry():
+    """Default /api/v1/dashboard endpoint delivers all live parameters in a single call,
+    skipping tier-2 detail enrichment entirely."""
+    server = make_server(port=0, vehicles=2, all_fields=True)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    host, port = server.server_address[:2]
+    base_url = f"http://{host}:{port}"
+    try:
+        settings = Settings(
+            api_base_url=base_url,
+            api_secret_key="sk_mock_9f8e7d6c5b4a",
+            api_passcode="MockPasscode123",
+            database_url="sqlite://",
+            _env_file=None,
+            live_date_min_vehicles=1,
+        )
+        assert settings.vehicles_path == "/api/v1/dashboard"
+        client = UpstreamClient(settings)
+        extractor = TelemetryExtractor(settings, client, TokenManager(settings, client))
+
+        payload = extractor._validate_envelope(extractor._fetch())
+        vid, frame = next(iter(payload.vehicles.items()))
+        # Bulk dashboard delivers battery fields directly
+        assert "batt_temp" in frame
+
+        payload, ok, failed = extractor._enrich_with_details(payload)
+        # No tier-2 calls needed because frame is already complete!
+        assert (ok, failed) == (0, 0)
+
+        validated = extractor._validate_vehicles(payload, datetime.now(timezone.utc))
+        assert validated.accepted == 2 and not validated.rejected
+        vehicle = next(v for v in validated.ok if v.vehicle_id == vid)
+        assert vehicle.values["battery_temp_c"] is not None
+        assert vehicle.values["battery_total_v"] is not None
+    finally:
+        server.shutdown()
+        server.server_close()
+

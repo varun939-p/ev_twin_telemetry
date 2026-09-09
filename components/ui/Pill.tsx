@@ -86,6 +86,7 @@ const STATUS_TONE: Record<AssetStatus, Tone> = {
   moving: "ok",
   charging: "ok",
   idle: "neutral",
+  stopped: "neutral",
   unknown: "neutral",
 };
 

@@ -34,7 +34,7 @@ import PanelErrorBoundary from "@/components/ui/PanelErrorBoundary";
 import { Pill } from "@/components/ui/Pill";
 import { MAP_ANCHOR_ID, scrollMapIntoView, VEHICLE_DEEP_LINK_PARAM } from "@/lib/focus";
 import { applyVehicleFilters, batteryRegistry, buildGeoIndex, deriveSites, isEvVehicle } from "@/lib/fleet";
-import { truckAlerts, truckRows, type TruckRow } from "@/lib/fleet-metrics";
+import { truckAlerts, truckRows, type TruckRow, type AssetStatus } from "@/lib/fleet-metrics";
 import { buildCityClusters, buildMapPoints, ZOOM } from "@/lib/map-data";
 import { normalizeGpsCoordinates } from "@/lib/gps";
 import { useFilterState, useTwin } from "@/lib/store";
@@ -96,7 +96,7 @@ export default function TruckTelemetryView({ data }: { data: TrustedTelemetryDoc
   );
 
   const statusCounts = useMemo(() => {
-    const c = { moving: 0, charging: 0, idle: 0, unknown: 0 };
+    const c: Record<AssetStatus, number> = { moving: 0, charging: 0, idle: 0, stopped: 0, unknown: 0 };
     for (const r of rows) c[r.status] += 1;
     return c;
   }, [rows]);
@@ -152,6 +152,11 @@ export default function TruckTelemetryView({ data }: { data: TrustedTelemetryDoc
             <Pill tone="neutral" dot>
               {statusCounts.idle} parked
             </Pill>
+            {statusCounts.stopped > 0 && (
+              <Pill tone="neutral" dot>
+                {statusCounts.stopped} stopped
+              </Pill>
+            )}
             <Pill tone="warn" dot>
               {statusCounts.unknown} other / offline
             </Pill>
